@@ -163,7 +163,99 @@ class SortDataOperation(BaseOperation):
         return df.sort_values(by=columns, ascending=ascending)
 
 
+class RemoveRowsIfOperation(BaseOperation):
+    """Remove rows based on conditions"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='data_remove_rows_if',
+            name='Remove Rows If',
+            category='Data Matching',
+            description='Remove rows that match specified conditions',
+            parameters=[
+                Parameter(
+                    name='column',
+                    type='column',
+                    description='Column to check'
+                ),
+                Parameter(
+                    name='condition',
+                    type='choice',
+                    description='Condition to match',
+                    choices=['is_blank', 'contains', 'equals', 'not_equals', 'is_false'],
+                    default='is_blank'
+                ),
+                Parameter(
+                    name='value',
+                    type='text',
+                    description='Value to match (not needed for is_blank or is_false)',
+                    required=False,
+                    default=''
+                ),
+                Parameter(
+                    name='case_sensitive',
+                    type='boolean',
+                    description='Match case exactly (for contains/equals)',
+                    required=False,
+                    default=False
+                )
+            ],
+            excel_equivalent='Filter and Delete',
+            examples=[
+                'Remove rows where Email is blank',
+                'Remove rows where Address contains "PO Box"',
+                'Remove rows where Email_Valid is FALSE',
+                'Remove rows where Status equals "Invalid"'
+            ],
+            tags=['remove', 'filter', 'delete', 'rows', 'conditional']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        column = params['column']
+        condition = params['condition']
+        value = self.get_param_value(params, 'value', '')
+        case_sensitive = self.get_param_value(params, 'case_sensitive', False)
+
+        # Create mask for rows to KEEP (inverse of remove)
+        if condition == 'is_blank':
+            # Keep rows that are NOT blank
+            mask = df[column].notna() & (df[column].astype(str).str.strip() != '')
+
+        elif condition == 'contains':
+            # Keep rows that do NOT contain the value
+            if case_sensitive:
+                mask = ~df[column].astype(str).str.contains(value, na=False, regex=False)
+            else:
+                mask = ~df[column].astype(str).str.contains(value, case=False, na=False, regex=False)
+
+        elif condition == 'equals':
+            # Keep rows that do NOT equal the value
+            if case_sensitive:
+                mask = df[column].astype(str) != value
+            else:
+                mask = df[column].astype(str).str.lower() != value.lower()
+
+        elif condition == 'not_equals':
+            # Keep rows that DO equal the value (double negative)
+            if case_sensitive:
+                mask = df[column].astype(str) == value
+            else:
+                mask = df[column].astype(str).str.lower() == value.lower()
+
+        elif condition == 'is_false':
+            # Keep rows that are NOT False (True or other values)
+            # Handle boolean columns
+            mask = ~(df[column].astype(str).str.lower().isin(['false', '0', 'no', 'n']))
+
+        else:
+            # Default: keep all rows
+            mask = pd.Series([True] * len(df), index=df.index)
+
+        return df[mask].reset_index(drop=True)
+
+
 # Register all operations
 registry.register(VLookupOperation())
 registry.register(RemoveDuplicatesOperation())
 registry.register(SortDataOperation())
+registry.register(RemoveRowsIfOperation())

@@ -7,6 +7,7 @@ import pandas as pd
 import re
 from typing import Dict
 from .base import BaseOperation, OperationMetadata, Parameter
+from .registry import registry
 
 
 class UppercaseOperation(BaseOperation):
@@ -447,5 +448,279 @@ class AddPrefixSuffixOperation(BaseOperation):
                 df[col] = prefix + df[col].astype(str)
             if suffix:
                 df[col] = df[col].astype(str) + suffix
-        
+
         return df
+
+
+class LeftOperation(BaseOperation):
+    """Extract first N characters from text"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='text_left',
+            name='LEFT - Extract First Characters',
+            category='Text - Advanced',
+            description='Extract the first N characters from text',
+            parameters=[
+                Parameter(
+                    name='column',
+                    type='column',
+                    description='Column to extract from'
+                ),
+                Parameter(
+                    name='length',
+                    type='number',
+                    description='Number of characters to extract'
+                ),
+                Parameter(
+                    name='new_column',
+                    type='text',
+                    description='Name for result column (optional - overwrites if not specified)',
+                    required=False
+                )
+            ],
+            excel_equivalent='LEFT(text, num_chars)',
+            examples=[
+                'Extract first 5 digits of zip code: "62701-1234" → "62701"',
+                'Get area code from phone: "(555) 123-4567" → "(555)"',
+                'Extract state from "IL-Chicago" → "IL"'
+            ],
+            tags=['text', 'extract', 'left', 'substring', 'advanced']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        df = df.copy()
+        column = params['column']
+        length = int(params['length'])
+        new_column = self.get_param_value(params, 'new_column', column)
+
+        df[new_column] = df[column].astype(str).str[:length]
+
+        return df
+
+
+class RightOperation(BaseOperation):
+    """Extract last N characters from text"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='text_right',
+            name='RIGHT - Extract Last Characters',
+            category='Text - Advanced',
+            description='Extract the last N characters from text',
+            parameters=[
+                Parameter(
+                    name='column',
+                    type='column',
+                    description='Column to extract from'
+                ),
+                Parameter(
+                    name='length',
+                    type='number',
+                    description='Number of characters to extract'
+                ),
+                Parameter(
+                    name='new_column',
+                    type='text',
+                    description='Name for result column (optional - overwrites if not specified)',
+                    required=False
+                )
+            ],
+            excel_equivalent='RIGHT(text, num_chars)',
+            examples=[
+                'Extract last 4 digits of phone: "(555) 123-4567" → "4567"',
+                'Get file extension: "document.pdf" → "pdf" (with length=3)',
+                'Extract last 10 digits from phone number'
+            ],
+            tags=['text', 'extract', 'right', 'substring', 'advanced']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        df = df.copy()
+        column = params['column']
+        length = int(params['length'])
+        new_column = self.get_param_value(params, 'new_column', column)
+
+        df[new_column] = df[column].astype(str).str[-length:]
+
+        return df
+
+
+class MidOperation(BaseOperation):
+    """Extract middle portion of text"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='text_mid',
+            name='MID - Extract Middle Characters',
+            category='Text - Advanced',
+            description='Extract characters from the middle of text',
+            parameters=[
+                Parameter(
+                    name='column',
+                    type='column',
+                    description='Column to extract from'
+                ),
+                Parameter(
+                    name='start',
+                    type='number',
+                    description='Starting position (1-based, like Excel)'
+                ),
+                Parameter(
+                    name='length',
+                    type='number',
+                    description='Number of characters to extract'
+                ),
+                Parameter(
+                    name='new_column',
+                    type='text',
+                    description='Name for result column (optional - overwrites if not specified)',
+                    required=False
+                )
+            ],
+            excel_equivalent='MID(text, start, length)',
+            examples=[
+                'Extract middle 3 digits of phone: "(555) 123-4567" → "123" (start=8, length=3)',
+                'Extract month from date: "2025-11-18" → "11" (start=6, length=2)',
+                'Parse product code middle section'
+            ],
+            tags=['text', 'extract', 'mid', 'substring', 'advanced']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        df = df.copy()
+        column = params['column']
+        start = int(params['start']) - 1  # Convert from 1-based (Excel) to 0-based (Python)
+        length = int(params['length'])
+        new_column = self.get_param_value(params, 'new_column', column)
+
+        df[new_column] = df[column].astype(str).str[start:start+length]
+
+        return df
+
+
+class PhoneFormatterOperation(BaseOperation):
+    """Format phone numbers to standard (XXX) XXX-XXXX format"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='text_phone_format',
+            name='Format Phone Numbers',
+            category='Text - Advanced',
+            description='Standardize phone numbers to (XXX) XXX-XXXX format',
+            parameters=[
+                Parameter(
+                    name='column',
+                    type='column',
+                    description='Column containing phone numbers'
+                ),
+                Parameter(
+                    name='new_column',
+                    type='text',
+                    description='Name for formatted column (optional - overwrites if not specified)',
+                    required=False
+                ),
+                Parameter(
+                    name='remove_invalid',
+                    type='boolean',
+                    description='Replace invalid phone numbers with blank',
+                    required=False,
+                    default=False
+                )
+            ],
+            excel_equivalent='Complex formula with SUBSTITUTE and TEXT',
+            examples=[
+                '1234567890 → (123) 456-7890',
+                '123-456-7890 → (123) 456-7890',
+                '+1-123-456-7890 → (123) 456-7890',
+                '(123) 456-7890 → (123) 456-7890',
+                '123.456.7890 → (123) 456-7890'
+            ],
+            tags=['text', 'phone', 'format', 'standardize', 'advanced']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        df = df.copy()
+        column = params['column']
+        new_column = self.get_param_value(params, 'new_column', column)
+        remove_invalid = self.get_param_value(params, 'remove_invalid', False)
+
+        def format_phone(phone_str):
+            """Format a phone number string to (XXX) XXX-XXXX"""
+            if pd.isna(phone_str):
+                return '' if remove_invalid else phone_str
+
+            # Convert to string and remove all non-numeric characters
+            digits_only = re.sub(r'\D', '', str(phone_str))
+
+            # Take the rightmost 10 digits (handles +1 country code)
+            if len(digits_only) >= 10:
+                digits_only = digits_only[-10:]
+            elif len(digits_only) < 10:
+                # Not enough digits - return blank if remove_invalid, else original
+                return '' if remove_invalid else str(phone_str)
+
+            # Format as (XXX) XXX-XXXX
+            formatted = f"({digits_only[0:3]}) {digits_only[3:6]}-{digits_only[6:10]}"
+            return formatted
+
+        df[new_column] = df[column].apply(format_phone)
+
+        return df
+
+
+class LenOperation(BaseOperation):
+    """Get text length"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='text_len',
+            name='LEN - Get Text Length',
+            category='Text - Advanced',
+            description='Count the number of characters in text',
+            parameters=[
+                Parameter(
+                    name='column',
+                    type='column',
+                    description='Column to measure'
+                ),
+                Parameter(
+                    name='new_column',
+                    type='text',
+                    description='Name for result column'
+                )
+            ],
+            excel_equivalent='LEN(text)',
+            examples=[
+                'Validate zip code length (should be 5 or 9)',
+                'Check phone number has 10 digits after cleaning',
+                'Find records with suspiciously short/long values'
+            ],
+            tags=['text', 'length', 'count', 'validate', 'advanced']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        df = df.copy()
+        column = params['column']
+        new_column = params['new_column']
+
+        df[new_column] = df[column].astype(str).str.len()
+
+        return df
+
+
+# Register all text operations
+registry.register(UppercaseOperation())
+registry.register(LowercaseOperation())
+registry.register(TitleCaseOperation())
+registry.register(TrimWhitespaceOperation())
+registry.register(ConcatenateColumnsOperation())
+registry.register(SplitColumnOperation())
+registry.register(RemoveSpecialCharsOperation())
+registry.register(FindReplaceOperation())
+registry.register(AddPrefixSuffixOperation())
+registry.register(LeftOperation())
+registry.register(RightOperation())
+registry.register(MidOperation())
+registry.register(PhoneFormatterOperation())
+registry.register(LenOperation())
