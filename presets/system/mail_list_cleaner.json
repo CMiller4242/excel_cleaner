@@ -1,0 +1,38 @@
+{
+  "id": "mail_list_cleaner",
+  "name": "Mail List Cleaner - Quick",
+  "description": "Clean customer mailing lists quickly",
+  "category": "Mail List",
+  "operations": [
+    {
+      "operation_id": "text_uppercase",
+      "parameters": {
+        "columns": ["Company Name", "Contact Name"]
+      },
+      "order": 0,
+      "enabled": true
+    },
+    {
+      "operation_id": "text_trim",
+      "parameters": {
+        "columns": ["Company Name", "Contact Name", "Address 1", "City"]
+      },
+      "order": 1,
+      "enabled": true
+    },
+    {
+      "operation_id": "data_remove_duplicates",
+      "parameters": {
+        "columns": ["Customer #"],
+        "keep": "first"
+      },
+      "order": 2,
+      "enabled": true
+    }
+  ],
+  "created_at": "2025-11-03T00:00:00",
+  "updated_at": "2025-11-03T00:00:00",
+  "author": "system",
+  "usage_count": 0,
+  "is_system": true
+}

@@ -1,0 +1,1074 @@
+#!/usr/bin/env python3
+"""
+Universal Excel Tool V2.1+ - Enhanced Edition with Smart UI
+Features:
+- Enhanced data preview with auto-fit columns and expandable view
+- Smart column selection with dropdowns and search
+- Simple/Advanced mode toggle
+- AI Assistant integration  
+- Accessible design for older users
+- Smart Data Quality Analyzer
+- 38+ operations
+"""
+
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, scrolledtext
+import pandas as pd
+from pathlib import Path
+import sys
+import os
+
+# Add to path
+sys.path.insert(0, str(Path(__file__).parent))
+
+from operations.registry import registry
+from engine.executor import OperationExecutor
+from engine.validator import Validator
+from presets.preset_manager import PresetManager, Preset, OperationConfig
+from ui.themes.accessible_theme import AccessibleTheme
+from ai_assistant.claude_assistant import ClaudeAssistant
+from utils.export_helper import ExportHelper
+from analysis.data_quality_integration import DataQualityIntegration
+from datetime import datetime
+
+# Import enhanced components
+from enhanced_preview import EnhancedDataPreview
+from smart_column_selector import ColumnSelector, MultiColumnSelector, SmartColumnDialog
+
+
+class UniversalExcelToolV2Enhanced:
+    """Enhanced main application with improved UI and smart features"""
+    
+    def __init__(self, root):
+        self.root = root
+        self.root.title("🤖 Universal Excel Automation Tool v2.1+ - Professional Edition")
+        self.root.geometry("1600x900")
+        
+        # Data
+        self.df = None
+        self.result_df = None
+        self.current_file = None
+        self.operation_queue = []
+        
+        # Mode: simple or advanced
+        self.mode = tk.StringVar(value="simple")
+        
+        # AI Assistant
+        self.ai_assistant = None
+        self.api_key = tk.StringVar(value=os.environ.get('ANTHROPIC_API_KEY', ''))
+        
+        # Managers
+        self.preset_manager = PresetManager()
+        self.executor = OperationExecutor(progress_callback=self.on_progress)
+        
+        # Data Quality Integration
+        self.dq_integration = DataQualityIntegration(self)
+        
+        # Apply accessible theme
+        AccessibleTheme.apply_theme(self.root)
+        
+        self.create_widgets()
+        
+    def create_widgets(self):
+        """Create modern, accessible interface with enhanced preview"""
+        
+        # Top bar with mode toggle
+        top_bar = ttk.Frame(self.root, style='Card.TFrame', height=80)
+        top_bar.pack(fill='x', padx=10, pady=10)
+        top_bar.pack_propagate(False)
+        
+        # Title
+        ttk.Label(top_bar, text="🤖 Universal Excel Tool v2.1+",
+                 style='Title.TLabel').pack(side='left', padx=20)
+        
+        # Mode toggle
+        mode_frame = ttk.Frame(top_bar)
+        mode_frame.pack(side='right', padx=20)
+        
+        ttk.Label(mode_frame, text="Mode:", style='Heading.TLabel').pack(side='left', padx=5)
+        
+        ttk.Radiobutton(mode_frame, text="🌟 Simple (Beginners)", 
+                       variable=self.mode, value="simple",
+                       command=self.on_mode_change,
+                       style='TButton').pack(side='left', padx=5)
+        
+        ttk.Radiobutton(mode_frame, text="⚡ Advanced (Power Users)",
+                       variable=self.mode, value="advanced", 
+                       command=self.on_mode_change,
+                       style='TButton').pack(side='left', padx=5)
+        
+        # Main toolbar with large buttons
+        self.toolbar = ttk.Frame(self.root, style='Card.TFrame')
+        self.toolbar.pack(fill='x', padx=10, pady=5)
+        
+        btn_frame = ttk.Frame(self.toolbar)
+        btn_frame.pack(pady=10)
+        
+        ttk.Button(btn_frame, text="📁 Open File", 
+                  command=self.load_file,
+                  style='Primary.TButton').pack(side='left', padx=5)
+        
+        ttk.Button(btn_frame, text="📋 Load Preset",
+                  command=self.load_preset,
+                  style='Primary.TButton').pack(side='left', padx=5)
+        
+        ttk.Button(btn_frame, text="▶️  RUN Operations",
+                  command=self.run_operations,
+                  style='Success.TButton').pack(side='left', padx=15)
+        
+        ttk.Button(btn_frame, text="💾 Save Results",
+                  command=self.save_results,
+                  style='Primary.TButton').pack(side='left', padx=5)
+        
+        ttk.Button(btn_frame, text="💾 Save as Preset",
+                  command=self.save_preset,
+                  style='Primary.TButton').pack(side='left', padx=5)
+        
+        # Data Quality Analysis Button
+        ttk.Button(
+            btn_frame,
+            text="🔍 Analyze Data Quality",
+            command=self.analyze_data_quality,
+            style='Primary.TButton'
+        ).pack(side='left', padx=5)
+        
+        # Status bar with large text
+        self.status_var = tk.StringVar(value="Ready - Load a file to begin")
+        status = ttk.Label(self.root, textvariable=self.status_var,
+                          style='Heading.TLabel', relief=tk.SUNKEN)
+        status.pack(side='bottom', fill='x', pady=5)
+        
+        # Main content area - 3 column layout
+        main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        main_paned.pack(fill='both', expand=True, padx=10, pady=5)
+        
+        # LEFT: Operations Browser
+        left_frame = ttk.Frame(main_paned, style='Card.TFrame')
+        main_paned.add(left_frame, weight=1)
+        
+        ttk.Label(left_frame, text="🔧 Operations",
+                 style='Heading.TLabel').pack(pady=10)
+        
+        # Search box
+        search_frame = ttk.Frame(left_frame)
+        search_frame.pack(fill='x', padx=10, pady=5)
+        
+        ttk.Label(search_frame, text="Search:").pack(side='left')
+        self.search_var = tk.StringVar()
+        self.search_var.trace('w', self.on_search)
+        ttk.Entry(search_frame, textvariable=self.search_var,
+                 style='TEntry', font=('Arial', 12)).pack(side='left', fill='x', expand=True, padx=5)
+        
+        # Operations tree
+        tree_frame = ttk.Frame(left_frame)
+        tree_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        
+        self.ops_tree = ttk.Treeview(tree_frame, show='tree')
+        ops_scroll = ttk.Scrollbar(tree_frame, orient='vertical', command=self.ops_tree.yview)
+        self.ops_tree.configure(yscrollcommand=ops_scroll.set)
+        
+        self.ops_tree.pack(side='left', fill='both', expand=True)
+        ops_scroll.pack(side='right', fill='y')
+        
+        self.ops_tree.bind('<Double-1>', self.on_operation_select)
+        
+        self.load_operations()
+        
+        # CENTER: Queue and AI Assistant
+        center_frame = ttk.Frame(main_paned, style='Card.TFrame')
+        main_paned.add(center_frame, weight=1)
+        
+        # Notebook for Queue/AI
+        center_notebook = ttk.Notebook(center_frame)
+        center_notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Queue tab
+        queue_tab = ttk.Frame(center_notebook)
+        center_notebook.add(queue_tab, text="📝 Operation Queue")
+        
+        ttk.Label(queue_tab, text="Your Workflow:",
+                 style='Heading.TLabel').pack(pady=5)
+        
+        # Queue listbox
+        queue_list_frame = ttk.Frame(queue_tab)
+        queue_list_frame.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        self.queue_listbox = tk.Listbox(queue_list_frame,
+                                        font=('Arial', 11),
+                                        selectmode=tk.SINGLE,
+                                        height=15)
+        queue_scroll = ttk.Scrollbar(queue_list_frame, orient='vertical',
+                                     command=self.queue_listbox.yview)
+        self.queue_listbox.configure(yscrollcommand=queue_scroll.set)
+        
+        self.queue_listbox.pack(side='left', fill='both', expand=True)
+        queue_scroll.pack(side='right', fill='y')
+        
+        # Queue buttons
+        queue_btn_frame = ttk.Frame(queue_tab)
+        queue_btn_frame.pack(fill='x', padx=5, pady=5)
+        
+        ttk.Button(queue_btn_frame, text="↑ Move Up",
+                  command=self.move_up).pack(side='left', padx=2)
+        ttk.Button(queue_btn_frame, text="↓ Move Down",
+                  command=self.move_down).pack(side='left', padx=2)
+        ttk.Button(queue_btn_frame, text="🗑 Remove",
+                  command=self.remove_operation).pack(side='left', padx=2)
+        ttk.Button(queue_btn_frame, text="Clear All",
+                  command=self.clear_queue).pack(side='left', padx=2)
+        
+        # AI Assistant tab
+        ai_tab = ttk.Frame(center_notebook)
+        center_notebook.add(ai_tab, text="🤖 AI Assistant")
+        
+        # API Key input
+        api_frame = ttk.Frame(ai_tab)
+        api_frame.pack(fill='x', padx=10, pady=10)
+        
+        ttk.Label(api_frame, text="Claude API Key:",
+                 style='Heading.TLabel').pack(side='left', padx=5)
+        ttk.Entry(api_frame, textvariable=self.api_key,
+                 show='*', width=30).pack(side='left', padx=5)
+        ttk.Button(api_frame, text="Connect",
+                  command=self.init_ai,
+                  style='Success.TButton').pack(side='left', padx=5)
+        
+        # Conversation history
+        ttk.Label(ai_tab, text="Conversation:",
+                 style='Heading.TLabel').pack(pady=5)
+        
+        conv_frame = ttk.Frame(ai_tab)
+        conv_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        
+        self.conversation_text = scrolledtext.ScrolledText(
+            conv_frame,
+            font=('Arial', 11),
+            wrap=tk.WORD,
+            height=15
+        )
+        self.conversation_text.pack(fill='both', expand=True)
+        
+        # User input
+        input_frame = ttk.Frame(ai_tab)
+        input_frame.pack(fill='x', padx=10, pady=5)
+        
+        ttk.Label(input_frame, text="Your message:",
+                 style='Heading.TLabel').pack(anchor='w')
+        
+        self.ai_input = scrolledtext.ScrolledText(
+            input_frame,
+            font=('Arial', 12),
+            wrap=tk.WORD,
+            height=4
+        )
+        self.ai_input.pack(fill='x', pady=5)
+        
+        ai_btn_frame = ttk.Frame(input_frame)
+        ai_btn_frame.pack(fill='x')
+        
+        ttk.Button(ai_btn_frame, text="Send to AI",
+                  command=self.send_ai_message,
+                  style='Primary.TButton').pack(side='left', padx=5)
+        ttk.Button(ai_btn_frame, text="Clear Chat",
+                  command=self.clear_ai_chat).pack(side='left', padx=5)
+        
+        # RIGHT: Enhanced Data Preview
+        right_frame = ttk.Frame(main_paned, style='Card.TFrame')
+        main_paned.add(right_frame, weight=2)
+        
+        # File info header
+        header_frame = ttk.Frame(right_frame)
+        header_frame.pack(fill='x', pady=5)
+        
+        self.file_info_var = tk.StringVar(value="No file loaded")
+        ttk.Label(header_frame, textvariable=self.file_info_var,
+                 font=('Arial', 11, 'bold')).pack(pady=5)
+        
+        # ENHANCED PREVIEW - Replace old preview with new component
+        self.enhanced_preview = EnhancedDataPreview(right_frame)
+        self.enhanced_preview.pack(fill='both', expand=True, padx=5, pady=5)
+    
+    def load_operations(self):
+        """Load operations into tree"""
+        self.ops_tree.delete(*self.ops_tree.get_children())
+        
+        # Get categories based on mode
+        categories = registry.get_all_categories()
+        
+        if self.mode.get() == "simple":
+            # Filter to simple operations only
+            simple_categories = ['Text', 'Data Matching', 'Cleaning', 'Math']
+            categories = [c for c in categories if c in simple_categories]
+        
+        for category in categories:
+            cat_id = self.ops_tree.insert('', 'end', text=f"📁 {category}", open=True)
+            
+            operations = registry.get_by_category(category)
+            for op in operations:
+                self.ops_tree.insert(cat_id, 'end',
+                                   text=f"  ▶ {op.metadata.name}",
+                                   tags=(op.metadata.id,))
+    
+    def on_mode_change(self):
+        """Handle mode toggle"""
+        mode = self.mode.get()
+        self.status_var.set(f"Switched to {mode.upper()} mode")
+        self.load_operations()
+    
+    def on_search(self, *args):
+        """Filter operations by search"""
+        query = self.search_var.get().lower()
+        if not query:
+            self.load_operations()
+            return
+        
+        self.ops_tree.delete(*self.ops_tree.get_children())
+        
+        results = registry.search(query)
+        if results:
+            search_node = self.ops_tree.insert('', 'end',
+                                              text=f"🔍 Search Results ({len(results)})",
+                                              open=True)
+            for op in results:
+                self.ops_tree.insert(search_node, 'end',
+                                   text=f"  ▶ {op.metadata.name}",
+                                   tags=(op.metadata.id,))
+    
+    def on_operation_select(self, event):
+        """Handle operation double-click"""
+        selection = self.ops_tree.selection()
+        if not selection:
+            return
+        
+        item = self.ops_tree.item(selection[0])
+        tags = item.get('tags', ())
+        
+        if tags:
+            operation_id = tags[0]
+            operation = registry.get_by_id(operation_id)
+            if operation:
+                self.add_operation_to_queue_smart(operation)
+    
+    def get_column_list_with_letters(self):
+        """Get column list with Excel-style letters for dropdowns"""
+        if self.df is None:
+            return []
+        
+        columns = []
+        for idx, col in enumerate(self.df.columns):
+            letter = self._get_column_letter(idx)
+            columns.append(f"{letter}: {col}")
+        return columns
+    
+    def _get_column_letter(self, idx: int) -> str:
+        """Convert column index to Excel-style letter"""
+        result = ""
+        while idx >= 0:
+            result = chr(65 + (idx % 26)) + result
+            idx = idx // 26 - 1
+        return result
+    
+    def add_operation_to_queue_smart(self, operation):
+        """
+        Add operation with SMART column selection dialogs
+        Uses enhanced UI components for better UX
+        """
+        
+        # Get column list with letters
+        columns = self.get_column_list_with_letters()
+        
+        # Determine if operation needs special column selection
+        needs_single_column = any(p.type == 'column' for p in operation.metadata.parameters)
+        needs_multi_column = any(p.type == 'column_list' for p in operation.metadata.parameters)
+        
+        if needs_single_column and not needs_multi_column:
+            # Use smart single column selector
+            self._show_single_column_dialog(operation, columns)
+        elif needs_multi_column:
+            # Use smart multi-column selector
+            self._show_multi_column_dialog(operation, columns)
+        else:
+            # Use standard parameter dialog for operations without column selection
+            self._show_standard_parameter_dialog(operation)
+    
+    def _show_single_column_dialog(self, operation, columns):
+        """Show dialog with smart single column selector"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Add: {operation.metadata.name}")
+        dialog.geometry("600x500")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        main_frame = ttk.Frame(dialog, padding=20)
+        main_frame.pack(fill='both', expand=True)
+        
+        # Title and description
+        ttk.Label(
+            main_frame,
+            text=operation.metadata.name,
+            font=('Segoe UI', 14, 'bold')
+        ).pack(pady=(0, 10))
+        
+        ttk.Label(
+            main_frame,
+            text=operation.metadata.description,
+            wraplength=550,
+            font=('Arial', 11)
+        ).pack(pady=(0, 5))
+        
+        ttk.Label(
+            main_frame,
+            text=f"Excel equivalent: {operation.metadata.excel_equivalent}",
+            font=('Arial', 10),
+            foreground='gray'
+        ).pack(pady=(0, 20))
+        
+        param_widgets = {}
+        
+        # Process each parameter
+        for param in operation.metadata.parameters:
+            param_frame = ttk.Frame(main_frame)
+            param_frame.pack(fill='x', pady=10)
+            
+            label_text = param.description
+            if param.required:
+                label_text += " *"
+            
+            if param.type == 'column':
+                # Use ColumnSelector
+                selector = ColumnSelector(param_frame, columns, label_text)
+                selector.pack(fill='x')
+                param_widgets[param.name] = selector
+            
+            elif param.type == 'text':
+                ttk.Label(param_frame, text=label_text, font=('Arial', 11, 'bold')).pack(anchor='w')
+                widget = ttk.Entry(param_frame, font=('Arial', 12))
+                if param.default:
+                    widget.insert(0, str(param.default))
+                widget.pack(fill='x', pady=2)
+                param_widgets[param.name] = widget
+            
+            elif param.type == 'number':
+                ttk.Label(param_frame, text=label_text, font=('Arial', 11, 'bold')).pack(anchor='w')
+                widget = ttk.Entry(param_frame, font=('Arial', 12))
+                if param.default:
+                    widget.insert(0, str(param.default))
+                widget.pack(fill='x', pady=2)
+                param_widgets[param.name] = widget
+            
+            elif param.type == 'boolean':
+                var = tk.BooleanVar(value=param.default if param.default else False)
+                widget = ttk.Checkbutton(param_frame, text=label_text, variable=var)
+                widget.pack(anchor='w', pady=2)
+                param_widgets[param.name] = var
+            
+            elif param.type == 'choice':
+                ttk.Label(param_frame, text=label_text, font=('Arial', 11, 'bold')).pack(anchor='w')
+                widget = ttk.Combobox(param_frame, values=param.choices,
+                                     font=('Arial', 12), state='readonly')
+                if param.default:
+                    widget.set(param.default)
+                elif param.choices:
+                    widget.set(param.choices[0])
+                widget.pack(fill='x', pady=2)
+                param_widgets[param.name] = widget
+        
+        def on_add():
+            params = {}
+            for param in operation.metadata.parameters:
+                widget = param_widgets.get(param.name)
+                if widget:
+                    if isinstance(widget, tk.BooleanVar):
+                        params[param.name] = widget.get()
+                    elif isinstance(widget, ColumnSelector):
+                        params[param.name] = widget.get_value()
+                    elif isinstance(widget, (ttk.Entry, ttk.Combobox)):
+                        value = widget.get()
+                        if param.type == 'number':
+                            try:
+                                value = float(value)
+                            except:
+                                value = 0
+                        params[param.name] = value
+            
+            # Add to queue
+            self.operation_queue.append({
+                'operation_id': operation.metadata.id,
+                'name': operation.metadata.name,
+                'parameters': params,
+                'enabled': True
+            })
+            
+            self.refresh_queue_display()
+            self.status_var.set(f"Added: {operation.metadata.name}")
+            dialog.destroy()
+        
+        # Buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill='x', pady=(20, 0))
+        
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="✓ Add to Queue", command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
+    
+    def _show_multi_column_dialog(self, operation, columns):
+        """Show dialog with smart multi-column selector"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Add: {operation.metadata.name}")
+        dialog.geometry("600x600")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        main_frame = ttk.Frame(dialog, padding=20)
+        main_frame.pack(fill='both', expand=True)
+        
+        # Title and description
+        ttk.Label(
+            main_frame,
+            text=operation.metadata.name,
+            font=('Segoe UI', 14, 'bold')
+        ).pack(pady=(0, 10))
+        
+        ttk.Label(
+            main_frame,
+            text=operation.metadata.description,
+            wraplength=550,
+            font=('Arial', 11)
+        ).pack(pady=(0, 5))
+        
+        ttk.Label(
+            main_frame,
+            text=f"Excel equivalent: {operation.metadata.excel_equivalent}",
+            font=('Arial', 10),
+            foreground='gray'
+        ).pack(pady=(0, 20))
+        
+        param_widgets = {}
+        
+        # Process each parameter
+        for param in operation.metadata.parameters:
+            param_frame = ttk.Frame(main_frame)
+            param_frame.pack(fill='both', expand=(param.type == 'column_list'), pady=10)
+            
+            label_text = param.description
+            if param.required:
+                label_text += " *"
+            
+            if param.type == 'column_list':
+                # Use MultiColumnSelector
+                selector = MultiColumnSelector(param_frame, columns, label_text)
+                selector.pack(fill='both', expand=True)
+                param_widgets[param.name] = selector
+            
+            elif param.type == 'column':
+                # Single column selector
+                selector = ColumnSelector(param_frame, columns, label_text)
+                selector.pack(fill='x')
+                param_widgets[param.name] = selector
+            
+            elif param.type == 'text':
+                ttk.Label(param_frame, text=label_text, font=('Arial', 11, 'bold')).pack(anchor='w')
+                widget = ttk.Entry(param_frame, font=('Arial', 12))
+                if param.default:
+                    widget.insert(0, str(param.default))
+                widget.pack(fill='x', pady=2)
+                param_widgets[param.name] = widget
+            
+            elif param.type == 'choice':
+                ttk.Label(param_frame, text=label_text, font=('Arial', 11, 'bold')).pack(anchor='w')
+                widget = ttk.Combobox(param_frame, values=param.choices,
+                                     font=('Arial', 12), state='readonly')
+                if param.default:
+                    widget.set(param.default)
+                elif param.choices:
+                    widget.set(param.choices[0])
+                widget.pack(fill='x', pady=2)
+                param_widgets[param.name] = widget
+        
+        def on_add():
+            params = {}
+            for param in operation.metadata.parameters:
+                widget = param_widgets.get(param.name)
+                if widget:
+                    if isinstance(widget, MultiColumnSelector):
+                        params[param.name] = widget.get_selected_columns()
+                    elif isinstance(widget, ColumnSelector):
+                        params[param.name] = widget.get_value()
+                    elif isinstance(widget, (ttk.Entry, ttk.Combobox)):
+                        value = widget.get()
+                        if param.type == 'number':
+                            try:
+                                value = float(value)
+                            except:
+                                value = 0
+                        params[param.name] = value
+            
+            # Add to queue
+            self.operation_queue.append({
+                'operation_id': operation.metadata.id,
+                'name': operation.metadata.name,
+                'parameters': params,
+                'enabled': True
+            })
+            
+            self.refresh_queue_display()
+            self.status_var.set(f"Added: {operation.metadata.name}")
+            dialog.destroy()
+        
+        # Buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill='x', pady=(20, 0))
+        
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="✓ Add to Queue", command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
+    
+    def _show_standard_parameter_dialog(self, operation):
+        """Standard parameter dialog for operations without column selection"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Add: {operation.metadata.name}")
+        dialog.geometry("600x500")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        main_frame = ttk.Frame(dialog, padding=20)
+        main_frame.pack(fill='both', expand=True)
+        
+        # Title and description
+        ttk.Label(
+            main_frame,
+            text=operation.metadata.name,
+            font=('Segoe UI', 14, 'bold')
+        ).pack(pady=(0, 10))
+        
+        ttk.Label(
+            main_frame,
+            text=operation.metadata.description,
+            wraplength=550,
+            font=('Arial', 11)
+        ).pack(pady=(0, 5))
+        
+        ttk.Label(
+            main_frame,
+            text=f"Excel equivalent: {operation.metadata.excel_equivalent}",
+            font=('Arial', 10),
+            foreground='gray'
+        ).pack(pady=(0, 20))
+        
+        param_widgets = {}
+        
+        for param in operation.metadata.parameters:
+            frame = ttk.Frame(main_frame)
+            frame.pack(fill='x', pady=8)
+            
+            label_text = param.description
+            if param.required:
+                label_text += " *"
+            
+            ttk.Label(frame, text=label_text, font=('Arial', 11, 'bold')).pack(anchor='w')
+            
+            if param.type == 'text':
+                widget = ttk.Entry(frame, font=('Arial', 12))
+                if param.default:
+                    widget.insert(0, str(param.default))
+                widget.pack(fill='x', pady=2)
+                param_widgets[param.name] = widget
+            
+            elif param.type == 'number':
+                widget = ttk.Entry(frame, font=('Arial', 12))
+                if param.default:
+                    widget.insert(0, str(param.default))
+                widget.pack(fill='x', pady=2)
+                param_widgets[param.name] = widget
+            
+            elif param.type == 'boolean':
+                var = tk.BooleanVar(value=param.default if param.default else False)
+                widget = ttk.Checkbutton(frame, text="Yes", variable=var)
+                widget.pack(anchor='w', pady=2)
+                param_widgets[param.name] = var
+            
+            elif param.type == 'choice':
+                widget = ttk.Combobox(frame, values=param.choices,
+                                     font=('Arial', 12), state='readonly')
+                if param.default:
+                    widget.set(param.default)
+                elif param.choices:
+                    widget.set(param.choices[0])
+                widget.pack(fill='x', pady=2)
+                param_widgets[param.name] = widget
+            
+            elif param.type == 'file':
+                widget = ttk.Entry(frame, font=('Arial', 12))
+                widget.pack(fill='x', pady=2)
+                param_widgets[param.name] = widget
+        
+        def on_add():
+            params = {}
+            for param in operation.metadata.parameters:
+                widget = param_widgets.get(param.name)
+                if widget:
+                    if isinstance(widget, tk.BooleanVar):
+                        params[param.name] = widget.get()
+                    elif isinstance(widget, (ttk.Entry, ttk.Combobox)):
+                        value = widget.get()
+                        if param.type == 'number':
+                            try:
+                                value = float(value)
+                            except:
+                                value = 0
+                        params[param.name] = value
+            
+            # Add to queue
+            self.operation_queue.append({
+                'operation_id': operation.metadata.id,
+                'name': operation.metadata.name,
+                'parameters': params,
+                'enabled': True
+            })
+            
+            self.refresh_queue_display()
+            self.status_var.set(f"Added: {operation.metadata.name}")
+            dialog.destroy()
+        
+        # Buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill='x', pady=(20, 0))
+        
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="✓ Add to Queue", command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
+    
+    def refresh_queue_display(self):
+        """Refresh queue listbox"""
+        self.queue_listbox.delete(0, tk.END)
+        for i, op in enumerate(self.operation_queue):
+            enabled = "☑" if op['enabled'] else "☐"
+            self.queue_listbox.insert(tk.END, f"{i+1}. {enabled} {op['name']}")
+    
+    def move_up(self):
+        """Move selected operation up"""
+        selection = self.queue_listbox.curselection()
+        if selection and selection[0] > 0:
+            idx = selection[0]
+            self.operation_queue[idx], self.operation_queue[idx-1] = \
+                self.operation_queue[idx-1], self.operation_queue[idx]
+            self.refresh_queue_display()
+            self.queue_listbox.selection_set(idx-1)
+    
+    def move_down(self):
+        """Move selected operation down"""
+        selection = self.queue_listbox.curselection()
+        if selection and selection[0] < len(self.operation_queue) - 1:
+            idx = selection[0]
+            self.operation_queue[idx], self.operation_queue[idx+1] = \
+                self.operation_queue[idx+1], self.operation_queue[idx]
+            self.refresh_queue_display()
+            self.queue_listbox.selection_set(idx+1)
+    
+    def remove_operation(self):
+        """Remove selected operation"""
+        selection = self.queue_listbox.curselection()
+        if selection:
+            del self.operation_queue[selection[0]]
+            self.refresh_queue_display()
+    
+    def clear_queue(self):
+        """Clear all operations"""
+        if messagebox.askyesno("Confirm", "Clear all operations from queue?"):
+            self.operation_queue = []
+            self.refresh_queue_display()
+    
+    def load_file(self):
+        """Load data file with enhanced preview"""
+        filename = filedialog.askopenfilename(
+            title="Select Data File",
+            filetypes=[
+                ("Excel files", "*.xlsx *.xls"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if not filename:
+            return
+        
+        try:
+            if filename.endswith('.csv'):
+                self.df = pd.read_csv(filename)
+            else:
+                self.df = pd.read_excel(filename)
+            
+            self.current_file = filename
+            self.file_info_var.set(
+                f"📁 {Path(filename).name} • {len(self.df):,} rows × {len(self.df.columns)} columns"
+            )
+            
+            # Use enhanced preview
+            self.enhanced_preview.load_dataframe(self.df, is_result=False)
+            
+            self.status_var.set(f"Loaded {len(self.df):,} records successfully")
+            
+            messagebox.showinfo("Success",
+                              f"Loaded {len(self.df):,} records with {len(self.df.columns)} columns")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load file:\n{str(e)}")
+    
+    def run_operations(self):
+        """Execute all queued operations"""
+        if self.df is None:
+            messagebox.showwarning("Warning", "Please load a file first")
+            return
+        
+        if not self.operation_queue:
+            messagebox.showwarning("Warning", "No operations in queue")
+            return
+        
+        if not messagebox.askyesno("Confirm",
+                                  f"Run {len(self.operation_queue)} operations on {len(self.df):,} rows?"):
+            return
+        
+        try:
+            # Validate
+            is_valid, errors = Validator.validate_queue(self.df, self.operation_queue)
+            if not is_valid:
+                error_msg = "\n".join(errors)
+                messagebox.showerror("Validation Error",
+                                   f"Cannot execute:\n{error_msg}")
+                return
+            
+            # Execute
+            self.status_var.set("Executing operations...")
+            self.root.update()
+            
+            self.result_df = self.executor.execute_queue(self.df, self.operation_queue)
+            
+            # Display in enhanced preview
+            self.enhanced_preview.load_dataframe(self.result_df, is_result=True)
+            
+            self.status_var.set(f"✅ Complete! {len(self.result_df):,} rows in results")
+            
+            messagebox.showinfo("Success",
+                              f"Operations completed!\n\nInput: {len(self.df):,} rows\nOutput: {len(self.result_df):,} rows")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Execution failed:\n{str(e)}")
+    
+    def on_progress(self, current, total, operation_name):
+        """Progress callback"""
+        self.status_var.set(f"Executing {current}/{total}: {operation_name}")
+        self.root.update()
+    
+    def save_results(self):
+        """Save results to file"""
+        if self.result_df is None:
+            messagebox.showwarning("Warning", "No results to save")
+            return
+        
+        filename = filedialog.asksaveasfilename(
+            title="Save Results",
+            defaultextension=".xlsx",
+            filetypes=[
+                ("Excel files", "*.xlsx"),
+                ("CSV files", "*.csv")
+            ]
+        )
+        
+        if not filename:
+            return
+        
+        try:
+            if filename.endswith('.csv'):
+                ExportHelper.export_to_csv(self.result_df, filename)
+            else:
+                ExportHelper.export_to_excel(self.result_df, filename)
+            
+            messagebox.showinfo("Success", f"Results saved to:\n{filename}")
+            self.status_var.set(f"Saved to {Path(filename).name}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save:\n{str(e)}")
+    
+    def load_preset(self):
+        """Load a preset"""
+        presets = self.preset_manager.list_presets()
+        
+        if not presets:
+            messagebox.showinfo("Info", "No presets available")
+            return
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Load Preset")
+        dialog.geometry("600x400")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        ttk.Label(dialog, text="Select a Preset:",
+                 style='Heading.TLabel').pack(pady=10)
+        
+        listbox = tk.Listbox(dialog, font=('Arial', 11))
+        listbox.pack(fill='both', expand=True, padx=20, pady=10)
+        
+        preset_map = {}
+        for preset in presets:
+            icon = "🔒" if preset.is_system else "📝"
+            text = f"{icon} {preset.name} - {preset.description}"
+            listbox.insert(tk.END, text)
+            preset_map[listbox.size()-1] = preset
+        
+        def on_load():
+            selection = listbox.curselection()
+            if selection:
+                preset = preset_map[selection[0]]
+                self.operation_queue = []
+                
+                for op_config in preset.operations:
+                    operation = registry.get_by_id(op_config.operation_id)
+                    if operation:
+                        self.operation_queue.append({
+                            'operation_id': op_config.operation_id,
+                            'name': operation.metadata.name,
+                            'parameters': op_config.parameters,
+                            'enabled': op_config.enabled
+                        })
+                
+                self.refresh_queue_display()
+                self.status_var.set(f"Loaded preset: {preset.name}")
+                dialog.destroy()
+                messagebox.showinfo("Success",
+                                  f"Loaded '{preset.name}' with {len(preset.operations)} operations")
+        
+        ttk.Button(dialog, text="Load",
+                  command=on_load,
+                  style='Primary.TButton').pack(pady=10)
+    
+    def save_preset(self):
+        """Save current queue as preset"""
+        if not self.operation_queue:
+            messagebox.showwarning("Warning", "No operations to save")
+            return
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Save Preset")
+        dialog.geometry("500x250")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        ttk.Label(dialog, text="Preset Name:",
+                 style='Heading.TLabel').pack(pady=10, padx=20)
+        name_var = tk.StringVar()
+        ttk.Entry(dialog, textvariable=name_var,
+                 font=('Arial', 12), width=40).pack(padx=20, pady=5)
+        
+        ttk.Label(dialog, text="Description:",
+                 style='Heading.TLabel').pack(pady=10, padx=20)
+        desc_var = tk.StringVar()
+        ttk.Entry(dialog, textvariable=desc_var,
+                 font=('Arial', 12), width=40).pack(padx=20, pady=5)
+        
+        def save():
+            name = name_var.get().strip()
+            if not name:
+                messagebox.showwarning("Warning", "Please enter a name")
+                return
+            
+            preset_id = name.lower().replace(' ', '_')
+            operations = [
+                OperationConfig(
+                    operation_id=op['operation_id'],
+                    parameters=op['parameters'],
+                    order=i,
+                    enabled=op.get('enabled', True)
+                )
+                for i, op in enumerate(self.operation_queue)
+            ]
+            
+            preset = Preset(
+                id=preset_id,
+                name=name,
+                description=desc_var.get(),
+                category="Custom",
+                operations=operations,
+                created_at=datetime.now().isoformat(),
+                updated_at=datetime.now().isoformat()
+            )
+            
+            try:
+                self.preset_manager.save_preset(preset)
+                messagebox.showinfo("Success", f"Preset '{name}' saved!")
+                dialog.destroy()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save:\n{str(e)}")
+        
+        ttk.Button(dialog, text="Save",
+                  command=save,
+                  style='Success.TButton').pack(pady=15)
+    
+    def init_ai(self):
+        """Initialize AI assistant"""
+        api_key = self.api_key.get().strip()
+        
+        if not api_key:
+            messagebox.showerror("Error", "Please enter your Claude API key")
+            return
+        
+        try:
+            self.ai_assistant = ClaudeAssistant(api_key)
+            self.add_to_conversation("System", "✅ AI Assistant connected! Ask me anything about your data.")
+            messagebox.showinfo("Success", "AI Assistant is ready!")
+            self.status_var.set("AI Assistant connected")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to connect:\n{str(e)}")
+    
+    def send_ai_message(self):
+        """Send message to AI"""
+        if not self.ai_assistant:
+            messagebox.showwarning("Warning", "Please connect to AI first")
+            return
+        
+        message = self.ai_input.get("1.0", tk.END).strip()
+        if not message:
+            return
+        
+        self.add_to_conversation("You", message)
+        self.ai_input.delete("1.0", tk.END)
+        
+        # Get data context
+        df_info = None
+        if self.df is not None:
+            df_info = {
+                'rows': len(self.df),
+                'columns': list(self.df.columns)
+            }
+        
+        try:
+            response = self.ai_assistant.chat(message, df_info)
+            self.add_to_conversation("AI", response)
+        except Exception as e:
+            self.add_to_conversation("Error", str(e))
+    
+    def add_to_conversation(self, speaker, message):
+        """Add message to conversation display"""
+        self.conversation_text.insert(tk.END, f"\n{'='*50}\n")
+        self.conversation_text.insert(tk.END, f"{speaker}:\n", "bold")
+        self.conversation_text.insert(tk.END, f"{message}\n")
+        self.conversation_text.see(tk.END)
+        self.conversation_text.tag_configure("bold", font=('Arial', 11, 'bold'))
+    
+    def clear_ai_chat(self):
+        """Clear AI conversation"""
+        if self.ai_assistant:
+            self.ai_assistant.clear_conversation()
+        self.conversation_text.delete("1.0", tk.END)
+        self.add_to_conversation("System", "Conversation cleared. Starting fresh!")
+    
+    def analyze_data_quality(self):
+        """Analyze data quality and suggest cleaning operations"""
+        self.dq_integration.analyze_data()
+
+
+def main():
+    root = tk.Tk()
+    app = UniversalExcelToolV2Enhanced(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
