@@ -757,6 +757,59 @@ class RenameColumnOperation(BaseOperation):
         return df
 
 
+class BatchRenameColumnsOperation(BaseOperation):
+    """Rename multiple columns at once"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='text_rename_batch',
+            name='Rename Multiple Columns',
+            category='Text - Basic',
+            description='Rename multiple columns at once using a mapping dictionary',
+            parameters=[
+                Parameter(
+                    name='mappings',
+                    type='dict',
+                    description='Dictionary of old_name: new_name mappings',
+                    required=True
+                )
+            ],
+            excel_equivalent='Right-click columns > Rename (multiple times)',
+            examples=[
+                'Rename Person City → City, Person State → State, Person Zip → Zip',
+                'Standardize multiple column names to match format',
+                'Bulk rename ZoomInfo columns to standard format'
+            ],
+            tags=['rename', 'column', 'standardize', 'batch', 'bulk']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        df = df.copy()
+        mappings = params['mappings']
+
+        if not isinstance(mappings, dict):
+            raise ValueError("mappings parameter must be a dictionary")
+
+        # Validate all old columns exist
+        missing_columns = [old_name for old_name in mappings.keys() if old_name not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Columns not found in dataframe: {', '.join(missing_columns)}")
+
+        # Check for conflicts (new names that already exist, unless it's the same column)
+        conflicts = []
+        for old_name, new_name in mappings.items():
+            if new_name in df.columns and new_name != old_name and new_name not in mappings.keys():
+                conflicts.append(f"{old_name} → {new_name} ('{new_name}' already exists)")
+
+        if conflicts:
+            raise ValueError(f"Rename conflicts: {'; '.join(conflicts)}")
+
+        # Apply all renames
+        df = df.rename(columns=mappings)
+
+        return df
+
+
 # Register all text operations
 registry.register(UppercaseOperation())
 registry.register(LowercaseOperation())
@@ -773,3 +826,4 @@ registry.register(MidOperation())
 registry.register(PhoneFormatterOperation())
 registry.register(LenOperation())
 registry.register(RenameColumnOperation())
+registry.register(BatchRenameColumnsOperation())

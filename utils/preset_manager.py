@@ -6,9 +6,14 @@ Includes ZoomInfo file detection
 
 import json
 import os
+import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import pandas as pd
+
+# Set up logging
+logger = logging.getLogger("PresetManager")
+logger.setLevel(logging.DEBUG)
 
 
 class PresetManager:
@@ -23,11 +28,12 @@ class PresetManager:
                             Defaults to presets/system in project root.
         """
         if preset_directory is None:
-            # Default to presets/system directory
+            # Default to presets/system directory in project
             current_dir = Path(__file__).parent.parent
             preset_directory = current_dir / 'presets' / 'system'
 
         self.preset_directory = Path(preset_directory)
+        logger.info(f"PresetManager initialized with directory: {self.preset_directory}")
 
     def list_presets(self, category: str = None) -> List[Dict]:
         """
@@ -42,9 +48,15 @@ class PresetManager:
         presets = []
 
         if not self.preset_directory.exists():
+            logger.warning(f"Preset directory does not exist: {self.preset_directory}")
             return presets
 
-        for preset_file in self.preset_directory.glob('*.json'):
+        logger.debug(f"Scanning preset directory: {self.preset_directory}")
+
+        preset_files = list(self.preset_directory.glob('*.json'))
+        logger.debug(f"Found {len(preset_files)} preset files")
+
+        for preset_file in preset_files:
             try:
                 with open(preset_file, 'r') as f:
                     preset_data = json.load(f)
@@ -53,18 +65,21 @@ class PresetManager:
                 if category and preset_data.get('category') != category:
                     continue
 
-                presets.append({
+                preset_info = {
                     'id': preset_data.get('id'),
                     'name': preset_data.get('name'),
                     'description': preset_data.get('description'),
                     'category': preset_data.get('category'),
                     'file_path': str(preset_file),
                     'operation_count': len(preset_data.get('operations', []))
-                })
+                }
+                presets.append(preset_info)
+                logger.debug(f"Loaded preset: {preset_info['name']} ({preset_info['operation_count']} operations)")
             except Exception as e:
-                print(f"Error loading preset {preset_file}: {e}")
+                logger.error(f"Error loading preset {preset_file}: {e}")
                 continue
 
+        logger.info(f"Loaded {len(presets)} presets")
         return presets
 
     def load_preset(self, preset_id: str) -> Optional[Dict]:
@@ -79,14 +94,19 @@ class PresetManager:
         """
         preset_file = self.preset_directory / f"{preset_id}.json"
 
+        logger.debug(f"Loading preset '{preset_id}' from {preset_file}")
+
         if not preset_file.exists():
+            logger.error(f"Preset file not found: {preset_file}")
             return None
 
         try:
             with open(preset_file, 'r') as f:
-                return json.load(f)
+                preset_data = json.load(f)
+            logger.info(f"Successfully loaded preset: {preset_data.get('name', preset_id)}")
+            return preset_data
         except Exception as e:
-            print(f"Error loading preset {preset_id}: {e}")
+            logger.error(f"Error loading preset {preset_id}: {e}")
             return None
 
     def save_preset(self, preset_data: Dict, preset_id: str = None) -> bool:
@@ -351,18 +371,26 @@ def detect_and_suggest_preset(df: pd.DataFrame, file_path: str = None) -> Option
             'validation': dict
         }
     """
+    logger.debug(f"Detecting file type for dataframe with {len(df)} rows, {len(df.columns)} columns")
+
     manager = PresetManager()
 
     file_type, preset_id, confidence = manager.detect_file_type(df, file_path)
 
     if not preset_id:
+        logger.debug("No preset detected")
         return None
+
+    logger.info(f"Detected file type: {file_type}, suggested preset: {preset_id} (confidence: {confidence:.0%})")
 
     preset = manager.load_preset(preset_id)
     if not preset:
+        logger.error(f"Failed to load detected preset: {preset_id}")
         return None
 
     validation = manager.validate_preset_columns(preset_id, df)
+
+    logger.info(f"Preset validation: {validation['confidence']:.0%} match, valid={validation['valid']}")
 
     return {
         'file_type': file_type,
