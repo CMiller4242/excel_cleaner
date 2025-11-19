@@ -34,7 +34,8 @@
       "parameters": {
         "columns": ["First Name", "Last Name"],
         "separator": " ",
-        "new_column": "Contact"
+        "new_column": "Contact",
+        "remove_original": true
       },
       "order": 1,
       "enabled": true,
@@ -58,86 +59,21 @@
       "required": true
     },
     {
-      "operation_id": "text_rename_column",
+      "operation_id": "text_rename_batch",
       "parameters": {
-        "old_name": "Person City",
-        "new_name": "City"
+        "mappings": {
+          "Person City": "City",
+          "Person State": "State",
+          "Person Zip Code": "Zip",
+          "Job Title": "Title",
+          "Direct Phone Number": "Phone",
+          "Email Address": "Email",
+          "Company Name": "Company"
+        }
       },
       "order": 3,
       "enabled": true,
-      "description": "Phase 4a: Rename Person City → City",
-      "editable": true,
-      "required": true
-    },
-    {
-      "operation_id": "text_rename_column",
-      "parameters": {
-        "old_name": "Person State",
-        "new_name": "State"
-      },
-      "order": 4,
-      "enabled": true,
-      "description": "Phase 4b: Rename Person State → State",
-      "editable": true,
-      "required": true
-    },
-    {
-      "operation_id": "text_rename_column",
-      "parameters": {
-        "old_name": "Person Zip Code",
-        "new_name": "Zip"
-      },
-      "order": 5,
-      "enabled": true,
-      "description": "Phase 4c: Rename Person Zip Code → Zip",
-      "editable": true,
-      "required": true
-    },
-    {
-      "operation_id": "text_rename_column",
-      "parameters": {
-        "old_name": "Job Title",
-        "new_name": "Title"
-      },
-      "order": 6,
-      "enabled": true,
-      "description": "Phase 4d: Rename Job Title → Title",
-      "editable": true,
-      "required": true
-    },
-    {
-      "operation_id": "text_rename_column",
-      "parameters": {
-        "old_name": "Direct Phone Number",
-        "new_name": "Phone"
-      },
-      "order": 7,
-      "enabled": true,
-      "description": "Phase 4e: Rename Direct Phone Number → Phone",
-      "editable": true,
-      "required": true
-    },
-    {
-      "operation_id": "text_rename_column",
-      "parameters": {
-        "old_name": "Email Address",
-        "new_name": "Email"
-      },
-      "order": 8,
-      "enabled": true,
-      "description": "Phase 4f: Rename Email Address → Email",
-      "editable": true,
-      "required": true
-    },
-    {
-      "operation_id": "text_rename_column",
-      "parameters": {
-        "old_name": "Company Name",
-        "new_name": "Company"
-      },
-      "order": 9,
-      "enabled": true,
-      "description": "Phase 4g: Rename Company Name → Company",
+      "description": "Phase 4: Rename 7 columns to standard format",
       "editable": true,
       "required": true
     },
@@ -147,7 +83,7 @@
         "column": "State",
         "flag_unconverted": false
       },
-      "order": 10,
+      "order": 4,
       "enabled": true,
       "description": "Phase 5: Convert state names to 2-letter codes (Ohio → OH)",
       "editable": true,
@@ -159,7 +95,7 @@
         "column": "State",
         "excluded_states": "AK,HI,PR,VI"
       },
-      "order": 11,
+      "order": 5,
       "enabled": true,
       "description": "Phase 6: Remove Alaska, Hawaii, Puerto Rico, Virgin Islands",
       "editable": true,
@@ -171,7 +107,7 @@
         "column": "Address 1",
         "condition": "is_blank"
       },
-      "order": 12,
+      "order": 6,
       "enabled": true,
       "description": "Phase 7: Remove rows with blank Address 1",
       "editable": true,
@@ -181,8 +117,6 @@
       "operation_id": "clean_remove_columns",
       "parameters": {
         "columns": [
-          "First Name",
-          "Last Name",
           "ZoomInfo Contact ID",
           "Middle Name",
           "Salutation",
@@ -248,12 +182,11 @@
           "Query Name"
         ]
       },
-      "order": 13,
+      "order": 7,
       "enabled": true,
-      "description": "Phase 8: Remove all non-standard ZoomInfo columns (63 columns)",
+      "description": "Phase 8: Remove 63 non-standard ZoomInfo columns",
       "editable": true,
-      "required": false,
-      "notes": "You can edit this list if your export has different columns. This removes ZoomInfo IDs, URLs, industry codes, and company metadata."
+      "required": false
     },
     {
       "operation_id": "data_reorder_columns",
@@ -271,7 +204,7 @@
           "Email"
         ]
       },
-      "order": 14,
+      "order": 8,
       "enabled": true,
       "description": "Phase 9: Reorder columns to standard format",
       "editable": true,
