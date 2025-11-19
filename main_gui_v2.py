@@ -373,14 +373,20 @@ class UniversalExcelToolV2Enhanced:
         Add operation with SMART column selection dialogs
         Uses enhanced UI components for better UX
         """
-        
+
         # Get column list with letters
         columns = self.get_column_list_with_letters()
-        
+
+        # Check for special operation types
+        if operation.metadata.id == 'data_reorder_columns':
+            # Use specialized reorder columns dialog
+            self._show_reorder_columns_dialog(operation, columns)
+            return
+
         # Determine if operation needs special column selection
         needs_single_column = any(p.type == 'column' for p in operation.metadata.parameters)
         needs_multi_column = any(p.type == 'column_list' for p in operation.metadata.parameters)
-        
+
         if needs_single_column and not needs_multi_column:
             # Use smart single column selector
             self._show_single_column_dialog(operation, columns)
@@ -734,7 +740,197 @@ class UniversalExcelToolV2Enhanced:
         
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="✓ Add to Queue", command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
-    
+
+    def _show_reorder_columns_dialog(self, operation, columns):
+        """Show specialized dialog for reordering columns"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Reorder Columns")
+        dialog.geometry("700x650")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        main_frame = ttk.Frame(dialog, padding=20)
+        main_frame.pack(fill='both', expand=True)
+
+        # Title and description
+        ttk.Label(
+            main_frame,
+            text="Reorder Columns",
+            font=('Segoe UI', 14, 'bold')
+        ).pack(pady=(0, 10))
+
+        ttk.Label(
+            main_frame,
+            text="Arrange columns in desired order. Use arrow buttons to move selected column up/down.",
+            wraplength=650,
+            font=('Arial', 11)
+        ).pack(pady=(0, 10))
+
+        # Current columns section
+        ttk.Label(
+            main_frame,
+            text="Current Columns (drag or use arrows to reorder):",
+            font=('Arial', 11, 'bold')
+        ).pack(anchor='w', pady=(10, 5))
+
+        # Create frame for listbox and buttons
+        list_frame = ttk.Frame(main_frame)
+        list_frame.pack(fill='both', expand=True, pady=5)
+
+        # Listbox with scrollbar
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side='right', fill='y')
+
+        column_listbox = tk.Listbox(
+            list_frame,
+            font=('Consolas', 11),
+            height=15,
+            selectmode=tk.SINGLE,
+            yscrollcommand=scrollbar.set
+        )
+        column_listbox.pack(side='left', fill='both', expand=True)
+        scrollbar.config(command=column_listbox.yview)
+
+        # Populate with current columns
+        for col_info in columns:
+            column_listbox.insert(tk.END, col_info)
+
+        # Arrow buttons frame
+        arrow_frame = ttk.Frame(main_frame)
+        arrow_frame.pack(fill='x', pady=10)
+
+        def move_up():
+            selection = column_listbox.curselection()
+            if selection and selection[0] > 0:
+                idx = selection[0]
+                item = column_listbox.get(idx)
+                column_listbox.delete(idx)
+                column_listbox.insert(idx - 1, item)
+                column_listbox.selection_set(idx - 1)
+
+        def move_down():
+            selection = column_listbox.curselection()
+            if selection and selection[0] < column_listbox.size() - 1:
+                idx = selection[0]
+                item = column_listbox.get(idx)
+                column_listbox.delete(idx)
+                column_listbox.insert(idx + 1, item)
+                column_listbox.selection_set(idx + 1)
+
+        def move_to_top():
+            selection = column_listbox.curselection()
+            if selection and selection[0] > 0:
+                idx = selection[0]
+                item = column_listbox.get(idx)
+                column_listbox.delete(idx)
+                column_listbox.insert(0, item)
+                column_listbox.selection_set(0)
+
+        def move_to_bottom():
+            selection = column_listbox.curselection()
+            if selection and selection[0] < column_listbox.size() - 1:
+                idx = selection[0]
+                item = column_listbox.get(idx)
+                column_listbox.delete(idx)
+                column_listbox.insert(tk.END, item)
+                column_listbox.selection_set(column_listbox.size() - 1)
+
+        ttk.Button(arrow_frame, text="⬆ Move Up", command=move_up, width=15).pack(side='left', padx=5)
+        ttk.Button(arrow_frame, text="⬇ Move Down", command=move_down, width=15).pack(side='left', padx=5)
+        ttk.Button(arrow_frame, text="⤒ Move to Top", command=move_to_top, width=15).pack(side='left', padx=5)
+        ttk.Button(arrow_frame, text="⤓ Move to Bottom", command=move_to_bottom, width=15).pack(side='left', padx=5)
+
+        # Keep unlisted checkbox
+        keep_unlisted_var = tk.BooleanVar(value=False)
+        check_frame = ttk.Frame(main_frame)
+        check_frame.pack(fill='x', pady=10)
+
+        ttk.Checkbutton(
+            check_frame,
+            text="Keep columns not in the reordered list (append at end)",
+            variable=keep_unlisted_var
+        ).pack(anchor='w')
+
+        ttk.Label(
+            check_frame,
+            text="If unchecked, only the columns in the list above will be kept.",
+            font=('Arial', 9),
+            foreground='gray'
+        ).pack(anchor='w', padx=20)
+
+        # Preview frame
+        preview_frame = ttk.LabelFrame(main_frame, text="Final Column Order Preview", padding=10)
+        preview_frame.pack(fill='x', pady=10)
+
+        preview_label = ttk.Label(
+            preview_frame,
+            text="",
+            wraplength=640,
+            font=('Consolas', 9),
+            foreground='blue'
+        )
+        preview_label.pack()
+
+        def update_preview():
+            # Get current order from listbox
+            ordered_cols = []
+            for i in range(column_listbox.size()):
+                col_text = column_listbox.get(i)
+                # Extract column name (format: "A: Column Name")
+                if ':' in col_text:
+                    col_name = col_text.split(':', 1)[1].strip()
+                    ordered_cols.append(col_name)
+
+            if keep_unlisted_var.get():
+                preview_text = f"Order: {', '.join(ordered_cols)}\n+ any other columns not listed"
+            else:
+                preview_text = f"Final columns: {', '.join(ordered_cols)}"
+
+            preview_label.config(text=preview_text)
+
+        # Update preview when selection changes or checkbox toggled
+        column_listbox.bind('<<ListboxSelect>>', lambda e: update_preview())
+        keep_unlisted_var.trace('w', lambda *args: update_preview())
+        update_preview()  # Initial preview
+
+        def on_add():
+            # Extract column names in order
+            column_order = []
+            for i in range(column_listbox.size()):
+                col_text = column_listbox.get(i)
+                # Extract column name (format: "A: Column Name")
+                if ':' in col_text:
+                    col_name = col_text.split(':', 1)[1].strip()
+                    column_order.append(col_name)
+
+            if not column_order:
+                messagebox.showwarning("Warning", "Please arrange at least one column")
+                return
+
+            params = {
+                'column_order': column_order,
+                'keep_unlisted': keep_unlisted_var.get()
+            }
+
+            # Add to queue
+            self.operation_queue.append({
+                'operation_id': operation.metadata.id,
+                'name': operation.metadata.name,
+                'parameters': params,
+                'enabled': True
+            })
+
+            self.refresh_queue_display()
+            self.status_var.set(f"Added: Reorder Columns ({len(column_order)} columns)")
+            dialog.destroy()
+
+        # Buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill='x', pady=(10, 0))
+
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="✓ Add to Queue", command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
+
     def refresh_queue_display(self):
         """Refresh queue listbox"""
         self.queue_listbox.delete(0, tk.END)
