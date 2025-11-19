@@ -300,7 +300,7 @@ class DataQualityAnalyzer:
                     affected_columns=[customer_id_col],
                     suggested_operations=[{
                         'operation_id': 'data_remove_duplicates',
-                        'params': {'subset_columns': [customer_id_col]}
+                        'params': {'columns': [customer_id_col], 'keep': 'first'}
                     }],
                     reasoning="Duplicates waste resources and may annoy customers with multiple mailings."
                 )
@@ -320,7 +320,7 @@ class DataQualityAnalyzer:
                     affected_columns=list(df.columns),
                     suggested_operations=[{
                         'operation_id': 'data_remove_duplicates',
-                        'params': {'subset_columns': []}
+                        'params': {'columns': [], 'keep': 'first'}
                     }],
                     reasoning="Complete duplicates waste resources and processing time."
                 )
@@ -428,7 +428,7 @@ class DataQualityAnalyzer:
                         'operation_id': 'conditional_flag_contains',
                         'params': {
                             'column': address_columns[0],
-                            'search_text': 'PO BOX',
+                            'text': 'PO BOX',
                             'flag_column': 'PO_Box_Flag'
                         }
                     }],
@@ -459,7 +459,7 @@ class DataQualityAnalyzer:
                         'operation_id': 'conditional_flag_contains',
                         'params': {
                             'column': state_column,
-                            'search_text': 'AK|HI|PR|GU|VI|AS|MP',
+                            'text': 'AK|HI|PR|GU|VI|AS|MP',
                             'flag_column': 'Excluded_State_Flag'
                         }
                     }],
@@ -517,7 +517,7 @@ class DataQualityAnalyzer:
                     affected_columns=[email_column],
                     suggested_operations=[{
                         'operation_id': 'validate_email',
-                        'params': {'column': email_column, 'flag_column': 'Invalid_Email_Flag'}
+                        'params': {'column': email_column, 'flag_invalid': True}
                     }],
                     reasoning="Invalid emails will bounce and waste follow-up efforts."
                 )

@@ -150,12 +150,48 @@ class DataQualityIntegration:
             selected_ops = dialog.get_selected_operations()
             self.add_operations_to_queue(selected_ops)
     
+    def _validate_operation_params(self, operation, params: dict) -> Optional[str]:
+        """
+        Validate that all required parameters for an operation are present
+
+        Args:
+            operation: BaseOperation instance
+            params: Parameter dictionary
+
+        Returns:
+            Error message if validation fails, None if valid
+        """
+        # Get required parameters from operation metadata
+        required_params = []
+        for param in operation.metadata.parameters:
+            if param.required is not False:  # Default is True if not specified
+                required_params.append(param.name)
+
+        # Check each required parameter
+        missing_params = []
+        for param_name in required_params:
+            if param_name not in params:
+                missing_params.append(param_name)
+            elif params[param_name] is None:
+                missing_params.append(param_name)
+            elif isinstance(params[param_name], str) and not params[param_name].strip():
+                missing_params.append(param_name)
+            elif isinstance(params[param_name], list) and len(params[param_name]) == 0:
+                # Empty list is OK for some operations (like remove_duplicates with columns=[])
+                # Only flag if it's truly missing, not if it's an intentional empty list
+                pass
+
+        if missing_params:
+            return f"Missing required parameter(s): {', '.join(missing_params)}"
+
+        return None
+
     def add_operations_to_queue(self, operation_configs: list):
         """
         Add selected operations to the main GUI's operation queue
-        
+
         FIXED: Now properly formats operations to match main GUI's queue structure
-        
+
         Args:
             operation_configs: List of operation config dicts from analyzer
         """
@@ -170,15 +206,22 @@ class DataQualityIntegration:
         for op_config in operation_configs:
             op_id = op_config.get('operation_id')
             params = op_config.get('params', {})
-            
+
             # Get operation from registry
             operation = registry.get_by_id(op_id)
-            
+
             if operation is None:
                 failed_ops.append(op_id)
                 print(f"Warning: Operation '{op_id}' not found in registry")
                 continue
-            
+
+            # VALIDATION: Check that all required parameters are present
+            validation_error = self._validate_operation_params(operation, params)
+            if validation_error:
+                failed_ops.append(f"{op_id} ({validation_error})")
+                print(f"Validation failed for '{op_id}': {validation_error}")
+                continue
+
             # FIXED: Format to match main GUI's queue structure
             # The main GUI expects this exact format
             try:
@@ -222,14 +265,21 @@ class DataQualityIntegration:
         if added_count > 0:
             message = f"✅ Added {added_count} operation(s) to queue"
             if failed_ops:
-                message += f"\n⚠ Failed to add: {', '.join(failed_ops)}"
-            
+                message += f"\n\n⚠ Failed to add:\n"
+                for op in failed_ops:
+                    message += f"  • {op}\n"
+
             messagebox.showinfo("Operations Added", message)
         elif failed_ops:
-            messagebox.showerror(
-                "Failed to Add Operations",
-                f"Could not add operations:\n{', '.join(failed_ops)}\n\nThese operations may not be registered in the system."
-            )
+            error_message = "Could not add the following operations:\n\n"
+            for op in failed_ops:
+                error_message += f"  • {op}\n"
+            error_message += "\nPlease check that:\n"
+            error_message += "  - The operations are registered in the system\n"
+            error_message += "  - All required parameters have valid values\n"
+            error_message += "  - Column names match your data\n"
+
+            messagebox.showerror("Failed to Add Operations", error_message)
     
     def get_quick_stats(self) -> dict:
         """Get quick statistics about the current data"""
