@@ -254,8 +254,68 @@ class RemoveRowsIfOperation(BaseOperation):
         return df[mask].reset_index(drop=True)
 
 
+class ReorderColumnsOperation(BaseOperation):
+    """Reorder columns to specific sequence"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='data_reorder_columns',
+            name='Reorder Columns',
+            category='Data - Organization',
+            description='Reorder columns to a specific sequence',
+            parameters=[
+                Parameter(
+                    name='column_order',
+                    type='list',
+                    description='Ordered list of column names (comma-separated)',
+                    required=True
+                ),
+                Parameter(
+                    name='keep_unlisted',
+                    type='boolean',
+                    description='Keep columns not in the list (add them at the end)',
+                    default=False
+                )
+            ],
+            excel_equivalent='Drag columns manually',
+            examples=[
+                'Put Company, Contact, Email first',
+                'Reorder to standard mailing list format',
+                'Move ID columns to the end'
+            ],
+            tags=['reorder', 'organize', 'sort', 'columns']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        df = df.copy()
+
+        # Parse column order
+        column_order = params['column_order']
+        if isinstance(column_order, str):
+            column_order = [col.strip() for col in column_order.split(',')]
+
+        keep_unlisted = params.get('keep_unlisted', False)
+
+        # Filter to columns that actually exist
+        existing_ordered = [col for col in column_order if col in df.columns]
+
+        if keep_unlisted:
+            # Add any columns not in the list to the end
+            unlisted_cols = [col for col in df.columns if col not in column_order]
+            final_order = existing_ordered + unlisted_cols
+        else:
+            # Only keep columns in the specified order
+            final_order = existing_ordered
+
+        # Reorder
+        df = df[final_order]
+
+        return df
+
+
 # Register all operations
 registry.register(VLookupOperation())
 registry.register(RemoveDuplicatesOperation())
 registry.register(SortDataOperation())
 registry.register(RemoveRowsIfOperation())
+registry.register(ReorderColumnsOperation())

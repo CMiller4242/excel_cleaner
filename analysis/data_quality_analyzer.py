@@ -262,28 +262,99 @@ class DataQualityAnalyzer:
             column_intelligence={}
         )
 
-        # Step 1: Check Standard Format compliance (FIRST - before other checks)
+        # Step 1: Detect ZoomInfo files and suggest presets (FIRST - before other checks)
+        self._detect_zoominfo_file(df, report)
+
+        # Step 2: Check Standard Format compliance
         self._detect_standard_format_compliance(df, report)
 
-        # Step 2: Detect column types
+        # Step 3: Detect column types
         report.column_intelligence = self.detector.detect_column_types(df)
 
-        # Step 3: Detect issues by category
+        # Step 4: Detect issues by category
         self._detect_duplicate_issues(df, report)
         self._detect_missing_data_issues(df, report)
         self._detect_formatting_issues(df, report)
         self._detect_mail_list_issues(df, report)
         self._detect_validation_issues(df, report)
 
-        # Step 4: Calculate quality score
+        # Step 5: Calculate quality score
         report.quality_score = self._calculate_quality_score(report)
 
-        # Step 5: Count totals
+        # Step 6: Count totals
         report.total_issues = len(report.get_all_issues())
         report.total_suggested_operations = len(report.get_all_suggested_operations())
         report.estimated_time_seconds = self._estimate_processing_time(report)
 
         return report
+
+    def _detect_zoominfo_file(self, df: pd.DataFrame, report: AnalysisReport):
+        """
+        Detect if file is a ZoomInfo export and suggest appropriate preset
+        """
+        try:
+            from utils.preset_manager import detect_and_suggest_preset
+
+            # Detect file type and get preset suggestion
+            detection = detect_and_suggest_preset(df)
+
+            if not detection:
+                return  # Not a recognized file type
+
+            # Create issue suggesting the preset
+            preset_name = detection['preset_name']
+            confidence = detection['confidence']
+            validation = detection['validation']
+
+            # Build description
+            description_parts = [
+                f"This appears to be a {detection['file_type']} export file.\n",
+                f"Detection confidence: {confidence:.0%}\n\n"
+            ]
+
+            if validation['valid']:
+                description_parts.append(f"✓ All expected columns found ({len(detection['preset_data']['expected_columns'])} columns)")
+            else:
+                description_parts.append(f"Column validation:\n")
+                description_parts.append(f"  • Found: {len(df.columns)} columns\n")
+                description_parts.append(f"  • Expected: {len(detection['preset_data']['expected_columns'])} columns\n")
+                if validation['missing_columns']:
+                    description_parts.append(f"  • Missing: {len(validation['missing_columns'])} columns\n")
+                description_parts.append(f"  • Match confidence: {validation['confidence']:.0%}\n")
+
+            description_parts.append(f"\n💡 Recommended Action:\n")
+            description_parts.append(f"Load the '{preset_name}' preset to standardize this file.\n\n")
+            description_parts.append(f"The preset will:\n")
+
+            # Show what the preset does
+            operations = detection['preset_data'].get('operations', [])
+            operation_count = len(operations)
+            description_parts.append(f"  • Apply {operation_count} operations\n")
+
+            if 'expected_output' in detection['preset_data']:
+                output = detection['preset_data']['expected_output']
+                description_parts.append(f"  • Reduce to {output.get('columns', 'N/A')} standard columns\n")
+                if 'filters_applied' in output:
+                    for filter_desc in output['filters_applied'][:3]:  # Show first 3
+                        description_parts.append(f"  • {filter_desc}\n")
+
+            issue = Issue(
+                category=IssueCategory.STANDARD_FORMAT,
+                severity=IssueSeverity.RECOMMENDED,
+                title=f"{detection['file_type']} File Detected - Preset Available",
+                description=''.join(description_parts),
+                affected_rows=0,
+                affected_columns=[],
+                suggested_operations=[],  # Preset operations will be loaded separately
+                reasoning=f"Using a preset ensures consistent, tested transformations for {detection['file_type']} exports and reduces manual work."
+            )
+
+            report.recommended_fixes.append(issue)
+
+        except Exception as e:
+            # Silently fail if detection module not available
+            print(f"ZoomInfo detection unavailable: {e}")
+            pass
 
     def _detect_standard_format_compliance(self, df: pd.DataFrame, report: AnalysisReport):
         """
