@@ -1,0 +1,98 @@
+{
+  "id": "standardize_and_clean",
+  "name": "Standardize + Clean Data",
+  "description": "Format standard columns and remove blank/incomplete rows (assumes Standard Format column names)",
+  "category": "Standard Format",
+  "operations": [
+    {
+      "operation_id": "clean_remove_blank_rows",
+      "parameters": {},
+      "order": 0,
+      "enabled": true,
+      "description": "Remove completely empty rows"
+    },
+    {
+      "operation_id": "text_trim",
+      "parameters": {
+        "columns": ["Customer", "First Name", "Last Name", "Company", "Job Title", "Email", "Phone", "Street", "City", "State", "Zip", "Country"]
+      },
+      "order": 1,
+      "enabled": true,
+      "description": "Trim whitespace from all text columns"
+    },
+    {
+      "operation_id": "text_title_case",
+      "parameters": {
+        "columns": ["First Name", "Last Name", "Street", "City", "Job Title"]
+      },
+      "order": 2,
+      "enabled": true,
+      "description": "Apply Title Case to names and addresses"
+    },
+    {
+      "operation_id": "text_uppercase",
+      "parameters": {
+        "columns": ["Company", "State", "Country"]
+      },
+      "order": 3,
+      "enabled": true,
+      "description": "Apply UPPERCASE to company and location codes"
+    },
+    {
+      "operation_id": "text_lowercase",
+      "parameters": {
+        "columns": ["Email"]
+      },
+      "order": 4,
+      "enabled": true,
+      "description": "Apply lowercase to email addresses"
+    },
+    {
+      "operation_id": "text_left",
+      "parameters": {
+        "column": "Zip",
+        "length": 5,
+        "new_column": "Zip"
+      },
+      "order": 5,
+      "enabled": true,
+      "description": "Extract 5-digit zip code"
+    },
+    {
+      "operation_id": "data_remove_rows_if",
+      "parameters": {
+        "column": "Company",
+        "condition": "is_blank"
+      },
+      "order": 6,
+      "enabled": true,
+      "description": "Remove rows with blank Company"
+    },
+    {
+      "operation_id": "data_remove_rows_if",
+      "parameters": {
+        "column": "Email",
+        "condition": "is_blank"
+      },
+      "order": 7,
+      "enabled": true,
+      "description": "Remove rows with blank Email"
+    },
+    {
+      "operation_id": "data_sort",
+      "parameters": {
+        "columns": ["Company", "Last Name"],
+        "ascending": true
+      },
+      "order": 8,
+      "enabled": true,
+      "description": "Sort by Company then Last Name"
+    }
+  ],
+  "created_at": "2025-11-19T00:00:00",
+  "updated_at": "2025-11-19T00:00:00",
+  "author": "system",
+  "usage_count": 0,
+  "is_system": true,
+  "notes": "This preset assumes Standard Format column names and removes rows missing critical data (Company, Email). Run 'Analyze Data Quality' first to standardize column names."
+}

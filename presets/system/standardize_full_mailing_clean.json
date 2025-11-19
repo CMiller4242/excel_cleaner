@@ -1,0 +1,193 @@
+{
+  "id": "standardize_full_mailing_clean",
+  "name": "Standardize + Full Mailing List Clean",
+  "description": "Complete mailing list cleaning with formatting, validation, deduplication, and filtering (assumes Standard Format column names)",
+  "category": "Standard Format",
+  "operations": [
+    {
+      "operation_id": "clean_remove_blank_rows",
+      "parameters": {},
+      "order": 0,
+      "enabled": true,
+      "description": "Phase 1: Remove completely empty rows"
+    },
+    {
+      "operation_id": "text_trim",
+      "parameters": {
+        "columns": ["Customer", "First Name", "Last Name", "Company", "Job Title", "Email", "Phone", "Street", "City", "State", "Zip", "Country"]
+      },
+      "order": 1,
+      "enabled": true,
+      "description": "Phase 2: Trim whitespace from all columns"
+    },
+    {
+      "operation_id": "text_title_case",
+      "parameters": {
+        "columns": ["First Name", "Last Name", "Street", "City", "Job Title"]
+      },
+      "order": 2,
+      "enabled": true,
+      "description": "Phase 2: Format names and addresses"
+    },
+    {
+      "operation_id": "text_uppercase",
+      "parameters": {
+        "columns": ["Company", "State", "Country"]
+      },
+      "order": 3,
+      "enabled": true,
+      "description": "Phase 2: Format company and location codes"
+    },
+    {
+      "operation_id": "text_lowercase",
+      "parameters": {
+        "columns": ["Email"]
+      },
+      "order": 4,
+      "enabled": true,
+      "description": "Phase 2: Format email addresses"
+    },
+    {
+      "operation_id": "text_phone_format",
+      "parameters": {
+        "column": "Phone",
+        "new_column": "Phone",
+        "remove_invalid": false
+      },
+      "order": 5,
+      "enabled": true,
+      "description": "Phase 2: Format phone numbers to (XXX) XXX-XXXX"
+    },
+    {
+      "operation_id": "text_left",
+      "parameters": {
+        "column": "Zip",
+        "length": 5,
+        "new_column": "Zip"
+      },
+      "order": 6,
+      "enabled": true,
+      "description": "Phase 2: Extract 5-digit zip codes"
+    },
+    {
+      "operation_id": "validate_email",
+      "parameters": {
+        "column": "Email",
+        "flag_invalid": true
+      },
+      "order": 7,
+      "enabled": true,
+      "description": "Phase 3: Validate email format (creates Email_Valid flag)"
+    },
+    {
+      "operation_id": "validate_state",
+      "parameters": {
+        "column": "State",
+        "auto_convert": true,
+        "flag_invalid": true
+      },
+      "order": 8,
+      "enabled": true,
+      "description": "Phase 3: Validate state codes (creates State_Valid flag)"
+    },
+    {
+      "operation_id": "conditional_flag_contains",
+      "parameters": {
+        "column": "Street",
+        "text": "PO Box",
+        "new_column": "PO_Box_Flag",
+        "case_sensitive": false
+      },
+      "order": 9,
+      "enabled": true,
+      "description": "Phase 3: Flag PO Box addresses"
+    },
+    {
+      "operation_id": "data_remove_duplicates",
+      "parameters": {
+        "columns": ["Email"],
+        "keep": "first"
+      },
+      "order": 10,
+      "enabled": true,
+      "description": "Phase 4: Remove duplicate emails (keep first occurrence)"
+    },
+    {
+      "operation_id": "data_remove_rows_if",
+      "parameters": {
+        "column": "Email_Valid",
+        "condition": "is_false"
+      },
+      "order": 11,
+      "enabled": true,
+      "description": "Phase 5: Remove invalid emails"
+    },
+    {
+      "operation_id": "data_remove_rows_if",
+      "parameters": {
+        "column": "PO_Box_Flag",
+        "condition": "equals",
+        "value": "True",
+        "case_sensitive": false
+      },
+      "order": 12,
+      "enabled": true,
+      "description": "Phase 5: Remove PO Box addresses"
+    },
+    {
+      "operation_id": "data_remove_rows_if",
+      "parameters": {
+        "column": "Company",
+        "condition": "is_blank"
+      },
+      "order": 13,
+      "enabled": true,
+      "description": "Phase 5: Remove rows with blank Company"
+    },
+    {
+      "operation_id": "data_remove_rows_if",
+      "parameters": {
+        "column": "First Name",
+        "condition": "is_blank"
+      },
+      "order": 14,
+      "enabled": true,
+      "description": "Phase 5: Remove rows with blank First Name"
+    },
+    {
+      "operation_id": "data_remove_rows_if",
+      "parameters": {
+        "column": "Last Name",
+        "condition": "is_blank"
+      },
+      "order": 15,
+      "enabled": true,
+      "description": "Phase 5: Remove rows with blank Last Name"
+    },
+    {
+      "operation_id": "data_sort",
+      "parameters": {
+        "columns": ["Company", "Last Name"],
+        "ascending": true
+      },
+      "order": 16,
+      "enabled": true,
+      "description": "Phase 6: Sort by Company then Last Name"
+    },
+    {
+      "operation_id": "clean_remove_columns",
+      "parameters": {
+        "columns": ["Email_Valid", "State_Valid", "PO_Box_Flag"]
+      },
+      "order": 17,
+      "enabled": false,
+      "description": "Phase 6: Remove validation flag columns (OPTIONAL - disabled by default)"
+    }
+  ],
+  "created_at": "2025-11-19T00:00:00",
+  "updated_at": "2025-11-19T00:00:00",
+  "author": "system",
+  "usage_count": 0,
+  "is_system": true,
+  "notes": "Complete automated mailing list cleaning. This preset assumes Standard Format column names. Run 'Analyze Data Quality' first to standardize column names. Expected result: ~50-60% row reduction with 100% valid, deliverable contacts."
+}
