@@ -25,19 +25,67 @@ class PresetManager:
 
         Args:
             preset_directory: Path to directory containing presets.
-                            Defaults to presets/system in project root.
+                            Defaults to ~/.universal_excel_tool/presets
         """
         if preset_directory is None:
-            # Default to presets/system directory in project
-            current_dir = Path(__file__).parent.parent
-            preset_directory = current_dir / 'presets' / 'system'
+            # Default to user home directory
+            preset_directory = Path.home() / ".universal_excel_tool" / "presets"
 
         self.preset_directory = Path(preset_directory)
-        logger.info(f"PresetManager initialized with directory: {self.preset_directory}")
+
+        # Create directory if it doesn't exist
+        try:
+            self.preset_directory.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Preset directory ready: {self.preset_directory}")
+        except Exception as e:
+            logger.error(f"Failed to create preset directory: {e}")
+            raise
+
+        # Initialize preset registry (in-memory cache)
+        self._presets_cache = {}
+
+        # Load all presets on startup
+        self._load_all_presets_to_cache()
+
+        logger.info(f"PresetManager initialized with {len(self._presets_cache)} presets")
+
+    def _load_all_presets_to_cache(self):
+        """
+        Load all preset JSON files from the presets directory into memory cache.
+        Called on startup to populate preset registry.
+        """
+        try:
+            # Find all .json files in preset directory
+            preset_files = list(self.preset_directory.glob("*.json"))
+
+            if not preset_files:
+                logger.warning(f"No preset files found in {self.preset_directory}")
+                logger.info("Preset directory is empty - presets can be added later")
+                return
+
+            for preset_file in preset_files:
+                try:
+                    with open(preset_file, 'r') as f:
+                        preset_data = json.load(f)
+
+                    # Store in cache using preset ID as key
+                    preset_id = preset_data.get('id', preset_file.stem)
+                    self._presets_cache[preset_id] = preset_data
+                    logger.debug(f"Cached preset: {preset_data.get('name', preset_id)} (ID: {preset_id})")
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON in {preset_file.name}: {e}")
+                except Exception as e:
+                    logger.error(f"Error loading {preset_file.name}: {e}")
+
+            logger.info(f"Loaded {len(self._presets_cache)} presets into cache")
+
+        except Exception as e:
+            logger.error(f"Error scanning preset directory: {e}")
 
     def list_presets(self, category: str = None) -> List[Dict]:
         """
-        List all available presets
+        List all available presets from cache
 
         Args:
             category: Optional category filter (e.g., "ZoomInfo", "Standard Format")
@@ -47,44 +95,27 @@ class PresetManager:
         """
         presets = []
 
-        if not self.preset_directory.exists():
-            logger.warning(f"Preset directory does not exist: {self.preset_directory}")
-            return presets
-
-        logger.debug(f"Scanning preset directory: {self.preset_directory}")
-
-        preset_files = list(self.preset_directory.glob('*.json'))
-        logger.debug(f"Found {len(preset_files)} preset files")
-
-        for preset_file in preset_files:
-            try:
-                with open(preset_file, 'r') as f:
-                    preset_data = json.load(f)
-
-                # Apply category filter if specified
-                if category and preset_data.get('category') != category:
-                    continue
-
-                preset_info = {
-                    'id': preset_data.get('id'),
-                    'name': preset_data.get('name'),
-                    'description': preset_data.get('description'),
-                    'category': preset_data.get('category'),
-                    'file_path': str(preset_file),
-                    'operation_count': len(preset_data.get('operations', []))
-                }
-                presets.append(preset_info)
-                logger.debug(f"Loaded preset: {preset_info['name']} ({preset_info['operation_count']} operations)")
-            except Exception as e:
-                logger.error(f"Error loading preset {preset_file}: {e}")
+        for preset_id, preset_data in self._presets_cache.items():
+            # Apply category filter if specified
+            if category and preset_data.get('category') != category:
                 continue
 
-        logger.info(f"Loaded {len(presets)} presets")
+            preset_info = {
+                'id': preset_data.get('id', preset_id),
+                'name': preset_data.get('name'),
+                'description': preset_data.get('description'),
+                'category': preset_data.get('category'),
+                'file_path': str(self.preset_directory / f"{preset_id}.json"),
+                'operation_count': len(preset_data.get('operations', []))
+            }
+            presets.append(preset_info)
+
+        logger.debug(f"Returning {len(presets)} presets" + (f" (category: {category})" if category else ""))
         return presets
 
     def load_preset(self, preset_id: str) -> Optional[Dict]:
         """
-        Load a specific preset by ID
+        Load a specific preset by ID from cache
 
         Args:
             preset_id: Preset identifier
@@ -92,26 +123,18 @@ class PresetManager:
         Returns:
             Preset data dict or None if not found
         """
-        preset_file = self.preset_directory / f"{preset_id}.json"
-
-        logger.debug(f"Loading preset '{preset_id}' from {preset_file}")
-
-        if not preset_file.exists():
-            logger.error(f"Preset file not found: {preset_file}")
+        if preset_id not in self._presets_cache:
+            logger.error(f"Preset not found in cache: {preset_id}")
+            logger.debug(f"Available presets: {list(self._presets_cache.keys())}")
             return None
 
-        try:
-            with open(preset_file, 'r') as f:
-                preset_data = json.load(f)
-            logger.info(f"Successfully loaded preset: {preset_data.get('name', preset_id)}")
-            return preset_data
-        except Exception as e:
-            logger.error(f"Error loading preset {preset_id}: {e}")
-            return None
+        preset_data = self._presets_cache[preset_id]
+        logger.info(f"Loaded preset from cache: {preset_data.get('name', preset_id)}")
+        return preset_data
 
     def save_preset(self, preset_data: Dict, preset_id: str = None) -> bool:
         """
-        Save a preset to disk
+        Save a preset to disk and update cache
 
         Args:
             preset_data: Preset configuration dict
@@ -124,7 +147,7 @@ class PresetManager:
             preset_id = preset_data.get('id')
 
         if not preset_id:
-            print("Error: Preset must have an 'id' field")
+            logger.error("Preset must have an 'id' field")
             return False
 
         preset_file = self.preset_directory / f"{preset_id}.json"
@@ -133,12 +156,19 @@ class PresetManager:
             # Create directory if it doesn't exist
             self.preset_directory.mkdir(parents=True, exist_ok=True)
 
+            # Save to disk
             with open(preset_file, 'w') as f:
                 json.dump(preset_data, f, indent=2)
 
+            # Update cache
+            self._presets_cache[preset_id] = preset_data
+
+            logger.info(f"Saved preset: {preset_data.get('name', preset_id)} (ID: {preset_id})")
+            logger.debug(f"Preset file: {preset_file}")
+
             return True
         except Exception as e:
-            print(f"Error saving preset {preset_id}: {e}")
+            logger.error(f"Error saving preset {preset_id}: {e}")
             return False
 
     def detect_file_type(self, df: pd.DataFrame, file_path: str = None) -> Tuple[str, str, float]:
