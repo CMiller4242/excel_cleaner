@@ -47,6 +47,7 @@ class UniversalExcelToolV2Enhanced:
         # Data
         self.df = None
         self.result_df = None
+        self.removed_df = None  # Track removed rows for multi-sheet export
         self.current_file = None
         self.operation_queue = []
         
@@ -1033,16 +1034,22 @@ class UniversalExcelToolV2Enhanced:
             # Execute
             self.status_var.set("Executing operations...")
             self.root.update()
-            
-            self.result_df = self.executor.execute_queue(self.df, self.operation_queue)
-            
+
+            # Use execute_queue_with_tracking to capture removed rows
+            self.result_df, self.removed_df = self.executor.execute_queue_with_tracking(self.df, self.operation_queue)
+
             # Display in enhanced preview
             self.enhanced_preview.load_dataframe(self.result_df, is_result=True)
-            
+
+            # Build success message with removed rows info
+            removed_count = len(self.removed_df) if self.removed_df is not None and not self.removed_df.empty else 0
+            success_msg = f"Operations completed!\n\nInput: {len(self.df):,} rows\nOutput: {len(self.result_df):,} rows"
+            if removed_count > 0:
+                success_msg += f"\nRemoved: {removed_count:,} rows"
+
             self.status_var.set(f"✅ Complete! {len(self.result_df):,} rows in results")
-            
-            messagebox.showinfo("Success",
-                              f"Operations completed!\n\nInput: {len(self.df):,} rows\nOutput: {len(self.result_df):,} rows")
+
+            messagebox.showinfo("Success", success_msg)
             
         except Exception as e:
             messagebox.showerror("Error", f"Execution failed:\n{str(e)}")
@@ -1053,11 +1060,11 @@ class UniversalExcelToolV2Enhanced:
         self.root.update()
     
     def save_results(self):
-        """Save results to file"""
+        """Save results to file with multi-sheet export"""
         if self.result_df is None:
             messagebox.showwarning("Warning", "No results to save")
             return
-        
+
         filename = filedialog.asksaveasfilename(
             title="Save Results",
             defaultextension=".xlsx",
@@ -1066,19 +1073,45 @@ class UniversalExcelToolV2Enhanced:
                 ("CSV files", "*.csv")
             ]
         )
-        
+
         if not filename:
             return
-        
+
         try:
             if filename.endswith('.csv'):
+                # CSV can only save one sheet - save results only
                 ExportHelper.export_to_csv(self.result_df, filename)
+                success_msg = f"Results saved to:\n{filename}\n\nNote: CSV format only saves Results sheet."
             else:
-                ExportHelper.export_to_excel(self.result_df, filename)
-            
-            messagebox.showinfo("Success", f"Results saved to:\n{filename}")
+                # Excel - export multi-sheet workbook
+                sheets = {}
+
+                # Sheet 1: Original data
+                if self.df is not None:
+                    sheets['Original'] = self.df
+
+                # Sheet 2: Results
+                sheets['Results'] = self.result_df
+
+                # Sheet 3: Removed (if any rows were removed)
+                if self.removed_df is not None and not self.removed_df.empty:
+                    sheets['Removed'] = self.removed_df
+
+                ExportHelper.export_multiple_sheets(sheets, filename)
+
+                # Build success message
+                sheet_info = []
+                if 'Original' in sheets:
+                    sheet_info.append(f"• Original: {len(sheets['Original']):,} rows")
+                sheet_info.append(f"• Results: {len(sheets['Results']):,} rows")
+                if 'Removed' in sheets:
+                    sheet_info.append(f"• Removed: {len(sheets['Removed']):,} rows")
+
+                success_msg = f"Workbook saved to:\n{filename}\n\nSheets:\n" + "\n".join(sheet_info)
+
+            messagebox.showinfo("Success", success_msg)
             self.status_var.set(f"Saved to {Path(filename).name}")
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save:\n{str(e)}")
     
@@ -1164,8 +1197,32 @@ class UniversalExcelToolV2Enhanced:
             if not name:
                 messagebox.showwarning("Warning", "Please enter a name")
                 return
-            
+
             preset_id = name.lower().replace(' ', '_')
+
+            # Check if preset already exists
+            existing_preset = self.preset_manager.load_preset(preset_id)
+
+            if existing_preset:
+                # Preset exists - ask for confirmation to overwrite
+                response = messagebox.askyesnocancel(
+                    "Preset Exists",
+                    f"A preset named '{existing_preset.name}' already exists.\n\n"
+                    f"Do you want to overwrite it?\n\n"
+                    f"• Yes = Overwrite existing preset\n"
+                    f"• No = Enter a different name\n"
+                    f"• Cancel = Cancel save",
+                    icon='warning'
+                )
+
+                if response is None:  # Cancel
+                    return
+                elif response is False:  # No - allow user to change name
+                    name_var.set("")
+                    messagebox.showinfo("Info", "Please enter a different preset name")
+                    return
+                # else: response is True - continue with overwrite
+
             operations = [
                 OperationConfig(
                     operation_id=op['operation_id'],
@@ -1175,20 +1232,24 @@ class UniversalExcelToolV2Enhanced:
                 )
                 for i, op in enumerate(self.operation_queue)
             ]
-            
+
+            # Create preset with updated timestamp if overwriting
             preset = Preset(
                 id=preset_id,
                 name=name,
                 description=desc_var.get(),
                 category="Custom",
                 operations=operations,
-                created_at=datetime.now().isoformat(),
+                created_at=existing_preset.created_at if existing_preset else datetime.now().isoformat(),
                 updated_at=datetime.now().isoformat()
             )
-            
+
             try:
                 self.preset_manager.save_preset(preset)
-                messagebox.showinfo("Success", f"Preset '{name}' saved!")
+                if existing_preset:
+                    messagebox.showinfo("Success", f"Preset '{name}' updated successfully!")
+                else:
+                    messagebox.showinfo("Success", f"Preset '{name}' saved!")
                 dialog.destroy()
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save:\n{str(e)}")
