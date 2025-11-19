@@ -12,7 +12,11 @@ class OperationConfig:
     parameters: Dict
     order: int
     enabled: bool = True
-    
+    description: str = ""
+    editable: bool = True
+    required: bool = False
+    notes: str = ""
+
     def to_dict(self):
         return asdict(self)
 
