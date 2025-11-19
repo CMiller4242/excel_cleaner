@@ -10,6 +10,7 @@ from . import math_ops
 from . import date_ops
 from . import validation_ops
 from . import conditional_ops
+from . import zoominfo_ops
 
 # Import standardization operations (phone, ZIP, state, etc.)
 from . import standardization_ops

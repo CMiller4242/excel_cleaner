@@ -1,0 +1,308 @@
+{
+  "id": "zoominfo_healthcare_evs",
+  "name": "ZoomInfo - Healthcare/EVS Export",
+  "description": "Standardize ZoomInfo Healthcare/EVS export to standard mailing list format (10 columns)",
+  "category": "ZoomInfo",
+  "file_type": "ZoomInfo",
+  "format_variant": "Healthcare/EVS",
+  "version": "1.0",
+  "expected_columns": [
+    "First Name",
+    "Last Name",
+    "Job Title",
+    "Direct Phone Number",
+    "Email Address",
+    "Person Street",
+    "Person City",
+    "Person State",
+    "Person Zip Code",
+    "Company Name",
+    "ZoomInfo Contact ID"
+  ],
+  "operations": [
+    {
+      "operation_id": "clean_remove_blank_rows",
+      "parameters": {},
+      "order": 0,
+      "enabled": true,
+      "description": "Phase 1: Remove completely empty rows",
+      "editable": false,
+      "required": true
+    },
+    {
+      "operation_id": "text_concatenate",
+      "parameters": {
+        "columns": ["First Name", "Last Name"],
+        "separator": " ",
+        "new_column": "Contact"
+      },
+      "order": 1,
+      "enabled": true,
+      "description": "Phase 2: Combine First Name + Last Name → Contact",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "zoominfo_split_address",
+      "parameters": {
+        "source_column": "Person Street",
+        "suite_keywords": "Ste,Suite,Suites,Unit,Units,Apt,Apartment,Bldg,Building,Floor,Flr",
+        "address1_column": "Address 1",
+        "address2_column": "Address 2",
+        "remove_original": true
+      },
+      "order": 2,
+      "enabled": true,
+      "description": "Phase 3: Split Person Street → Address 1 (street) + Address 2 (suite/unit)",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "text_rename_column",
+      "parameters": {
+        "old_name": "Person City",
+        "new_name": "City"
+      },
+      "order": 3,
+      "enabled": true,
+      "description": "Phase 4a: Rename Person City → City",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "text_rename_column",
+      "parameters": {
+        "old_name": "Person State",
+        "new_name": "State"
+      },
+      "order": 4,
+      "enabled": true,
+      "description": "Phase 4b: Rename Person State → State",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "text_rename_column",
+      "parameters": {
+        "old_name": "Person Zip Code",
+        "new_name": "Zip"
+      },
+      "order": 5,
+      "enabled": true,
+      "description": "Phase 4c: Rename Person Zip Code → Zip",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "text_rename_column",
+      "parameters": {
+        "old_name": "Job Title",
+        "new_name": "Title"
+      },
+      "order": 6,
+      "enabled": true,
+      "description": "Phase 4d: Rename Job Title → Title",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "text_rename_column",
+      "parameters": {
+        "old_name": "Direct Phone Number",
+        "new_name": "Phone"
+      },
+      "order": 7,
+      "enabled": true,
+      "description": "Phase 4e: Rename Direct Phone Number → Phone",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "text_rename_column",
+      "parameters": {
+        "old_name": "Email Address",
+        "new_name": "Email"
+      },
+      "order": 8,
+      "enabled": true,
+      "description": "Phase 4f: Rename Email Address → Email",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "text_rename_column",
+      "parameters": {
+        "old_name": "Company Name",
+        "new_name": "Company"
+      },
+      "order": 9,
+      "enabled": true,
+      "description": "Phase 4g: Rename Company Name → Company",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "zoominfo_state_converter",
+      "parameters": {
+        "column": "State",
+        "flag_unconverted": false
+      },
+      "order": 10,
+      "enabled": true,
+      "description": "Phase 5: Convert state names to 2-letter codes (Ohio → OH)",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "remove_excluded_states",
+      "parameters": {
+        "column": "State",
+        "excluded_states": "AK,HI,PR,VI"
+      },
+      "order": 11,
+      "enabled": true,
+      "description": "Phase 6: Remove Alaska, Hawaii, Puerto Rico, Virgin Islands",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "data_remove_rows_if",
+      "parameters": {
+        "column": "Address 1",
+        "condition": "is_blank"
+      },
+      "order": 12,
+      "enabled": true,
+      "description": "Phase 7: Remove rows with blank Address 1",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "clean_remove_columns",
+      "parameters": {
+        "columns": [
+          "First Name",
+          "Last Name",
+          "ZoomInfo Contact ID",
+          "Middle Name",
+          "Salutation",
+          "Suffix",
+          "Management Level",
+          "Job Start Date",
+          "Job Function",
+          "Department",
+          "Company Division Name",
+          "Email Domain",
+          "Mobile phone",
+          "Highest Level of Education",
+          "Contact Accuracy Score",
+          "Contact Accuracy Grade",
+          "ZoomInfo Contact Profile URL",
+          "LinkedIn Contact Profile URL",
+          "Notice Provided Date",
+          "Country",
+          "ZoomInfo Company ID",
+          "Website",
+          "Founded Year",
+          "Company HQ Phone",
+          "Fax",
+          "Ticker",
+          "Revenue (in 000s USD)",
+          "Revenue Range (in USD)",
+          "Employees",
+          "Employee Range",
+          "SIC Code 1",
+          "SIC Code 2",
+          "SIC Codes",
+          "NAICS Code 1",
+          "NAICS Code 2",
+          "NAICS Codes",
+          "Primary Industry",
+          "Primary Sub-Industry",
+          "All Industries",
+          "All Sub-Industries",
+          "Industry Hierarchical Category",
+          "Secondary Industry Hierarchical Category",
+          "Alexa Rank",
+          "ZoomInfo Company Profile URL",
+          "LinkedIn Company Profile URL",
+          "Facebook Company Profile URL",
+          "Twitter Company Profile URL",
+          "Ownership Type",
+          "Business Model",
+          "Certified Active Company",
+          "Certification Date",
+          "Total Funding Amount (in 000s USD)",
+          "Recent Funding Amount (in 000s USD)",
+          "Recent Funding Round",
+          "Recent Funding Date",
+          "Recent Investors",
+          "All Investors",
+          "Company Street Address",
+          "Company City",
+          "Company State",
+          "Company Zip Code",
+          "Company Country",
+          "Full Address",
+          "Number of Locations",
+          "Query Name"
+        ]
+      },
+      "order": 13,
+      "enabled": true,
+      "description": "Phase 8: Remove all non-standard ZoomInfo columns (63 columns)",
+      "editable": true,
+      "required": false,
+      "notes": "You can edit this list if your export has different columns. This removes ZoomInfo IDs, URLs, industry codes, and company metadata."
+    },
+    {
+      "operation_id": "data_reorder_columns",
+      "parameters": {
+        "column_order": [
+          "Company",
+          "Address 1",
+          "Address 2",
+          "City",
+          "State",
+          "Zip",
+          "Phone",
+          "Contact",
+          "Title",
+          "Email"
+        ]
+      },
+      "order": 14,
+      "enabled": true,
+      "description": "Phase 9: Reorder columns to standard format",
+      "editable": true,
+      "required": true
+    }
+  ],
+  "created_at": "2025-11-19T00:00:00",
+  "updated_at": "2025-11-19T00:00:00",
+  "author": "system",
+  "usage_count": 0,
+  "is_system": true,
+  "expected_output": {
+    "columns": 10,
+    "column_names": [
+      "Company",
+      "Address 1",
+      "Address 2",
+      "City",
+      "State",
+      "Zip",
+      "Phone",
+      "Contact",
+      "Title",
+      "Email"
+    ],
+    "filters_applied": [
+      "No Alaska, Hawaii, PR, VI states",
+      "No blank Address 1",
+      "States converted to 2-letter codes",
+      "Addresses split into street + suite"
+    ]
+  },
+  "notes": "This preset transforms ZoomInfo Healthcare/EVS exports (typically 73 columns, 1000+ rows) into a clean 10-column mailing list. Expected row reduction: 10-30% due to excluded states and blank addresses."
+}
