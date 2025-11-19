@@ -3,6 +3,8 @@ Data Quality Analyzer for Universal Excel Tool V2.1
 Automatically detects data quality issues and suggests cleaning operations
 
 Focus: Mail list cleaning for promotional products industry
+
+ENHANCED: Now includes Standard Format compliance checking
 """
 
 from dataclasses import dataclass, field
@@ -10,6 +12,7 @@ from typing import List, Dict, Tuple, Optional
 from enum import Enum
 import pandas as pd
 import re
+from pathlib import Path
 
 
 class IssueSeverity(Enum):
@@ -21,6 +24,7 @@ class IssueSeverity(Enum):
 
 class IssueCategory(Enum):
     """Categories of data quality issues"""
+    STANDARD_FORMAT = "Standard Format"
     DUPLICATES = "Duplicates"
     MISSING_DATA = "Missing Data"
     FORMATTING = "Formatting"
@@ -240,9 +244,10 @@ class ColumnTypeDetector:
 
 class DataQualityAnalyzer:
     """Main analyzer that detects data quality issues"""
-    
+
     def __init__(self):
         self.detector = ColumnTypeDetector()
+        self.column_mapper = None  # Lazy load to avoid circular imports
     
     def analyze(self, df: pd.DataFrame) -> AnalysisReport:
         """
@@ -256,27 +261,198 @@ class DataQualityAnalyzer:
             quality_score=100,  # Start at 100, deduct for issues
             column_intelligence={}
         )
-        
-        # Step 1: Detect column types
+
+        # Step 1: Check Standard Format compliance (FIRST - before other checks)
+        self._detect_standard_format_compliance(df, report)
+
+        # Step 2: Detect column types
         report.column_intelligence = self.detector.detect_column_types(df)
-        
-        # Step 2: Detect issues by category
+
+        # Step 3: Detect issues by category
         self._detect_duplicate_issues(df, report)
         self._detect_missing_data_issues(df, report)
         self._detect_formatting_issues(df, report)
         self._detect_mail_list_issues(df, report)
         self._detect_validation_issues(df, report)
-        
-        # Step 3: Calculate quality score
+
+        # Step 4: Calculate quality score
         report.quality_score = self._calculate_quality_score(report)
-        
-        # Step 4: Count totals
+
+        # Step 5: Count totals
         report.total_issues = len(report.get_all_issues())
         report.total_suggested_operations = len(report.get_all_suggested_operations())
         report.estimated_time_seconds = self._estimate_processing_time(report)
-        
+
         return report
-    
+
+    def _detect_standard_format_compliance(self, df: pd.DataFrame, report: AnalysisReport):
+        """
+        Check if dataframe complies with Standard Format specification
+        Suggests standardization operations if non-compliant
+        """
+        # Lazy load ColumnMapper to avoid circular imports
+        if self.column_mapper is None:
+            try:
+                from utils.column_mapper import ColumnMapper
+                self.column_mapper = ColumnMapper()
+            except Exception as e:
+                # If ColumnMapper not available, skip this check
+                print(f"Standard Format checking unavailable: {e}")
+                return
+
+        # Get compliance report
+        try:
+            compliance = self.column_mapper.get_compliance_report(df)
+        except Exception as e:
+            print(f"Error checking Standard Format compliance: {e}")
+            return
+
+        mappings = compliance.get('mappings', {})
+        compliance_percentage = compliance.get('compliance_percentage', 0)
+
+        # Issue 1: Non-standard columns that should be removed
+        columns_to_remove = [
+            orig_name for orig_name, mapping in mappings.items()
+            if mapping.action == 'remove'
+        ]
+
+        if columns_to_remove:
+            # Group columns by reason
+            removal_reasons = {}
+            for col in columns_to_remove:
+                reason = mappings[col].reason
+                if reason not in removal_reasons:
+                    removal_reasons[reason] = []
+                removal_reasons[reason].append(col)
+
+            # Create detailed description
+            description_parts = ["The following non-standard columns should be removed:\n"]
+            for reason, cols in removal_reasons.items():
+                description_parts.append(f"\n{reason}:")
+                for col in cols:
+                    description_parts.append(f"  • {col}")
+
+            issue = Issue(
+                category=IssueCategory.STANDARD_FORMAT,
+                severity=IssueSeverity.RECOMMENDED,
+                title=f"Found {len(columns_to_remove)} non-standard columns",
+                description=''.join(description_parts),
+                affected_rows=0,
+                affected_columns=columns_to_remove,
+                suggested_operations=[{
+                    'operation_id': 'clean_remove_columns',
+                    'params': {'columns': columns_to_remove}
+                }],
+                reasoning="Non-standard columns (internal IDs, metadata, scores) clutter the dataset and should be removed for clean mailing list format."
+            )
+            report.recommended_fixes.append(issue)
+
+        # Issue 2: Columns that need renaming (high-confidence matches)
+        columns_to_rename = [
+            (orig_name, mapping.standard_name)
+            for orig_name, mapping in mappings.items()
+            if mapping.action == 'rename' and mapping.confidence >= 0.90
+        ]
+
+        if columns_to_rename:
+            description_parts = ["The following columns should be renamed to Standard Format:\n"]
+            for orig_name, standard_name in columns_to_rename:
+                confidence = mappings[orig_name].confidence
+                description_parts.append(f"  • {orig_name} → {standard_name} ({confidence:.0%} confidence)")
+
+            # Create rename operations for each column
+            rename_operations = []
+            for orig_name, standard_name in columns_to_rename:
+                rename_operations.append({
+                    'operation_id': 'text_rename_column',
+                    'params': {'old_name': orig_name, 'new_name': standard_name}
+                })
+
+            issue = Issue(
+                category=IssueCategory.STANDARD_FORMAT,
+                severity=IssueSeverity.RECOMMENDED,
+                title=f"Found {len(columns_to_rename)} columns to rename",
+                description=''.join(description_parts),
+                affected_rows=0,
+                affected_columns=[orig for orig, _ in columns_to_rename],
+                suggested_operations=rename_operations,
+                reasoning="Standardized column names ensure consistency across all data sources and make the data easier to work with."
+            )
+            report.recommended_fixes.append(issue)
+
+        # Issue 3: Columns that need review (medium-confidence matches)
+        columns_to_review = [
+            (orig_name, mapping.standard_name, mapping.confidence)
+            for orig_name, mapping in mappings.items()
+            if mapping.action == 'review'
+        ]
+
+        if columns_to_review:
+            description_parts = ["The following columns don't match Standard Format and need review:\n"]
+            for orig_name, standard_name, confidence in columns_to_review:
+                if standard_name:
+                    description_parts.append(f"  • {orig_name} (possible match: {standard_name}, {confidence:.0%} confidence)")
+                else:
+                    description_parts.append(f"  • {orig_name} (unknown column)")
+
+            issue = Issue(
+                category=IssueCategory.STANDARD_FORMAT,
+                severity=IssueSeverity.OPTIONAL,
+                title=f"Found {len(columns_to_review)} columns needing review",
+                description=''.join(description_parts),
+                affected_rows=0,
+                affected_columns=[orig for orig, _, _ in columns_to_review],
+                suggested_operations=[],  # Manual review needed
+                reasoning="These columns may contain useful data but don't clearly map to Standard Format. Review whether they should be renamed, kept as-is, or removed."
+            )
+            report.optional_improvements.append(issue)
+
+        # Issue 4: Missing required columns
+        missing_required = compliance.get('required_columns_missing', [])
+
+        if missing_required:
+            description = (
+                f"The following required Standard Format columns are missing:\n"
+                + '\n'.join([f"  • {col}" for col in missing_required])
+                + "\n\nThese columns are essential for a complete mailing list."
+            )
+
+            issue = Issue(
+                category=IssueCategory.STANDARD_FORMAT,
+                severity=IssueSeverity.CRITICAL,
+                title=f"Missing {len(missing_required)} required columns",
+                description=description,
+                affected_rows=0,
+                affected_columns=[],
+                suggested_operations=[],  # Cannot auto-fix missing columns
+                reasoning="Required columns are essential for mailing list functionality. You may need to source this data from another file or manually add it."
+            )
+            report.critical_issues.append(issue)
+
+        # Issue 5: Overall compliance summary
+        if compliance_percentage < 100:
+            found_standard = compliance.get('standard_columns_found', 0)
+            total_standard = compliance.get('total_standard_columns', 14)
+
+            issue = Issue(
+                category=IssueCategory.STANDARD_FORMAT,
+                severity=IssueSeverity.RECOMMENDED,
+                title=f"Standard Format Compliance: {compliance_percentage:.0f}%",
+                description=(
+                    f"Current compliance: {found_standard}/{total_standard} standard columns present.\n\n"
+                    f"To achieve full Standard Format compliance:\n"
+                    f"  • Remove {compliance['columns_to_remove']} non-standard columns\n"
+                    f"  • Rename {compliance['columns_to_rename']} columns\n"
+                    f"  • Review {compliance['columns_to_review']} unknown columns\n"
+                    f"  • {compliance['columns_already_standard']} columns already correct"
+                ),
+                affected_rows=0,
+                affected_columns=[],
+                suggested_operations=[],  # Summary only, specific operations in other issues
+                reasoning="Standard Format ensures data consistency across all sources and enables reliable automation."
+            )
+            report.recommended_fixes.append(issue)
+
     def _detect_duplicate_issues(self, df: pd.DataFrame, report: AnalysisReport):
         """Detect duplicate rows"""
         # Find customer ID column

@@ -709,6 +709,54 @@ class LenOperation(BaseOperation):
         return df
 
 
+class RenameColumnOperation(BaseOperation):
+    """Rename a column to a new name"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='text_rename_column',
+            name='Rename Column',
+            category='Text - Basic',
+            description='Rename a column to a new name',
+            parameters=[
+                Parameter(
+                    name='old_name',
+                    type='column',
+                    description='Current column name'
+                ),
+                Parameter(
+                    name='new_name',
+                    type='text',
+                    description='New column name'
+                )
+            ],
+            excel_equivalent='Right-click column > Rename',
+            examples=[
+                'Rename "Email_Address" to "Email"',
+                'Standardize column names to match format',
+                'Fix typos in column names'
+            ],
+            tags=['rename', 'column', 'standardize', 'basic']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        df = df.copy()
+        old_name = params['old_name']
+        new_name = params['new_name']
+
+        # Check if old column exists
+        if old_name not in df.columns:
+            raise ValueError(f"Column '{old_name}' not found in dataframe")
+
+        # Check if new name already exists (and isn't the same as old name)
+        if new_name in df.columns and new_name != old_name:
+            raise ValueError(f"Column '{new_name}' already exists")
+
+        df = df.rename(columns={old_name: new_name})
+
+        return df
+
+
 # Register all text operations
 registry.register(UppercaseOperation())
 registry.register(LowercaseOperation())
@@ -724,3 +772,4 @@ registry.register(RightOperation())
 registry.register(MidOperation())
 registry.register(PhoneFormatterOperation())
 registry.register(LenOperation())
+registry.register(RenameColumnOperation())

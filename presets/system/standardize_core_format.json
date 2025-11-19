@@ -1,0 +1,50 @@
+{
+  "id": "standardize_core_format",
+  "name": "Format Standard Columns",
+  "description": "Apply standard formatting to core mailing list columns (assumes Standard Format column names)",
+  "category": "Standard Format",
+  "operations": [
+    {
+      "operation_id": "text_trim",
+      "parameters": {
+        "columns": ["Customer", "First Name", "Last Name", "Company", "Job Title", "Email", "Phone", "Street", "City", "State", "Zip", "Country"]
+      },
+      "order": 0,
+      "enabled": true,
+      "description": "Trim whitespace from all text columns"
+    },
+    {
+      "operation_id": "text_title_case",
+      "parameters": {
+        "columns": ["First Name", "Last Name", "Street", "City", "Job Title"]
+      },
+      "order": 1,
+      "enabled": true,
+      "description": "Apply Title Case to names and addresses"
+    },
+    {
+      "operation_id": "text_uppercase",
+      "parameters": {
+        "columns": ["Company", "State", "Country"]
+      },
+      "order": 2,
+      "enabled": true,
+      "description": "Apply UPPERCASE to company and location codes"
+    },
+    {
+      "operation_id": "text_lowercase",
+      "parameters": {
+        "columns": ["Email"]
+      },
+      "order": 3,
+      "enabled": true,
+      "description": "Apply lowercase to email addresses"
+    }
+  ],
+  "created_at": "2025-11-19T00:00:00",
+  "updated_at": "2025-11-19T00:00:00",
+  "author": "system",
+  "usage_count": 0,
+  "is_system": true,
+  "notes": "This preset assumes your data uses Standard Format column names. Run 'Analyze Data Quality' first to standardize column names if needed."
+}

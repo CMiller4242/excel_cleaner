@@ -1,0 +1,298 @@
+{
+  "version": "1.0",
+  "description": "Standard Format specification for Universal Excel Tool mailing lists",
+
+  "standard_columns": {
+    "customer": {
+      "primary_name": "Customer",
+      "aliases": ["Customer#", "Customer_ID", "Cust#", "Customer_Number", "Customer Number", "Cust_ID", "CustomerID", "CustNum"],
+      "data_type": "text",
+      "required": false,
+      "order": 1,
+      "description": "Unique customer identifier"
+    },
+    "segment": {
+      "primary_name": "Segment",
+      "aliases": ["Segment#", "Customer_Segment", "Segment_ID", "Customer Segment", "Segment Number", "SegmentID"],
+      "data_type": "text",
+      "required": false,
+      "order": 2,
+      "description": "Customer segment or category"
+    },
+    "salesman_number": {
+      "primary_name": "Salesman #",
+      "aliases": ["Salesman_ID", "Sales_Rep_#", "Rep#", "Salesman_Number", "Sales Rep #", "Rep Number", "SalesmanID"],
+      "data_type": "text",
+      "required": false,
+      "order": 3,
+      "description": "Sales representative identifier"
+    },
+    "salesman_name": {
+      "primary_name": "Salesman Name",
+      "aliases": ["Sales_Rep_Name", "Rep_Name", "Salesman", "Sales Rep Name", "Sales Representative", "Rep Name"],
+      "data_type": "text",
+      "required": false,
+      "order": 4,
+      "description": "Sales representative full name"
+    },
+    "company": {
+      "primary_name": "Company",
+      "aliases": ["Company_Name", "Organization", "Account", "Business", "Firm", "CompanyName", "Business Name"],
+      "data_type": "text",
+      "required": true,
+      "order": 5,
+      "description": "Company or business name"
+    },
+    "address1": {
+      "primary_name": "Address 1",
+      "aliases": ["Street", "Street_Address", "Address_Line_1", "Address Line 1", "Address1", "Street Address", "Addr1"],
+      "data_type": "text",
+      "required": true,
+      "order": 6,
+      "description": "Primary street address"
+    },
+    "address2": {
+      "primary_name": "Address 2",
+      "aliases": ["Suite", "Unit", "Address_Line_2", "Address Line 2", "Address2", "Addr2", "Apartment", "Apt"],
+      "data_type": "text",
+      "required": false,
+      "order": 7,
+      "description": "Secondary address line (suite, unit, etc.)"
+    },
+    "city": {
+      "primary_name": "City",
+      "aliases": ["Town", "Municipality"],
+      "data_type": "text",
+      "required": true,
+      "order": 8,
+      "description": "City name"
+    },
+    "state": {
+      "primary_name": "State",
+      "aliases": ["State_Code", "Province", "ST", "State Code"],
+      "data_type": "text",
+      "required": true,
+      "order": 9,
+      "description": "State or province code"
+    },
+    "zip": {
+      "primary_name": "Zip",
+      "aliases": ["Zip_Code", "Postal_Code", "ZIP", "Zip Code", "Postal Code", "ZipCode", "PostalCode"],
+      "data_type": "text",
+      "required": true,
+      "order": 10,
+      "description": "Zip or postal code"
+    },
+    "phone": {
+      "primary_name": "Phone",
+      "aliases": ["Phone_Number", "Contact_Phone", "Phone_Direct", "Direct_Phone", "Phone Number", "Telephone", "Tel", "Ph"],
+      "data_type": "text",
+      "required": true,
+      "order": 11,
+      "description": "Primary phone number"
+    },
+    "contact": {
+      "primary_name": "Contact",
+      "aliases": ["Customer_Name", "Contact_Name", "Full_Name", "Name", "Customer Name", "Contact Name", "ContactName"],
+      "data_type": "text",
+      "required": false,
+      "order": 12,
+      "description": "Contact person full name"
+    },
+    "title": {
+      "primary_name": "Title",
+      "aliases": ["Job_Title", "Position", "Role", "Job Title", "JobTitle"],
+      "data_type": "text",
+      "required": false,
+      "order": 13,
+      "description": "Job title or position"
+    },
+    "email": {
+      "primary_name": "Email",
+      "aliases": ["Email_Address", "Email_Contact", "E_Mail", "Email Address", "EmailAddress", "E-Mail"],
+      "data_type": "text",
+      "required": true,
+      "order": 14,
+      "description": "Email address"
+    }
+  },
+
+  "optional_enhanced_columns": {
+    "industry": {
+      "primary_name": "Industry",
+      "aliases": ["Industry_Type", "Business_Type", "Sector"],
+      "data_type": "text",
+      "order": 15
+    },
+    "company_size": {
+      "primary_name": "Company Size",
+      "aliases": ["Employees", "Employee_Count", "Company_Size", "CompanySize", "Num_Employees"],
+      "data_type": "text",
+      "order": 16
+    },
+    "revenue": {
+      "primary_name": "Revenue",
+      "aliases": ["Annual_Revenue", "Sales_Volume", "Company_Revenue"],
+      "data_type": "text",
+      "order": 17
+    },
+    "management_level": {
+      "primary_name": "Management Level",
+      "aliases": ["Management_Level", "Level", "Seniority"],
+      "data_type": "text",
+      "order": 18
+    },
+    "job_function": {
+      "primary_name": "Job Function",
+      "aliases": ["Job_Function", "Department", "Function"],
+      "data_type": "text",
+      "order": 19
+    },
+    "website": {
+      "primary_name": "Website",
+      "aliases": ["Company_Website", "URL", "Web_Address", "Domain"],
+      "data_type": "text",
+      "order": 20
+    },
+    "linkedin": {
+      "primary_name": "LinkedIn",
+      "aliases": ["LinkedIn_URL", "LinkedIn_Profile", "LinkedIn"],
+      "data_type": "text",
+      "order": 21
+    }
+  },
+
+  "non_standard_patterns": {
+    "internal_ids": {
+      "description": "Internal system identifiers to remove",
+      "patterns": [
+        "*ZoomInfo*",
+        "*Salesforce*",
+        "*HubSpot*",
+        "*LinkedIn_ID*",
+        "*Record_ID*",
+        "*Import_ID*",
+        "*Contact_ID",
+        "*Account_ID",
+        "*Lead_ID",
+        "*_Internal_*"
+      ]
+    },
+    "metadata": {
+      "description": "Metadata fields to remove",
+      "patterns": [
+        "Last_Updated",
+        "Last Updated",
+        "Data_Source",
+        "Data Source",
+        "Import_Date",
+        "Import Date",
+        "*_Timestamp",
+        "Created_Date",
+        "Modified_Date",
+        "Export_Date",
+        "Updated_*"
+      ]
+    },
+    "confidence_scores": {
+      "description": "Data quality scores to remove",
+      "patterns": [
+        "Confidence*",
+        "*_Confidence",
+        "*_Quality_Score",
+        "Data_Quality*",
+        "*_Score",
+        "Match_Score",
+        "Accuracy_*"
+      ]
+    },
+    "duplicate_fields": {
+      "description": "Redundant or alternate fields",
+      "patterns": [
+        "Phone_Alternate",
+        "Phone_Secondary",
+        "Email_Alternate",
+        "Email_Secondary",
+        "Mobile_Phone",
+        "Work_Phone",
+        "Fax*"
+      ]
+    },
+    "deprecated": {
+      "description": "Legacy or deprecated fields",
+      "patterns": [
+        "Legacy_*",
+        "Old_*",
+        "*_Deprecated",
+        "*_Archived"
+      ]
+    }
+  },
+
+  "detection_thresholds": {
+    "fuzzy_match_confidence": 0.85,
+    "header_row_confidence": 0.70,
+    "column_mapping_confidence": 0.90,
+    "standard_format_compliance": 0.80
+  },
+
+  "header_detection": {
+    "max_rows_to_scan": 5,
+    "metadata_indicators": [
+      "Export",
+      "Report",
+      "Data",
+      "Sheet",
+      "Generated",
+      "Date:",
+      "Time:",
+      "Source:",
+      "From:",
+      "File:"
+    ],
+    "min_columns_for_header": 5,
+    "min_standard_columns_match": 3
+  },
+
+  "validation_rules": {
+    "company": {
+      "min_length": 2,
+      "max_length": 100,
+      "format": "UPPERCASE"
+    },
+    "address1": {
+      "min_length": 5,
+      "max_length": 100,
+      "format": "Title Case"
+    },
+    "city": {
+      "min_length": 2,
+      "max_length": 50,
+      "format": "Title Case"
+    },
+    "state": {
+      "length": 2,
+      "format": "UPPERCASE",
+      "must_be_valid_state": true
+    },
+    "zip": {
+      "length": 5,
+      "format": "numeric",
+      "can_be_9_digits": true
+    },
+    "phone": {
+      "length": 10,
+      "format": "(XXX) XXX-XXXX"
+    },
+    "email": {
+      "format": "lowercase",
+      "must_be_valid_email": true
+    }
+  },
+
+  "format_priorities": {
+    "tier1_minimal": ["company", "email", "phone", "contact", "address1"],
+    "tier2_standard": ["customer", "company", "address1", "address2", "city", "state", "zip", "phone", "contact", "title", "email"],
+    "tier3_enhanced": ["customer", "segment", "salesman_number", "salesman_name", "company", "address1", "address2", "city", "state", "zip", "phone", "contact", "title", "email", "industry", "company_size", "revenue"]
+  }
+}
