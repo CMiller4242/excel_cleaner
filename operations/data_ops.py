@@ -198,6 +198,13 @@ class RemoveRowsIfOperation(BaseOperation):
                     description='Match case exactly (for contains/equals)',
                     required=False,
                     default=False
+                ),
+                Parameter(
+                    name='enhanced_blank_detection',
+                    type='boolean',
+                    description='Enhanced blank detection: Also treats empty strings and N/A variants as blank (for is_blank condition only)',
+                    required=False,
+                    default=False
                 )
             ],
             excel_equivalent='Filter and Delete',
@@ -210,19 +217,47 @@ class RemoveRowsIfOperation(BaseOperation):
             tags=['remove', 'filter', 'delete', 'rows', 'conditional']
         )
 
+    def _is_blank_enhanced(self, value) -> bool:
+        """
+        Enhanced blank detection that treats the following as blank:
+        - NaN / None / pd.NaT
+        - Empty strings ("")
+        - Whitespace-only strings ("   ")
+        - N/A variants: "n/a", "na", "null", "none" (case-insensitive)
+
+        Returns True if value should be considered blank, False otherwise.
+        """
+        # Check for actual NaN/None first
+        if value is None or pd.isna(value):
+            return True
+
+        # Check for string-based blanks
+        if isinstance(value, str):
+            cleaned = value.strip().lower()
+            if cleaned in ["", "n/a", "na", "null", "none"]:
+                return True
+
+        return False
+
     def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
         column = params['column']
         condition = params['condition']
         value = self.get_param_value(params, 'value', '')
         case_sensitive = self.get_param_value(params, 'case_sensitive', False)
+        enhanced_blank = self.get_param_value(params, 'enhanced_blank_detection', False)
 
         # Create mask for rows to KEEP (inverse of remove)
         if condition == 'is_blank':
             # Keep rows that are NOT blank
-            # Simplified: Only check for actual NaN/None values using pd.isna()
-            # This will NOT remove empty strings "" or whitespace
-            # If you need to remove empty strings, use Remove Rows Containing operation instead
-            mask = ~df[column].isna()
+            if enhanced_blank:
+                # Enhanced mode: Also treats empty strings and N/A variants as blank
+                # Useful for datasets with "N/A" strings or empty string placeholders
+                mask = ~df[column].apply(self._is_blank_enhanced)
+            else:
+                # Standard mode (default): Only check for actual NaN/None values using pd.isna()
+                # This is simpler, faster, and works correctly for most datasets
+                # If you need to remove empty strings, use Remove Rows Containing operation instead
+                mask = ~df[column].isna()
 
         elif condition == 'contains':
             # Keep rows that do NOT contain the value
