@@ -12,6 +12,9 @@ from . import validation_ops
 from . import conditional_ops
 from . import zoominfo_ops
 
+# Import standardization operations (phone, ZIP, state, etc.)
+from . import standardization_ops
+
 # Import v2 advanced operations
 try:
     from .advanced import math_advanced
