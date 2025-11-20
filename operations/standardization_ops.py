@@ -466,13 +466,13 @@ class ExtractTextOperation(BaseOperation):
 
 class RemoveRowsContainingOperation(BaseOperation):
     """Remove rows that contain specified text patterns"""
-    
+
     def get_metadata(self) -> OperationMetadata:
         return OperationMetadata(
             id='remove_rows_containing',
             name='Remove Rows Containing',
             category='Cleaning',
-            description='Remove rows where specified columns contain any of the given text patterns. Great for removing PO Boxes, excluded states, etc.',
+            description='Remove rows where specified columns contain any of the given text patterns. Can also remove blank rows. Great for removing PO Boxes, excluded states, or incomplete records.',
             parameters=[
                 Parameter(
                     name='columns',
@@ -494,7 +494,8 @@ class RemoveRowsContainingOperation(BaseOperation):
                         'PO Boxes',
                         'Excluded States (AK, HI, PR, VI, GU)',
                         'Military Addresses (APO, FPO, DPO)',
-                        'PO Boxes + Excluded States + Military'
+                        'PO Boxes + Excluded States + Military',
+                        'Remove Blanks'
                     ],
                     default='Custom (use patterns above)'
                 ),
@@ -511,6 +512,13 @@ class RemoveRowsContainingOperation(BaseOperation):
                     description='Only match if entire cell equals pattern (not contains)',
                     required=False,
                     default=False
+                ),
+                Parameter(
+                    name='remove_blanks',
+                    type='boolean',
+                    description='Also remove rows where ALL selected columns are completely blank (NaN, empty, or whitespace)',
+                    required=False,
+                    default=False
                 )
             ],
             excel_equivalent='Filter + Delete Rows',
@@ -518,7 +526,8 @@ class RemoveRowsContainingOperation(BaseOperation):
                 'Remove all PO Box addresses',
                 'Remove rows with AK, HI, PR states',
                 'Remove military APO/FPO addresses',
-                'Remove specific company names or values'
+                'Remove specific company names or values',
+                'Remove rows where all selected columns are blank'
             ],
             tags=['remove', 'delete', 'filter', 'contains', 'po box', 'exclude', 'states']
         )
@@ -529,56 +538,83 @@ class RemoveRowsContainingOperation(BaseOperation):
         preset = self.get_param_value(params, 'preset', 'Custom (use patterns above)')
         case_sensitive = self.get_param_value(params, 'case_sensitive', False)
         match_whole_cell = self.get_param_value(params, 'match_whole_cell', False)
-        
+        remove_blanks = self.get_param_value(params, 'remove_blanks', False)
+
         # Get patterns based on preset or custom input
         if preset == 'PO Boxes':
-            patterns = ['PO BOX', 'P.O. BOX', 'P O BOX', 'P.O BOX', 'PO. BOX', 
+            patterns = ['PO BOX', 'P.O. BOX', 'P O BOX', 'P.O BOX', 'PO. BOX',
                        'POST OFFICE BOX', 'POBOX', 'P.O.BOX']
         elif preset == 'Excluded States (AK, HI, PR, VI, GU)':
             patterns = ['AK', 'HI', 'PR', 'VI', 'GU', 'AS', 'MP', 'FM', 'MH', 'PW',
                        'ALASKA', 'HAWAII', 'PUERTO RICO', 'VIRGIN ISLANDS', 'GUAM']
         elif preset == 'Military Addresses (APO, FPO, DPO)':
-            patterns = ['APO', 'FPO', 'DPO', 'APO AE', 'APO AP', 'APO AA', 
+            patterns = ['APO', 'FPO', 'DPO', 'APO AE', 'APO AP', 'APO AA',
                        'FPO AE', 'FPO AP', 'FPO AA']
         elif preset == 'PO Boxes + Excluded States + Military':
             patterns = [
                 # PO Boxes
-                'PO BOX', 'P.O. BOX', 'P O BOX', 'P.O BOX', 'PO. BOX', 
+                'PO BOX', 'P.O. BOX', 'P O BOX', 'P.O BOX', 'PO. BOX',
                 'POST OFFICE BOX', 'POBOX', 'P.O.BOX',
                 # Excluded states
                 'AK', 'HI', 'PR', 'VI', 'GU', 'AS', 'MP',
                 # Military
                 'APO', 'FPO', 'DPO'
             ]
+        elif preset == 'Remove Blanks':
+            # When using Remove Blanks preset, set flag and use empty patterns
+            patterns = []
+            remove_blanks = True
         else:
             # Custom patterns from user input
             patterns = [p.strip() for p in params['patterns'].split(',') if p.strip()]
-        
-        if not patterns:
-            return df
-        
+
         # Create mask for rows to keep
         mask = pd.Series([True] * len(df), index=df.index)
-        
-        for col in columns:
-            col_data = df[col].astype(str)
-            
-            if not case_sensitive:
-                col_data = col_data.str.upper()
-                check_patterns = [p.upper() for p in patterns]
-            else:
-                check_patterns = patterns
-            
-            for pattern in check_patterns:
-                if match_whole_cell:
-                    # Exact match
-                    matches = col_data == pattern
+
+        # First, check for pattern matches if patterns are provided
+        if patterns:
+            for col in columns:
+                col_data = df[col].astype(str)
+
+                if not case_sensitive:
+                    col_data = col_data.str.upper()
+                    check_patterns = [p.upper() for p in patterns]
                 else:
-                    # Contains match
-                    matches = col_data.str.contains(pattern, regex=False, na=False)
-                
-                # Update mask - mark rows with matches for removal
-                mask = mask & ~matches
+                    check_patterns = patterns
+
+                for pattern in check_patterns:
+                    if match_whole_cell:
+                        # Exact match
+                        matches = col_data == pattern
+                    else:
+                        # Contains match
+                        matches = col_data.str.contains(pattern, regex=False, na=False)
+
+                    # Update mask - mark rows with matches for removal
+                    mask = mask & ~matches
+
+        # Second, check for blank rows if remove_blanks is enabled
+        if remove_blanks:
+            # For each row, check if ALL selected columns are blank
+            blank_mask = pd.Series([True] * len(df), index=df.index)
+
+            for col in columns:
+                # Check if column value is blank (NaN, None, empty, or whitespace)
+                col_values = df[col]
+                is_na = col_values.isna()
+
+                # Convert to string and check for empty/null strings
+                str_values = col_values.astype(str).str.strip()
+                is_empty_or_null = str_values.isin(['', 'nan', 'None', 'NaT', '<NA>'])
+
+                # Column is blank if it's NaN OR an empty/null string
+                col_is_blank = is_na | is_empty_or_null
+
+                # Row is blank only if ALL columns are blank (AND logic)
+                blank_mask = blank_mask & col_is_blank
+
+            # Remove rows where ALL selected columns are blank
+            mask = mask & ~blank_mask
 
         # Return filtered dataframe WITHOUT reset_index
         # The executor needs original indices to track which rows were removed
