@@ -290,7 +290,9 @@ class RemoveExcludedStatesOperation(BaseOperation):
         # Filter out excluded states (case-insensitive)
         mask = ~df[column].astype(str).str.upper().isin(excluded_states)
 
-        return df[mask].reset_index(drop=True)
+        # Return filtered dataframe WITHOUT reset_index
+        # The executor needs original indices to track which rows were removed
+        return df[mask]
 
 
 # Register all ZoomInfo operations

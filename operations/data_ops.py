@@ -258,7 +258,9 @@ class RemoveRowsIfOperation(BaseOperation):
             # Default: keep all rows
             mask = pd.Series([True] * len(df), index=df.index)
 
-        return df[mask].reset_index(drop=True)
+        # Return filtered dataframe WITHOUT reset_index
+        # The executor needs original indices to track which rows were removed
+        return df[mask]
 
 
 class ReorderColumnsOperation(BaseOperation):
