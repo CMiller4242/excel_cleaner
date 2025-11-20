@@ -274,26 +274,40 @@ class RemoveRowsIfOperation(BaseOperation):
                         print(f"Examples: {non_empty_removed[column].head(5).tolist()}", file=sys.stderr)
                         print(f"{'='*80}\n", file=sys.stderr)
             else:
-                # Standard mode (default): Only check for actual NaN/None values
-                # This is simpler, faster, and works correctly for most datasets
-                # Use notna() explicitly (equivalent to ~isna() but clearer intent)
-                mask = df[column].notna()  # Keep all non-NaN values
+                # Standard mode (default): Check for NaN/None OR empty strings
+                # An empty string (after stripping whitespace) is considered "blank" in common usage
+                # This handles cases where operations produce '' instead of NaN for missing data
+                def is_blank_standard(value):
+                    # Check for NaN/None first
+                    if pd.isna(value):
+                        return True
+                    # Check for empty string after stripping whitespace
+                    if isinstance(value, str) and value.strip() == '':
+                        return True
+                    return False
 
-                # Validation: In standard mode, we should NEVER remove non-NaN values
-                # This is a critical safety check
-                false_positives = df[~mask & df[column].notna()]
-                if len(false_positives) > 0:
-                    # CRITICAL BUG - standard mode is removing non-NaN values!
-                    import sys
-                    print(f"\n{'='*80}", file=sys.stderr)
-                    print(f"CRITICAL ERROR: Standard mode removing non-NaN values!", file=sys.stderr)
-                    print(f"This should NEVER happen!", file=sys.stderr)
-                    print(f"Column: {column}", file=sys.stderr)
-                    print(f"Non-NaN values marked for removal: {len(false_positives)}", file=sys.stderr)
-                    print(f"Examples: {false_positives[column].head(10).tolist()}", file=sys.stderr)
-                    print(f"{'='*80}\n", file=sys.stderr)
-                    # Force correct mask to prevent data loss
-                    mask = df[column].notna()
+                # Keep rows that are NOT blank (inverse of is_blank_standard)
+                mask = ~df[column].apply(is_blank_standard)
+
+                # Validation: Check if we're removing valid non-empty data
+                removed_mask = ~mask
+                if removed_mask.any():
+                    removed_values = df.loc[removed_mask, column]
+                    # Check for non-empty strings that are being removed
+                    non_empty_removed = removed_values[
+                        removed_values.notna() &
+                        (removed_values.astype(str).str.strip() != '')
+                    ]
+                    if len(non_empty_removed) > 0:
+                        # CRITICAL BUG - standard mode is removing non-empty values!
+                        import sys
+                        print(f"\n{'='*80}", file=sys.stderr)
+                        print(f"CRITICAL ERROR: Standard mode removing non-empty values!", file=sys.stderr)
+                        print(f"This should NEVER happen!", file=sys.stderr)
+                        print(f"Column: {column}", file=sys.stderr)
+                        print(f"Non-empty values marked for removal: {len(non_empty_removed)}", file=sys.stderr)
+                        print(f"Examples: {non_empty_removed.head(10).tolist()}", file=sys.stderr)
+                        print(f"{'='*80}\n", file=sys.stderr)
 
         elif condition == 'contains':
             # Keep rows that do NOT contain the value
