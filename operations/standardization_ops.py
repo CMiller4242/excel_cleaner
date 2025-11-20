@@ -579,9 +579,10 @@ class RemoveRowsContainingOperation(BaseOperation):
                 
                 # Update mask - mark rows with matches for removal
                 mask = mask & ~matches
-        
-        # Return only rows that don't match any pattern
-        return df[mask].reset_index(drop=True)
+
+        # Return filtered dataframe WITHOUT reset_index
+        # The executor needs original indices to track which rows were removed
+        return df[mask]
 
 
 class FlagRowsContainingOperation(BaseOperation):
@@ -719,12 +720,13 @@ class RemoveFlaggedRowsOperation(BaseOperation):
         
         # Keep only rows where flag is empty
         mask = df[flag_column].astype(str).isin(['', 'nan', 'None', 'NaN']) | df[flag_column].isna()
-        df = df[mask].reset_index(drop=True)
-        
+        # Filter WITHOUT reset_index - executor needs original indices for tracking
+        df = df[mask]
+
         # Remove flag column if requested
         if remove_flag_col and flag_column in df.columns:
             df = df.drop(columns=[flag_column])
-        
+
         return df
 
 
