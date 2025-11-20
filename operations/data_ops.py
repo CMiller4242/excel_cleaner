@@ -219,7 +219,14 @@ class RemoveRowsIfOperation(BaseOperation):
         # Create mask for rows to KEEP (inverse of remove)
         if condition == 'is_blank':
             # Keep rows that are NOT blank
-            mask = df[column].notna() & (df[column].astype(str).str.strip() != '')
+            # A row is blank if: it's NaN/None OR when converted to string it's empty or a null representation
+            is_na = df[column].isna()
+            # When pandas converts NaN to string, it becomes 'nan', 'None', 'NaT', '<NA>', etc.
+            # We need to check for these literal strings as well as empty strings
+            str_values = df[column].astype(str).str.strip()
+            is_empty_or_null_string = str_values.isin(['', 'nan', 'None', 'NaT', '<NA>'])
+            # Keep rows that are NOT (na OR empty/null string)
+            mask = ~(is_na | is_empty_or_null_string)
 
         elif condition == 'contains':
             # Keep rows that do NOT contain the value
