@@ -205,6 +205,13 @@ class RemoveRowsIfOperation(BaseOperation):
                     description='Enhanced blank detection: Also treats empty strings and N/A variants as blank (for is_blank condition only)',
                     required=False,
                     default=False
+                ),
+                Parameter(
+                    name='smart_address_detection',
+                    type='boolean',
+                    description='Smart address detection: When checking address columns (Person Street, Company Street Address), check if ANY related address column has data before removing (for is_blank condition only)',
+                    required=False,
+                    default=True
                 )
             ],
             excel_equivalent='Filter and Delete',
@@ -271,6 +278,8 @@ class RemoveRowsIfOperation(BaseOperation):
         value = self.get_param_value(params, 'value', '')
         case_sensitive = self.get_param_value(params, 'case_sensitive', False)
         enhanced_blank = self.get_param_value(params, 'enhanced_blank_detection', False)
+        # Smart address detection: check related address columns (e.g., Person Street + Company Street Address)
+        smart_address_detection = self.get_param_value(params, 'smart_address_detection', True)
 
         # Create mask for rows to KEEP (inverse of remove)
         if condition == 'is_blank':
@@ -278,7 +287,29 @@ class RemoveRowsIfOperation(BaseOperation):
             if enhanced_blank:
                 # Enhanced mode: Also treats empty strings and N/A variants as blank
                 # Useful for datasets with "N/A" strings or empty string placeholders
-                mask = ~df[column].apply(self._is_blank_enhanced)
+
+                if smart_address_detection:
+                    # Check related address columns
+                    related_cols = self._get_related_address_columns(df, column)
+                    if related_cols:
+                        # Keep row if ANY related address column has non-blank data
+                        def has_any_address(row):
+                            # Check main column
+                            if not self._is_blank_enhanced(row[column]):
+                                return True
+                            # Check related columns
+                            for col in related_cols:
+                                if col in row.index and not self._is_blank_enhanced(row[col]):
+                                    return True
+                            return False
+
+                        mask = df.apply(has_any_address, axis=1)
+                    else:
+                        # No related columns, check only the specified column
+                        mask = ~df[column].apply(self._is_blank_enhanced)
+                else:
+                    # Smart detection disabled, check only the specified column
+                    mask = ~df[column].apply(self._is_blank_enhanced)
 
                 # Validation: Check if we're accidentally removing valid data
                 false_positives = df[~mask & df[column].notna()]
@@ -300,39 +331,48 @@ class RemoveRowsIfOperation(BaseOperation):
                         print(f"Examples: {non_empty_removed[column].head(5).tolist()}", file=sys.stderr)
                         print(f"{'='*80}\n", file=sys.stderr)
             else:
-                # Standard mode (default): Check for NaN/None OR empty strings
-                # An empty string (after stripping whitespace) is considered "blank" in common usage
-                # This handles cases where operations produce '' instead of NaN for missing data
-                def is_blank_standard(value):
-                    # Check for NaN/None first
-                    if pd.isna(value):
-                        return True
-                    # Check for empty string after stripping whitespace
-                    if isinstance(value, str) and value.strip() == '':
-                        return True
-                    return False
+                # Standard mode (default): ONLY treat NaN/None as blank
+                # According to requirements: "Empty strings or whitespace should NOT be treated as blank"
+                # This is the safest default - only remove actual missing data (NaN)
 
-                # Keep rows that are NOT blank (inverse of is_blank_standard)
-                mask = ~df[column].apply(is_blank_standard)
+                if smart_address_detection:
+                    # Check related address columns for smart detection
+                    related_cols = self._get_related_address_columns(df, column)
+                    if related_cols:
+                        # Keep row if ANY related address column has non-NaN data
+                        def has_any_address_standard(row):
+                            # Check main column
+                            if pd.notna(row[column]):
+                                return True
+                            # Check related columns
+                            for col in related_cols:
+                                if col in row.index and pd.notna(row[col]):
+                                    return True
+                            return False
 
-                # Validation: Check if we're removing valid non-empty data
+                        mask = df.apply(has_any_address_standard, axis=1)
+                    else:
+                        # No related columns, check only specified column for NaN
+                        mask = df[column].notna()
+                else:
+                    # Smart detection disabled, check only specified column for NaN
+                    mask = df[column].notna()
+
+                # Validation: Check if we're removing valid non-NaN data
                 removed_mask = ~mask
                 if removed_mask.any():
                     removed_values = df.loc[removed_mask, column]
-                    # Check for non-empty strings that are being removed
-                    non_empty_removed = removed_values[
-                        removed_values.notna() &
-                        (removed_values.astype(str).str.strip() != '')
-                    ]
-                    if len(non_empty_removed) > 0:
-                        # CRITICAL BUG - standard mode is removing non-empty values!
+                    # Check for non-NaN values that are being removed
+                    non_nan_removed = removed_values.notna()
+                    if non_nan_removed.any():
+                        # CRITICAL BUG - standard mode is removing non-NaN values!
                         import sys
                         print(f"\n{'='*80}", file=sys.stderr)
-                        print(f"CRITICAL ERROR: Standard mode removing non-empty values!", file=sys.stderr)
+                        print(f"CRITICAL ERROR: Standard mode removing non-NaN values!", file=sys.stderr)
                         print(f"This should NEVER happen!", file=sys.stderr)
                         print(f"Column: {column}", file=sys.stderr)
-                        print(f"Non-empty values marked for removal: {len(non_empty_removed)}", file=sys.stderr)
-                        print(f"Examples: {non_empty_removed.head(10).tolist()}", file=sys.stderr)
+                        print(f"Non-NaN values marked for removal: {non_nan_removed.sum()}", file=sys.stderr)
+                        print(f"Examples: {removed_values[non_nan_removed].head(10).tolist()}", file=sys.stderr)
                         print(f"{'='*80}\n", file=sys.stderr)
 
         elif condition == 'contains':
