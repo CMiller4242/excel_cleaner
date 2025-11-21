@@ -124,17 +124,36 @@ class RemoveDuplicatesOperation(BaseOperation):
         )
     
     def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        import sys
+
         keep = self.get_param_value(params, 'keep', 'first')
         multi_level = self.get_param_value(params, 'multi_level_deduplication', True)
 
+        # DEBUG: Log parameter values
+        print(f"\n{'='*80}", file=sys.stderr)
+        print(f"RemoveDuplicatesOperation.execute() DEBUG", file=sys.stderr)
+        print(f"{'='*80}", file=sys.stderr)
+        print(f"Input DataFrame: {len(df)} rows", file=sys.stderr)
+        print(f"Parameters:", file=sys.stderr)
+        print(f"  keep: {keep}", file=sys.stderr)
+        print(f"  multi_level_deduplication: {multi_level} (type: {type(multi_level)})", file=sys.stderr)
+        print(f"  columns: {params.get('columns', [])}", file=sys.stderr)
+
         # If multi-level deduplication is not enabled, use standard logic
         if not multi_level:
+            print(f"\n→ Using STANDARD deduplication", file=sys.stderr)
             columns = params.get('columns', [])
             if not columns:
                 columns = None  # Check all columns
-            return df.drop_duplicates(subset=columns, keep=keep)
+            print(f"  Deduplicating by columns: {columns}", file=sys.stderr)
+            result = df.drop_duplicates(subset=columns, keep=keep)
+            print(f"  Result: {len(result)} rows (removed {len(df) - len(result)} duplicates)", file=sys.stderr)
+            print(f"{'='*80}\n", file=sys.stderr)
+            return result
 
         # Multi-level deduplication logic
+        print(f"\n→ Using MULTI-LEVEL deduplication", file=sys.stderr)
+
         # Define required columns
         email_col = 'Email Address'
         name_cols = ['First Name', 'Last Name']
@@ -147,12 +166,15 @@ class RemoveDuplicatesOperation(BaseOperation):
 
         if missing_cols:
             # Fall back to standard deduplication if required columns are missing
-            import sys
-            print(f"Warning: Multi-level deduplication requires columns: {all_required_cols}", file=sys.stderr)
-            print(f"Missing columns: {missing_cols}", file=sys.stderr)
-            print(f"Falling back to standard deduplication", file=sys.stderr)
+            print(f"  ⚠️  Missing required columns: {missing_cols}", file=sys.stderr)
+            print(f"  Falling back to standard deduplication", file=sys.stderr)
             columns = params.get('columns', [])
-            return df.drop_duplicates(subset=columns if columns else None, keep=keep)
+            result = df.drop_duplicates(subset=columns if columns else None, keep=keep)
+            print(f"  Result: {len(result)} rows (removed {len(df) - len(result)} duplicates)", file=sys.stderr)
+            print(f"{'='*80}\n", file=sys.stderr)
+            return result
+
+        print(f"  ✓ All required columns present", file=sys.stderr)
 
         # Create masks to identify different groups of rows
         has_email = df[email_col].notna()
@@ -169,27 +191,66 @@ class RemoveDuplicatesOperation(BaseOperation):
         # Group 3: Rows without Email and without Address (deduplicate by name + phone)
         group3_mask = no_email & no_address
 
+        print(f"\n  Group breakdown:", file=sys.stderr)
+        print(f"    Level 1 (has email): {group1_mask.sum()} rows", file=sys.stderr)
+        print(f"    Level 2 (no email, has address): {group2_mask.sum()} rows", file=sys.stderr)
+        print(f"    Level 3 (no email, no address): {group3_mask.sum()} rows", file=sys.stderr)
+        print(f"    Total: {group1_mask.sum() + group2_mask.sum() + group3_mask.sum()} rows", file=sys.stderr)
+
         # Process each group separately and collect results
         results = []
+        total_removed = 0
 
         # Level 1: Deduplicate by Email Address (for rows with non-blank email)
         if group1_mask.any():
             group1_df = df[group1_mask]
+            print(f"\n  Level 1: Deduplicating by Email Address", file=sys.stderr)
+            print(f"    Input: {len(group1_df)} rows", file=sys.stderr)
+            print(f"    Columns: ['{email_col}']", file=sys.stderr)
+
             group1_deduped = group1_df.drop_duplicates(subset=[email_col], keep=keep)
+            removed_level1 = len(group1_df) - len(group1_deduped)
+            total_removed += removed_level1
+
+            print(f"    Output: {len(group1_deduped)} rows", file=sys.stderr)
+            print(f"    Removed: {removed_level1} duplicates", file=sys.stderr)
+
             results.append(group1_deduped)
 
         # Level 2: Deduplicate by Name + Address (for rows with blank email but non-blank address)
         if group2_mask.any():
             group2_df = df[group2_mask]
             dedupe_cols_level2 = name_cols + address_cols
+
+            print(f"\n  Level 2: Deduplicating by Name + Address", file=sys.stderr)
+            print(f"    Input: {len(group2_df)} rows", file=sys.stderr)
+            print(f"    Columns: {dedupe_cols_level2}", file=sys.stderr)
+
             group2_deduped = group2_df.drop_duplicates(subset=dedupe_cols_level2, keep=keep)
+            removed_level2 = len(group2_df) - len(group2_deduped)
+            total_removed += removed_level2
+
+            print(f"    Output: {len(group2_deduped)} rows", file=sys.stderr)
+            print(f"    Removed: {removed_level2} duplicates", file=sys.stderr)
+
             results.append(group2_deduped)
 
         # Level 3: Deduplicate by Name + Phone (for rows with blank email and blank address)
         if group3_mask.any():
             group3_df = df[group3_mask]
             dedupe_cols_level3 = name_cols + [phone_col]
+
+            print(f"\n  Level 3: Deduplicating by Name + Phone", file=sys.stderr)
+            print(f"    Input: {len(group3_df)} rows", file=sys.stderr)
+            print(f"    Columns: {dedupe_cols_level3}", file=sys.stderr)
+
             group3_deduped = group3_df.drop_duplicates(subset=dedupe_cols_level3, keep=keep)
+            removed_level3 = len(group3_df) - len(group3_deduped)
+            total_removed += removed_level3
+
+            print(f"    Output: {len(group3_deduped)} rows", file=sys.stderr)
+            print(f"    Removed: {removed_level3} duplicates", file=sys.stderr)
+
             results.append(group3_deduped)
 
         # Combine all deduplicated groups
@@ -197,9 +258,18 @@ class RemoveDuplicatesOperation(BaseOperation):
             result_df = pd.concat(results, axis=0)
             # Sort by original index to maintain order
             result_df = result_df.sort_index()
+
+            print(f"\n  Final Result:", file=sys.stderr)
+            print(f"    Total input: {len(df)} rows", file=sys.stderr)
+            print(f"    Total output: {len(result_df)} rows", file=sys.stderr)
+            print(f"    Total removed: {total_removed} duplicates", file=sys.stderr)
+            print(f"{'='*80}\n", file=sys.stderr)
+
             return result_df
         else:
             # Return empty dataframe with same structure if no groups had data
+            print(f"  ⚠️  No groups had data, returning empty dataframe", file=sys.stderr)
+            print(f"{'='*80}\n", file=sys.stderr)
             return df.iloc[:0].copy()
 
 
