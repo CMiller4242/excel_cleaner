@@ -217,6 +217,32 @@ class RemoveRowsIfOperation(BaseOperation):
             tags=['remove', 'filter', 'delete', 'rows', 'conditional']
         )
 
+    def _get_related_address_columns(self, df: pd.DataFrame, column: str) -> list:
+        """
+        Find related address columns for smart blank detection.
+
+        For example, if checking "Person Street", also return "Company Street Address"
+        so we can check if there's an address in ANY related column.
+        """
+        if 'street' not in column.lower() and 'address' not in column.lower():
+            return []  # Not an address column
+
+        related = []
+        address_keywords = ['street', 'address']
+
+        for col in df.columns:
+            if col == column:
+                continue  # Don't include the same column
+
+            col_lower = col.lower()
+            # Check if this is an address-related column
+            if any(keyword in col_lower for keyword in address_keywords):
+                # Exclude email addresses
+                if 'email' not in col_lower:
+                    related.append(col)
+
+        return related
+
     def _is_blank_enhanced(self, value) -> bool:
         """
         Enhanced blank detection that treats the following as blank:
