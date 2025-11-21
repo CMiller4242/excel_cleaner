@@ -217,6 +217,32 @@ class RemoveRowsIfOperation(BaseOperation):
             tags=['remove', 'filter', 'delete', 'rows', 'conditional']
         )
 
+    def _get_related_address_columns(self, df: pd.DataFrame, column: str) -> list:
+        """
+        Find related address columns for smart blank detection.
+
+        For example, if checking "Person Street", also return "Company Street Address"
+        so we can check if there's an address in ANY related column.
+        """
+        if 'street' not in column.lower() and 'address' not in column.lower():
+            return []  # Not an address column
+
+        related = []
+        address_keywords = ['street', 'address']
+
+        for col in df.columns:
+            if col == column:
+                continue  # Don't include the same column
+
+            col_lower = col.lower()
+            # Check if this is an address-related column
+            if any(keyword in col_lower for keyword in address_keywords):
+                # Exclude email addresses
+                if 'email' not in col_lower:
+                    related.append(col)
+
+        return related
+
     def _is_blank_enhanced(self, value) -> bool:
         """
         Enhanced blank detection that treats the following as blank:
@@ -248,52 +274,68 @@ class RemoveRowsIfOperation(BaseOperation):
 
         # Create mask for rows to KEEP (inverse of remove)
         if condition == 'is_blank':
-            # Keep rows that are NOT blank
-            if enhanced_blank:
-                # Enhanced mode: Also treats empty strings and N/A variants as blank
-                # Useful for datasets with "N/A" strings or empty string placeholders
-                mask = ~df[column].apply(self._is_blank_enhanced)
+            # Build mask explicitly using loops to avoid pandas indexing ambiguity
+            # mask[i] = True means KEEP the row, False means REMOVE it
+            mask = pd.Series(dtype=bool, index=df.index)
 
-                # Validation: Check if we're accidentally removing valid data
-                false_positives = df[~mask & df[column].notna()]
-                if len(false_positives) > 0:
-                    # Some non-NaN values are being marked as blank
-                    # This is expected in enhanced mode if they are "", "N/A", etc.
-                    # But we should warn if actual addresses are being removed
-                    non_empty_removed = false_positives[
-                        (false_positives[column].astype(str).str.strip() != '') &
-                        (~false_positives[column].astype(str).str.lower().isin(['n/a', 'na', 'null', 'none']))
-                    ]
-                    if len(non_empty_removed) > 0:
-                        # This is a BUG - valid non-empty, non-N/A strings are being removed
-                        import sys
-                        print(f"\n{'='*80}", file=sys.stderr)
-                        print(f"WARNING: Enhanced blank detection removing valid data!", file=sys.stderr)
-                        print(f"Column: {column}", file=sys.stderr)
-                        print(f"Valid values being removed: {len(non_empty_removed)}", file=sys.stderr)
-                        print(f"Examples: {non_empty_removed[column].head(5).tolist()}", file=sys.stderr)
-                        print(f"{'='*80}\n", file=sys.stderr)
-            else:
-                # Standard mode (default): Only check for actual NaN/None values
-                # This is simpler, faster, and works correctly for most datasets
-                # Use notna() explicitly (equivalent to ~isna() but clearer intent)
-                mask = df[column].notna()  # Keep all non-NaN values
+            # Smart address detection: If checking address/street columns,
+            # also check related address columns before marking as blank
+            related_cols = self._get_related_address_columns(df, column)
 
-                # Validation: In standard mode, we should NEVER remove non-NaN values
-                # This is a critical safety check
-                false_positives = df[~mask & df[column].notna()]
-                if len(false_positives) > 0:
-                    # CRITICAL BUG - standard mode is removing non-NaN values!
-                    import sys
-                    print(f"\n{'='*80}", file=sys.stderr)
-                    print(f"CRITICAL ERROR: Standard mode removing non-NaN values!", file=sys.stderr)
-                    print(f"This should NEVER happen!", file=sys.stderr)
-                    print(f"Column: {column}", file=sys.stderr)
-                    print(f"Non-NaN values marked for removal: {len(false_positives)}", file=sys.stderr)
-                    print(f"Examples: {false_positives[column].head(10).tolist()}", file=sys.stderr)
-                    print(f"{'='*80}\n", file=sys.stderr)
-                    # Force correct mask to prevent data loss
-                    mask = df[column].notna()
+            for idx in df.index:
+                val = df.loc[idx, column]
+
+                # Check if this is an address-related column
+                is_address_col = any(keyword in column.lower() for keyword in ['street', 'address'])
+
+                if enhanced_blank:
+                    # Enhanced mode: treat NaN, empty strings, and N/A variants as blank
+                    if pd.isna(val):
+                        # If checking address column, also check related columns
+                        if is_address_col and related_cols:
+                            # Check if ANY related column has data
+                            has_data_in_related = any(
+                                not pd.isna(df.loc[idx, rcol]) and
+                                (not isinstance(df.loc[idx, rcol], str) or
+                                 df.loc[idx, rcol].strip().lower() not in ['', 'n/a', 'na', 'null', 'none'])
+                                for rcol in related_cols
+                            )
+                            mask[idx] = has_data_in_related  # Keep if has data in ANY address column
+                        else:
+                            mask[idx] = False  # Remove NaN
+                    elif isinstance(val, str):
+                        cleaned = val.strip().lower()
+                        if cleaned in ["", "n/a", "na", "null", "none"]:
+                            # Check related columns
+                            if is_address_col and related_cols:
+                                has_data_in_related = any(
+                                    not pd.isna(df.loc[idx, rcol]) and
+                                    (not isinstance(df.loc[idx, rcol], str) or
+                                     df.loc[idx, rcol].strip().lower() not in ['', 'n/a', 'na', 'null', 'none'])
+                                    for rcol in related_cols
+                                )
+                                mask[idx] = has_data_in_related
+                            else:
+                                mask[idx] = False  # Remove blank strings and N/A variants
+                        else:
+                            mask[idx] = True  # Keep valid strings
+                    else:
+                        mask[idx] = True  # Keep non-string non-NaN values (numbers, etc.)
+                else:
+                    # Standard mode: ONLY treat actual NaN as blank
+                    # For address columns, check related columns too
+                    if pd.isna(val):
+                        if is_address_col and related_cols:
+                            # Check if ANY related address column has data
+                            has_data_in_related = any(
+                                not pd.isna(df.loc[idx, rcol])
+                                for rcol in related_cols
+                            )
+                            mask[idx] = has_data_in_related  # Keep if has data in ANY address column
+                        else:
+                            mask[idx] = False  # Remove NaN
+                    else:
+                        mask[idx] = True  # Keep if NOT NaN
 
         elif condition == 'contains':
             # Keep rows that do NOT contain the value
