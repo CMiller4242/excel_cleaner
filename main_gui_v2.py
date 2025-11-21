@@ -579,7 +579,13 @@ class UniversalExcelToolV2Enhanced:
                     widget.insert(0, str(param.default))
                 widget.pack(fill='x', pady=2)
                 param_widgets[param.name] = widget
-            
+
+            elif param.type == 'boolean':
+                var = tk.BooleanVar(value=param.default if param.default else False)
+                widget = ttk.Checkbutton(param_frame, text=label_text, variable=var)
+                widget.pack(anchor='w', pady=2)
+                param_widgets[param.name] = var
+
             elif param.type == 'choice':
                 ttk.Label(param_frame, text=label_text, font=('Arial', 11, 'bold')).pack(anchor='w')
                 widget = ttk.Combobox(param_frame, values=param.choices,
@@ -590,7 +596,7 @@ class UniversalExcelToolV2Enhanced:
                     widget.set(param.choices[0])
                 widget.pack(fill='x', pady=2)
                 param_widgets[param.name] = widget
-        
+
         def on_add():
             params = {}
             for param in operation.metadata.parameters:
@@ -600,6 +606,8 @@ class UniversalExcelToolV2Enhanced:
                         params[param.name] = widget.get_selected_columns()
                     elif isinstance(widget, ColumnSelector):
                         params[param.name] = widget.get_value()
+                    elif isinstance(widget, tk.BooleanVar):
+                        params[param.name] = widget.get()
                     elif isinstance(widget, (ttk.Entry, ttk.Combobox)):
                         value = widget.get()
                         if param.type == 'number':
