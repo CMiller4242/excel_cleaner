@@ -104,25 +104,103 @@ class RemoveDuplicatesOperation(BaseOperation):
                     description='Which duplicate to keep',
                     choices=['first', 'last'],
                     default='first'
+                ),
+                Parameter(
+                    name='multi_level_deduplication',
+                    type='boolean',
+                    description='Use intelligent multi-level deduplication: Level 1) By Email (non-blank), Level 2) By Name+Address (blank email), Level 3) By Name+Phone (blank email+address)',
+                    required=False,
+                    default=False
                 )
             ],
             excel_equivalent='Remove Duplicates',
             examples=[
                 'Remove duplicate customers by Customer ID',
                 'Remove duplicate emails from contact list',
-                'Keep only unique product codes'
+                'Keep only unique product codes',
+                'Smart deduplication: by email, then by name+address, then by name+phone'
             ],
             tags=['duplicates', 'unique', 'dedupe', 'remove']
         )
     
     def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
-        columns = params.get('columns', [])
         keep = self.get_param_value(params, 'keep', 'first')
-        
-        if not columns:
-            columns = None  # Check all columns
-        
-        return df.drop_duplicates(subset=columns, keep=keep)
+        multi_level = self.get_param_value(params, 'multi_level_deduplication', False)
+
+        # If multi-level deduplication is not enabled, use standard logic
+        if not multi_level:
+            columns = params.get('columns', [])
+            if not columns:
+                columns = None  # Check all columns
+            return df.drop_duplicates(subset=columns, keep=keep)
+
+        # Multi-level deduplication logic
+        # Define required columns
+        email_col = 'Email Address'
+        name_cols = ['First Name', 'Last Name']
+        address_cols = ['Person Street', 'Person City', 'Person State']
+        phone_col = 'Direct Phone Number'
+
+        # Check if required columns exist
+        all_required_cols = [email_col] + name_cols + address_cols + [phone_col]
+        missing_cols = [col for col in all_required_cols if col not in df.columns]
+
+        if missing_cols:
+            # Fall back to standard deduplication if required columns are missing
+            import sys
+            print(f"Warning: Multi-level deduplication requires columns: {all_required_cols}", file=sys.stderr)
+            print(f"Missing columns: {missing_cols}", file=sys.stderr)
+            print(f"Falling back to standard deduplication", file=sys.stderr)
+            columns = params.get('columns', [])
+            return df.drop_duplicates(subset=columns if columns else None, keep=keep)
+
+        # Create masks to identify different groups of rows
+        has_email = df[email_col].notna()
+        no_email = df[email_col].isna()
+        has_address = df['Person Street'].notna()
+        no_address = df['Person Street'].isna()
+
+        # Group 1: Rows with Email Address (deduplicate by email)
+        group1_mask = has_email
+
+        # Group 2: Rows without Email but with Address (deduplicate by name + address)
+        group2_mask = no_email & has_address
+
+        # Group 3: Rows without Email and without Address (deduplicate by name + phone)
+        group3_mask = no_email & no_address
+
+        # Process each group separately and collect results
+        results = []
+
+        # Level 1: Deduplicate by Email Address (for rows with non-blank email)
+        if group1_mask.any():
+            group1_df = df[group1_mask]
+            group1_deduped = group1_df.drop_duplicates(subset=[email_col], keep=keep)
+            results.append(group1_deduped)
+
+        # Level 2: Deduplicate by Name + Address (for rows with blank email but non-blank address)
+        if group2_mask.any():
+            group2_df = df[group2_mask]
+            dedupe_cols_level2 = name_cols + address_cols
+            group2_deduped = group2_df.drop_duplicates(subset=dedupe_cols_level2, keep=keep)
+            results.append(group2_deduped)
+
+        # Level 3: Deduplicate by Name + Phone (for rows with blank email and blank address)
+        if group3_mask.any():
+            group3_df = df[group3_mask]
+            dedupe_cols_level3 = name_cols + [phone_col]
+            group3_deduped = group3_df.drop_duplicates(subset=dedupe_cols_level3, keep=keep)
+            results.append(group3_deduped)
+
+        # Combine all deduplicated groups
+        if results:
+            result_df = pd.concat(results, axis=0)
+            # Sort by original index to maintain order
+            result_df = result_df.sort_index()
+            return result_df
+        else:
+            # Return empty dataframe with same structure if no groups had data
+            return df.iloc[:0].copy()
 
 
 class SortDataOperation(BaseOperation):
