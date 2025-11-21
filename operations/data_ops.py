@@ -94,9 +94,16 @@ class RemoveDuplicatesOperation(BaseOperation):
             description='Remove duplicate records based on one or more columns',
             parameters=[
                 Parameter(
+                    name='multi_level_deduplication',
+                    type='boolean',
+                    description='Use smart multi-level duplicate detection (Email → Name+Address → Name+Phone)',
+                    default=True,
+                    required=False
+                ),
+                Parameter(
                     name='columns',
                     type='column_list',
-                    description='Columns to check for duplicates (empty = check all columns)'
+                    description='Columns to check for duplicates (empty = check all columns). Ignored when using multi-level deduplication.'
                 ),
                 Parameter(
                     name='keep',
@@ -104,13 +111,6 @@ class RemoveDuplicatesOperation(BaseOperation):
                     description='Which duplicate to keep',
                     choices=['first', 'last'],
                     default='first'
-                ),
-                Parameter(
-                    name='multi_level_deduplication',
-                    type='boolean',
-                    description='Use intelligent multi-level deduplication: Level 1) By Email (non-blank), Level 2) By Name+Address (blank email), Level 3) By Name+Phone (blank email+address)',
-                    required=False,
-                    default=False
                 )
             ],
             excel_equivalent='Remove Duplicates',
@@ -125,7 +125,7 @@ class RemoveDuplicatesOperation(BaseOperation):
     
     def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
         keep = self.get_param_value(params, 'keep', 'first')
-        multi_level = self.get_param_value(params, 'multi_level_deduplication', False)
+        multi_level = self.get_param_value(params, 'multi_level_deduplication', True)
 
         # If multi-level deduplication is not enabled, use standard logic
         if not multi_level:
