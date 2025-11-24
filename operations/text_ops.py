@@ -155,12 +155,12 @@ class ConcatenateColumnsOperation(BaseOperation):
             id='text_concatenate',
             name='Combine Columns',
             category='Text',
-            description='Join multiple columns together with a separator',
+            description='Join multiple columns together with a separator. Columns are combined in the order you select them.',
             parameters=[
                 Parameter(
                     name='columns',
                     type='column_list',
-                    description='Columns to combine (in order)'
+                    description='Columns to combine (select in desired order)'
                 ),
                 Parameter(
                     name='separator',
