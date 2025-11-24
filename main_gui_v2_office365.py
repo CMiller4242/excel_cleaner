@@ -16,14 +16,20 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import pandas as pd
 from pathlib import Path
+import sys
 import os
+
+# Add to path
+sys.path.insert(0, str(Path(__file__).parent))
 
 # Import existing components
 from operations.registry import registry
-from executor.executor import OperationExecutor
-from validator.validator import Validator
-from presets.preset_manager import PresetManager, OperationConfig
-from themes.accessible_theme import AccessibleTheme
+from engine.executor import OperationExecutor
+from engine.validator import Validator
+from presets.preset_manager import PresetManager, Preset, OperationConfig
+from ui.themes.accessible_theme import AccessibleTheme
+from ai_assistant.claude_assistant import ClaudeAssistant
+from utils.export_helper import ExportHelper
 from enhanced_preview import EnhancedDataPreview
 from smart_column_selector import ColumnSelector, MultiColumnSelector
 from analysis.data_quality_integration import DataQualityIntegration
@@ -1665,13 +1671,9 @@ class UniversalExcelToolV2Office365:
 
 def main():
     root = tk.Tk()
-    app = UniversalExcelToolV2Enhanced(root)
+    app = UniversalExcelToolV2Office365(root)
     root.mainloop()
 
 
 if __name__ == "__main__":
     main()
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = UniversalExcelToolV2Office365(root)
-    root.mainloop()
