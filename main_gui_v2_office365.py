@@ -1310,9 +1310,9 @@ class UniversalExcelToolV2Office365:
         
         try:
             if filename.endswith('.csv'):
-                self.df = pd.read_csv(filename)
+                self.df = pd.read_csv(filename, header=0)  # First row is headers
             else:
-                self.df = pd.read_excel(filename)
+                self.df = pd.read_excel(filename, header=0)  # First row is headers
             
             self.current_file = filename
             self.file_info_var.set(
