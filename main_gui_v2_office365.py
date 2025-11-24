@@ -33,6 +33,7 @@ from utils.export_helper import ExportHelper
 from enhanced_preview import EnhancedDataPreview
 from smart_column_selector import ColumnSelector, MultiColumnSelector
 from analysis.data_quality_integration import DataQualityIntegration
+from excel_ribbon import ExcelRibbon, FormulaBar, ExcelStatusBar
 from datetime import datetime
 
 
@@ -125,68 +126,52 @@ class UniversalExcelToolV2Office365:
                        borderwidth=1)
 
     def create_widgets(self):
-        """Create Office 365-style interface with data-first layout"""
+        """Create Excel 365-style interface with compact ribbon and data-first layout"""
 
-        # ==================== SLIM HEADER (40px) ====================
-        header = ttk.Frame(self.root, style='Header.TFrame', height=40)
+        # ==================== COMPACT HEADER (30px) ====================
+        header = ttk.Frame(self.root, style='Header.TFrame', height=30)
         header.pack(fill='x')
         header.pack_propagate(False)
 
-        # App name
+        # App name (smaller)
         ttk.Label(header, text="🔷 Universal Excel Tool",
-                 style='HeaderTitle.TLabel').pack(side='left', padx=20)
+                 font=('Segoe UI', 11, 'bold'),
+                 foreground='#0078D4',
+                 background='#F3F2F1').pack(side='left', padx=15)
 
-        # Mode selector
+        # Mode selector (compact)
         mode_frame = ttk.Frame(header, style='Header.TFrame')
-        mode_frame.pack(side='right', padx=20)
+        mode_frame.pack(side='right', padx=15)
 
-        ttk.Label(mode_frame, text="Mode:", style='HeaderText.TLabel').pack(side='left', padx=5)
+        ttk.Label(mode_frame, text="Mode:",
+                 font=('Segoe UI', 9),
+                 foreground='#666666',
+                 background='#F3F2F1').pack(side='left', padx=5)
 
         mode_menu = ttk.Combobox(mode_frame, textvariable=self.mode,
                                  values=["simple", "advanced"],
-                                 state='readonly', width=10)
+                                 state='readonly', width=10,
+                                 font=('Segoe UI', 9))
         mode_menu.pack(side='left', padx=5)
         mode_menu.bind('<<ComboboxSelected>>', lambda e: self.on_mode_change())
 
-        # ==================== RIBBON TABS (50px) ====================
-        ribbon = ttk.Frame(self.root, style='Ribbon.TFrame', height=50)
-        ribbon.pack(fill='x')
-        ribbon.pack_propagate(False)
+        # ==================== EXCEL RIBBON (120px) ====================
+        self.excel_ribbon = ExcelRibbon(self.root, app_ref=self)
+        self.excel_ribbon.pack(fill='x')
 
-        # Ribbon tabs
-        self.active_ribbon_tab = tk.StringVar(value="file")
+        # ==================== FORMULA BAR (30px) ====================
+        self.formula_bar = FormulaBar(self.root)
+        self.formula_bar.pack(fill='x', pady=(2, 0))
 
-        ribbon_tabs_frame = ttk.Frame(ribbon, style='Ribbon.TFrame')
-        ribbon_tabs_frame.pack(side='left', fill='y', padx=10, pady=5)
+        # ==================== EXCEL STATUS BAR (bottom, 25px) ====================
+        self.excel_status_bar = ExcelStatusBar(self.root)
+        self.excel_status_bar.pack(side='bottom', fill='x')
 
-        self.ribbon_buttons = {}
-        tabs = [
-            ("file", "📁 File", self.show_file_ribbon),
-            ("operations", "🔧 Operations", self.toggle_operations_sidebar),
-            ("run", "▶️ Run", self.show_run_ribbon),
-            ("save", "💾 Save", self.show_save_ribbon),
-            ("analyze", "📊 Analyze", self.show_analyze_ribbon),
-        ]
+        # Update status bar with initial mode
+        self.excel_status_bar.update_mode(self.mode.get())
 
-        for tab_id, label, command in tabs:
-            btn = ttk.Button(ribbon_tabs_frame, text=label,
-                           command=command,
-                           style='RibbonTab.TButton', width=12)
-            btn.pack(side='left', padx=2)
-            self.ribbon_buttons[tab_id] = btn
-
-        # Ribbon content area
-        self.ribbon_content = ttk.Frame(ribbon, style='Ribbon.TFrame')
-        self.ribbon_content.pack(side='left', fill='both', expand=True, padx=10, pady=5)
-
-        # Initialize with File ribbon
-        self.show_file_ribbon()
-
-        # ==================== STATUS BAR ====================
-        self.status_var = tk.StringVar(value="Ready - Load a file to begin")
-        status = ttk.Label(self.root, textvariable=self.status_var,
-                          style='Status.TLabel', relief=tk.SUNKEN)
-        status.pack(side='bottom', fill='x')
+        # Keep reference to status var for backward compatibility
+        self.status_var = self.excel_status_bar.status_var
 
         # ==================== MAIN LAYOUT ====================
         # Vertical PanedWindow: Data Preview (70%) + Workflow Queue (30%)
@@ -210,38 +195,44 @@ class UniversalExcelToolV2Office365:
         self.enhanced_preview = EnhancedDataPreview(data_frame)
         self.enhanced_preview.pack(fill='both', expand=True, padx=20, pady=(0, 10))
 
-        # -------- WORKFLOW QUEUE (Bottom panel, 30%) --------
-        queue_frame = ttk.Frame(self.main_paned, style='Card.TFrame')
-        self.main_paned.add(queue_frame, weight=3)
+        # -------- WORKFLOW QUEUE (Bottom panel, compact 20%) --------
+        queue_frame = ttk.Frame(self.main_paned, style='WorkflowCompact.TFrame')
+        self.main_paned.add(queue_frame, weight=2)  # Reduced from 3 to 2 for more compact
 
-        # Queue header with collapse button
-        queue_header = ttk.Frame(queue_frame, style='Card.TFrame')
-        queue_header.pack(fill='x', pady=5, padx=10)
+        # Queue header with collapse button (more compact)
+        queue_header = ttk.Frame(queue_frame, style='WorkflowCompact.TFrame', height=35)
+        queue_header.pack(fill='x', pady=3, padx=10)
+        queue_header.pack_propagate(False)
 
         self.collapse_btn = ttk.Button(queue_header, text="▼",
                                        command=self.toggle_queue_collapse,
-                                       width=3)
-        self.collapse_btn.pack(side='left', padx=5)
+                                       width=2,
+                                       style='RibbonButton.TButton')
+        self.collapse_btn.pack(side='left', padx=3)
 
-        ttk.Label(queue_header, text="⚙️ Workflow Queue",
-                 font=('Segoe UI', 13, 'bold'),
-                 foreground='#323130').pack(side='left', padx=10)
+        ttk.Label(queue_header, text="⚙️ Workflow",
+                 font=('Segoe UI', 11, 'bold'),
+                 foreground='#323130',
+                 background='#FAFAFA').pack(side='left', padx=8)
 
-        self.queue_count_label = ttk.Label(queue_header, text="(0 operations)",
-                                           font=('Segoe UI', 11),
-                                           foreground='#666666')
+        self.queue_count_label = ttk.Label(queue_header, text="(0)",
+                                           font=('Segoe UI', 9),
+                                           foreground='#666666',
+                                           background='#FAFAFA')
         self.queue_count_label.pack(side='left')
 
-        # Queue action buttons
-        queue_actions = ttk.Frame(queue_header, style='Card.TFrame')
-        queue_actions.pack(side='right', padx=10)
+        # Queue action buttons (compact)
+        queue_actions = ttk.Frame(queue_header, style='WorkflowCompact.TFrame')
+        queue_actions.pack(side='right', padx=5)
 
         ttk.Button(queue_actions, text="+ Add",
                   command=self.toggle_operations_sidebar,
-                  style='Success.TButton').pack(side='left', padx=3)
-        ttk.Button(queue_actions, text="▶️ Run All",
+                  style='RibbonButtonSuccess.TButton',
+                  width=8).pack(side='left', padx=2)
+        ttk.Button(queue_actions, text="▶️ Run",
                   command=self.run_operations,
-                  style='Primary.TButton').pack(side='left', padx=3)
+                  style='RibbonButtonSuccess.TButton',
+                  width=8).pack(side='left', padx=2)
 
         # Queue content (cards view)
         self.queue_content = ttk.Frame(queue_frame, style='Card.TFrame')
@@ -275,54 +266,8 @@ class UniversalExcelToolV2Office365:
         # Load initial display
         self.refresh_queue_display()
 
-    # ==================== RIBBON TAB METHODS ====================
-
-    def show_file_ribbon(self):
-        """Show File ribbon content"""
-        self.active_ribbon_tab.set("file")
-        self._clear_ribbon_content()
-
-        ttk.Button(self.ribbon_content, text="📁 Open File",
-                  command=self.load_file,
-                  style='Primary.TButton').pack(side='left', padx=5)
-        ttk.Button(self.ribbon_content, text="📋 Load Preset",
-                  command=self.load_preset,
-                  style='Primary.TButton').pack(side='left', padx=5)
-
-    def show_run_ribbon(self):
-        """Show Run ribbon content"""
-        self.active_ribbon_tab.set("run")
-        self._clear_ribbon_content()
-
-        ttk.Button(self.ribbon_content, text="▶️ Run All Operations",
-                  command=self.run_operations,
-                  style='Success.TButton').pack(side='left', padx=5)
-
-    def show_save_ribbon(self):
-        """Show Save ribbon content"""
-        self.active_ribbon_tab.set("save")
-        self._clear_ribbon_content()
-
-        ttk.Button(self.ribbon_content, text="💾 Save Results",
-                  command=self.save_results,
-                  style='Primary.TButton').pack(side='left', padx=5)
-        ttk.Button(self.ribbon_content, text="💾 Save Preset",
-                  command=self.save_preset,
-                  style='Primary.TButton').pack(side='left', padx=5)
-
-    def show_analyze_ribbon(self):
-        """Show Analyze ribbon content"""
-        self.active_ribbon_tab.set("analyze")
-        self._clear_ribbon_content()
-
-        ttk.Button(self.ribbon_content, text="🔍 Data Quality Analysis",
-                  command=self.analyze_data_quality,
-                  style='Primary.TButton').pack(side='left', padx=5)
-
-    def _clear_ribbon_content(self):
-        """Clear all widgets from ribbon content area"""
-        for widget in self.ribbon_content.winfo_children():
-            widget.destroy()
+    # ==================== RIBBON TAB METHODS (Legacy - now handled by ExcelRibbon) ====================
+    # These methods are kept for backward compatibility but ribbon is now handled by ExcelRibbon class
 
     # ==================== OPERATIONS SIDEBAR METHODS ====================
 
@@ -411,23 +356,28 @@ class UniversalExcelToolV2Office365:
             self.queue_collapsed = True
 
     def refresh_queue_display(self):
-        """Refresh workflow queue with card-style display"""
+        """Refresh workflow queue with compact card-style display"""
         # Clear existing cards
         for widget in self.queue_cards_frame.winfo_children():
             widget.destroy()
 
-        # Update count
+        # Update count (compact format)
         count = len(self.operation_queue)
-        self.queue_count_label.config(text=f"({count} operation{'s' if count != 1 else ''})")
+        self.queue_count_label.config(text=f"({count})")
+
+        # Update status bar
+        if hasattr(self, 'excel_status_bar'):
+            if self.df is not None:
+                self.excel_status_bar.update_row_count(len(self.df))
 
         if count == 0:
-            # Show empty state
+            # Show empty state (compact)
             empty_label = ttk.Label(self.queue_cards_frame,
-                                   text="No operations in queue. Click '+ Add' to get started.",
-                                   font=('Segoe UI', 11),
+                                   text="No operations. Click '+ Add' to start.",
+                                   font=('Segoe UI', 10),
                                    foreground='#666666',
-                                   background='#F3F2F1')
-            empty_label.pack(pady=20)
+                                   background='#FAFAFA')
+            empty_label.pack(pady=15)
             return
 
         # Create card for each operation
@@ -435,14 +385,14 @@ class UniversalExcelToolV2Office365:
             self._create_operation_card(i, op)
 
     def _create_operation_card(self, index, op):
-        """Create a card widget for an operation"""
-        # Card frame with shadow effect
+        """Create a compact card widget for an operation (Excel-style)"""
+        # Card frame (more compact)
         card = ttk.Frame(self.queue_cards_frame, style='QueueCard.TFrame')
-        card.pack(fill='x', pady=4, padx=5)
+        card.pack(fill='x', pady=2, padx=5)
 
-        # Card content
+        # Card content (reduced padding)
         content = ttk.Frame(card, style='Card.TFrame')
-        content.pack(fill='both', expand=True, padx=12, pady=8)
+        content.pack(fill='both', expand=True, padx=8, pady=5)
 
         # Left side: checkbox and operation info
         left = ttk.Frame(content, style='Card.TFrame')
@@ -470,13 +420,13 @@ class UniversalExcelToolV2Office365:
         info_frame.pack(side='left', fill='both', expand=True)
 
         ttk.Label(info_frame, text=op['name'],
-                 font=('Segoe UI', 12, 'bold'),
+                 font=('Segoe UI', 10, 'bold'),
                  foreground='#323130').pack(anchor='w')
 
-        # Parameters summary
+        # Parameters summary (compact)
         params_text = self._format_params_summary(op['parameters'])
         ttk.Label(info_frame, text=params_text,
-                 font=('Segoe UI', 10),
+                 font=('Segoe UI', 9),
                  foreground='#666666').pack(anchor='w')
 
         # Right side: action buttons
@@ -586,7 +536,9 @@ class UniversalExcelToolV2Office365:
     def on_mode_change(self):
         """Handle mode toggle"""
         mode = self.mode.get()
-        self.status_var.set(f"Switched to {mode.upper()} mode")
+        self.status_var.set(f"Switched to {mode.title()} mode")
+        if hasattr(self, 'excel_status_bar'):
+            self.excel_status_bar.update_mode(mode)
         self.load_operations()
 
     def on_search(self, *args):
@@ -1343,9 +1295,13 @@ class UniversalExcelToolV2Office365:
             
             # Use enhanced preview
             self.enhanced_preview.load_dataframe(self.df, is_result=False)
-            
+
             self.status_var.set(f"Loaded {len(self.df):,} records successfully")
-            
+
+            # Update Excel status bar
+            if hasattr(self, 'excel_status_bar'):
+                self.excel_status_bar.update_row_count(len(self.df))
+
             messagebox.showinfo("Success",
                               f"Loaded {len(self.df):,} records with {len(self.df.columns)} columns")
             
@@ -1393,6 +1349,10 @@ class UniversalExcelToolV2Office365:
                 success_msg += f"\nRemoved: {removed_count:,} rows"
 
             self.status_var.set(f"✅ Complete! {len(self.result_df):,} rows in results")
+
+            # Update Excel status bar
+            if hasattr(self, 'excel_status_bar'):
+                self.excel_status_bar.update_row_count(len(self.result_df))
 
             messagebox.showinfo("Success", success_msg)
             
