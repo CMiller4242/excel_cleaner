@@ -77,6 +77,9 @@ class EnhancedDataPreview(ttk.Frame):
             theme="light blue",
             show_row_index=True,  # Excel-like row numbers
             show_top_left=True,   # Corner cell
+            show_header=True,     # CRITICAL: Show column headers
+            show_x_scrollbar=True,
+            show_y_scrollbar=True,
             empty_horizontal=0,
             empty_vertical=0,
             height=600,
@@ -261,6 +264,9 @@ class EnhancedDataPreview(ttk.Frame):
             theme="light blue",
             show_row_index=True,
             show_top_left=True,
+            show_header=True,     # CRITICAL: Show column headers
+            show_x_scrollbar=True,
+            show_y_scrollbar=True,
             empty_horizontal=0,
             empty_vertical=0
         )
