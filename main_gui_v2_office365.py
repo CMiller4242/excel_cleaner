@@ -281,19 +281,39 @@ class UniversalExcelToolV2Office365:
     def show_operations_sidebar(self):
         """Show operations sidebar (overlay style)"""
         if self.operations_sidebar is not None:
-            return  # Already shown
+            # If sidebar exists, just bring it to front
+            try:
+                self.operations_sidebar.lift()
+                self.operations_sidebar.focus_set()
+                return
+            except tk.TclError:
+                # Window was destroyed, create new one
+                self.operations_sidebar = None
 
         # Create overlay sidebar
         self.operations_sidebar = tk.Toplevel(self.root)
         self.operations_sidebar.transient(self.root)
         self.operations_sidebar.overrideredirect(True)
 
-        # Position at left side
-        x = self.root.winfo_x() + 10
+        # CRITICAL FIX: Update window to get accurate geometry
+        self.root.update_idletasks()
+
+        # Position at left side using rootx/rooty for accurate screen coordinates
+        x = self.root.winfo_rootx() + 10
         # NEW LAYOUT: Header (30px) + Ribbon (120px) + Formula Bar (30px) = 180px
-        y = self.root.winfo_y() + 190  # Below formula bar
+        y = self.root.winfo_rooty() + 190  # Below formula bar
         height = self.root.winfo_height() - 230  # Account for taller header area
+
+        # Ensure minimum height
+        if height < 300:
+            height = 300
+
         self.operations_sidebar.geometry(f"320x{height}+{x}+{y}")
+
+        # CRITICAL: Bring window to front and give it focus
+        self.operations_sidebar.lift()
+        self.operations_sidebar.attributes('-topmost', True)
+        self.operations_sidebar.after_idle(self.operations_sidebar.attributes, '-topmost', False)
 
         # Sidebar content
         sidebar_frame = ttk.Frame(self.operations_sidebar, style='Card.TFrame', relief=tk.RAISED, borderwidth=2)
@@ -333,6 +353,11 @@ class UniversalExcelToolV2Office365:
         self.load_operations()
 
         self.operations_visible = True
+
+        # Ensure window is visible and has focus after content is loaded
+        self.operations_sidebar.update()
+        self.operations_sidebar.deiconify()
+        self.operations_sidebar.focus_set()
 
     def hide_operations_sidebar(self):
         """Hide operations sidebar"""
