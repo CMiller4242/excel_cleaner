@@ -290,8 +290,9 @@ class UniversalExcelToolV2Office365:
 
         # Position at left side
         x = self.root.winfo_x() + 10
-        y = self.root.winfo_y() + 130  # Below ribbon
-        height = self.root.winfo_height() - 180
+        # NEW LAYOUT: Header (30px) + Ribbon (120px) + Formula Bar (30px) = 180px
+        y = self.root.winfo_y() + 190  # Below formula bar
+        height = self.root.winfo_height() - 230  # Account for taller header area
         self.operations_sidebar.geometry(f"320x{height}+{x}+{y}")
 
         # Sidebar content
