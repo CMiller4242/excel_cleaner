@@ -156,6 +156,13 @@ class ExcelRibbon(ttk.Frame):
         file_group.add_button("Open", self.app.load_file, "📁", row=0, column=0)
         file_group.add_button("Save", self.app.save_results, "💾", row=0, column=1)
 
+        # Presets group
+        presets_group = RibbonGroup(self.content_area, "Presets")
+        presets_group.pack(side='left', fill='y', padx=2)
+
+        presets_group.add_button("Load\nPreset", self.app.load_preset, "📋", row=0, column=0)
+        presets_group.add_button("Save\nPreset", self.app.save_preset, "💾", row=0, column=1)
+
         # Operations group
         ops_group = RibbonGroup(self.content_area, "Operations")
         ops_group.pack(side='left', fill='y', padx=2)
