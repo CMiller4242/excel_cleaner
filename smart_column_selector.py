@@ -87,9 +87,10 @@ class MultiColumnSelector(ttk.Frame):
     """
     Multi-column selector with checkbox list
     For operations that need multiple columns
+    Tracks selection order for operations where order matters
     """
-    
-    def __init__(self, parent, columns: List[str], label: str = "Select Columns", 
+
+    def __init__(self, parent, columns: List[str], label: str = "Select Columns",
                  max_height: int = 200, **kwargs):
         super().__init__(parent, **kwargs)
         self.columns = columns
@@ -97,7 +98,8 @@ class MultiColumnSelector(ttk.Frame):
         self.max_height = max_height
         self.checkboxes = {}
         self.selected_vars = {}
-        
+        self.selection_order = []  # Track order of selection
+
         self._setup_ui()
     
     def _setup_ui(self):
@@ -136,13 +138,27 @@ class MultiColumnSelector(ttk.Frame):
         for col in self.columns:
             var = tk.BooleanVar(value=False)
             self.selected_vars[col] = var
-            
+
+            # Create callback to track selection order
+            def make_callback(column):
+                def callback():
+                    if self.selected_vars[column].get():
+                        # Column was checked - add to selection order if not already there
+                        if column not in self.selection_order:
+                            self.selection_order.append(column)
+                    else:
+                        # Column was unchecked - remove from selection order
+                        if column in self.selection_order:
+                            self.selection_order.remove(column)
+                return callback
+
             cb = ttk.Checkbutton(
                 self.checkbox_frame,
                 text=col,
                 variable=var,
                 onvalue=True,
-                offvalue=False
+                offvalue=False,
+                command=make_callback(col)
             )
             cb.pack(anchor='w', padx=5, pady=2)
             self.checkboxes[col] = cb
@@ -186,55 +202,89 @@ class MultiColumnSelector(ttk.Frame):
     
     def _select_all(self):
         """Select all checkboxes"""
-        for var in self.selected_vars.values():
-            var.set(True)
-    
+        # Clear and rebuild selection order in column appearance order
+        self.selection_order.clear()
+        for col in self.columns:
+            if col in self.selected_vars:
+                self.selected_vars[col].set(True)
+                self.selection_order.append(col)
+
     def _clear_all(self):
         """Clear all checkboxes"""
         for var in self.selected_vars.values():
             var.set(False)
+        self.selection_order.clear()
     
     def get_selected_columns(self) -> List[str]:
-        """Get list of selected column names"""
+        """Get list of selected column names in selection order"""
         selected = []
-        for col, var in self.selected_vars.items():
-            if var.get():
+        # Return columns in the order they were selected
+        for col in self.selection_order:
+            if col in self.selected_vars and self.selected_vars[col].get():
                 # Remove column letter prefix if present
                 clean_col = col.split(':', 1)[1].strip() if ':' in col else col
                 selected.append(clean_col)
         return selected
     
     def set_selected_columns(self, columns: List[str]):
-        """Set which columns are selected"""
+        """Set which columns are selected, preserving order"""
+        # Clear current selection and order
+        self.selection_order.clear()
+
+        # First, set all checkboxes based on whether they're in the list
         for col, var in self.selected_vars.items():
             clean_col = col.split(':', 1)[1].strip() if ':' in col else col
             var.set(clean_col in columns)
+
+        # Build selection order based on the order in the columns parameter
+        for col_name in columns:
+            # Find the matching column key (might have prefix)
+            for col_key in self.selected_vars.keys():
+                clean_key = col_key.split(':', 1)[1].strip() if ':' in col_key else col_key
+                if clean_key == col_name:
+                    self.selection_order.append(col_key)
+                    break
     
     def update_columns(self, columns: List[str]):
         """Update available columns"""
         # Clear existing checkboxes
         for cb in self.checkboxes.values():
             cb.destroy()
-        
+
         self.checkboxes.clear()
         self.selected_vars.clear()
-        
+        self.selection_order.clear()
+
         # Add new checkboxes
         self.columns = columns
         for col in self.columns:
             var = tk.BooleanVar(value=False)
             self.selected_vars[col] = var
-            
+
+            # Create callback to track selection order
+            def make_callback(column):
+                def callback():
+                    if self.selected_vars[column].get():
+                        # Column was checked - add to selection order if not already there
+                        if column not in self.selection_order:
+                            self.selection_order.append(column)
+                    else:
+                        # Column was unchecked - remove from selection order
+                        if column in self.selection_order:
+                            self.selection_order.remove(column)
+                return callback
+
             cb = ttk.Checkbutton(
                 self.checkbox_frame,
                 text=col,
                 variable=var,
                 onvalue=True,
-                offvalue=False
+                offvalue=False,
+                command=make_callback(col)
             )
             cb.pack(anchor='w', padx=5, pady=2)
             self.checkboxes[col] = cb
-        
+
         # Update scroll region
         self.checkbox_frame.update_idletasks()
         self.canvas.configure(scrollregion=self.canvas.bbox('all'))
