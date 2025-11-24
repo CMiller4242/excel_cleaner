@@ -185,8 +185,7 @@ class EnhancedDataPreview(ttk.Frame):
         sheet.set_sheet_data(data)
 
         # Auto-fit columns for readability
-        for col_idx in range(len(df.columns)):
-            sheet.set_column_width(col_idx, width=None, only_set_if_too_small=False)
+        sheet.set_all_cell_sizes_to_text()
 
         # Alternating row colors
         for row_idx in range(display_rows):
@@ -332,8 +331,7 @@ class EnhancedDataPreview(ttk.Frame):
         full_sheet.set_sheet_data(data)
 
         # Auto-fit columns
-        for col_idx in range(len(self.df.columns)):
-            full_sheet.set_column_width(col_idx, width=None, only_set_if_too_small=False)
+        full_sheet.set_all_cell_sizes_to_text()
 
         # Alternating row colors
         for row_idx in range(len(self.df)):
