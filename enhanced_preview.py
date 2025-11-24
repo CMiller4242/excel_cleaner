@@ -126,7 +126,7 @@ class EnhancedDataPreview(ttk.Frame):
             header_selected_cells_bg="#DEEBF7",
             header_selected_cells_fg="#323130",
             row_index=1,  # Start row numbers at 1 (Excel-style)
-            header_height=50  # Taller headers for two-line display
+            header_height=30  # Header height for single-line display
         )
 
         # Alternating row colors (Excel-style)
@@ -154,15 +154,13 @@ class EnhancedDataPreview(ttk.Frame):
         sheet = self.results_sheet if is_result else self.original_sheet
 
         # Prepare headers with Excel-style column letters
+        # Use single line with letter and name together for compatibility
         headers = []
         for idx, col_name in enumerate(df.columns):
             col_letter = self._get_column_letter(idx)
-            # Two-line header: Letter on top, name below
-            header_text = f"{col_letter}\n{col_name}"
+            # Single-line header: Letter - Name
+            header_text = f"{col_letter} - {col_name}"
             headers.append(header_text)
-
-        # Set headers
-        sheet.headers(headers)
 
         # Limit rows for performance (can be adjusted)
         display_rows = min(len(df), self.max_embedded_rows)
@@ -184,11 +182,17 @@ class EnhancedDataPreview(ttk.Frame):
 
             data.append(formatted_row)
 
-        # Set data
+        # Set data first
         sheet.set_sheet_data(data)
+
+        # Then set headers (must be done after data for proper column count)
+        sheet.headers(headers)
 
         # Auto-fit columns for readability
         sheet.set_all_cell_sizes_to_text()
+
+        # Refresh the display to ensure headers are visible
+        sheet.refresh()
 
         # Alternating row colors
         for row_idx in range(display_rows):
@@ -306,17 +310,15 @@ class EnhancedDataPreview(ttk.Frame):
             table_selected_cells_border_fg="#0078D4",
             table_selected_cells_bg="#CCE4F7",
             row_index=1,
-            header_height=50
+            header_height=30
         )
 
         # Prepare headers
         headers = []
         for idx, col_name in enumerate(self.df.columns):
             col_letter = self._get_column_letter(idx)
-            header_text = f"{col_letter}\n{col_name}"
+            header_text = f"{col_letter} - {col_name}"
             headers.append(header_text)
-
-        full_sheet.headers(headers)
 
         # Load ALL data
         data = []
@@ -334,10 +336,17 @@ class EnhancedDataPreview(ttk.Frame):
 
             data.append(formatted_row)
 
+        # Set data first
         full_sheet.set_sheet_data(data)
+
+        # Then set headers
+        full_sheet.headers(headers)
 
         # Auto-fit columns
         full_sheet.set_all_cell_sizes_to_text()
+
+        # Refresh to ensure headers are visible
+        full_sheet.refresh()
 
         # Alternating row colors
         for row_idx in range(len(self.df)):
