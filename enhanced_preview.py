@@ -68,19 +68,19 @@ class EnhancedDataPreview(ttk.Frame):
         self.info_label.pack(pady=5)
     
     def _create_treeview(self, parent) -> ttk.Treeview:
-        """Create a treeview with scrollbars"""
+        """Create a treeview with scrollbars and Excel-style appearance"""
         # Frame for tree and scrollbars
         tree_frame = ttk.Frame(parent)
         tree_frame.pack(fill='both', expand=True)
-        
-        # Scrollbars
+
+        # Scrollbars (Excel-style)
         v_scroll = ttk.Scrollbar(tree_frame, orient='vertical')
         v_scroll.pack(side='right', fill='y')
-        
+
         h_scroll = ttk.Scrollbar(tree_frame, orient='horizontal')
         h_scroll.pack(side='bottom', fill='x')
-        
-        # Treeview
+
+        # Treeview with Excel styling
         tree = ttk.Treeview(
             tree_frame,
             yscrollcommand=v_scroll.set,
@@ -89,15 +89,37 @@ class EnhancedDataPreview(ttk.Frame):
             selectmode='extended'
         )
         tree.pack(side='left', fill='both', expand=True)
-        
+
         # Configure scrollbars
         v_scroll.config(command=tree.yview)
         h_scroll.config(command=tree.xview)
-        
-        # Style
-        tree.tag_configure('oddrow', background='#f9f9f9')
-        tree.tag_configure('evenrow', background='#ffffff')
-        
+
+        # Style with alternating rows (Excel-like)
+        tree.tag_configure('oddrow', background='#FFFFFF')
+        tree.tag_configure('evenrow', background='#F9F9F9')
+        tree.tag_configure('selected', background='#CCE4F7', foreground='#000000')
+
+        # Apply Excel-specific styling
+        style = ttk.Style()
+        style.configure('Excel.Treeview',
+                       background='#FFFFFF',
+                       foreground='#000000',
+                       fieldbackground='#FFFFFF',
+                       font=('Segoe UI', 10),
+                       rowheight=25)
+
+        style.configure('Excel.Treeview.Heading',
+                       background='#F3F2F1',
+                       foreground='#323130',
+                       font=('Segoe UI', 10, 'bold'),
+                       relief='flat',
+                       borderwidth=1)
+
+        style.map('Excel.Treeview.Heading',
+                 background=[('active', '#E1DFDD')])
+
+        tree.configure(style='Excel.Treeview')
+
         return tree
     
     def load_dataframe(self, df: pd.DataFrame, is_result: bool = False):
@@ -138,13 +160,17 @@ class EnhancedDataPreview(ttk.Frame):
                 anchor='w',
                 stretch=True
             )
-            
-            # Add column letter for easier reference (like Excel)
+
+            # Excel-style two-row headers: Letter (top) + Name (bottom)
             if i == 0:
+                # Row number column
                 tree.heading(col, text='#', anchor='center')
             else:
+                # Data columns with letter + name
                 col_letter = self._get_column_letter(i - 1)
-                tree.heading(col, text=f"{col_letter}: {col}", anchor='w')
+                # Format: "  A  \nColumn Name" for visual two-row effect
+                header_text = f"   {col_letter}   \n{col}"
+                tree.heading(col, text=header_text, anchor='center')
         
         # Add data rows (limit to max_embedded_rows for performance)
         display_rows = min(len(df), self.max_embedded_rows)
@@ -269,12 +295,14 @@ class EnhancedDataPreview(ttk.Frame):
                 anchor='w',
                 stretch=True
             )
-            
+
+            # Excel-style two-row headers
             if i == 0:
                 full_tree.heading(col, text='#', anchor='center')
             else:
                 col_letter = self._get_column_letter(i - 1)
-                full_tree.heading(col, text=f"{col_letter}: {col}", anchor='w')
+                header_text = f"   {col_letter}   \n{col}"
+                full_tree.heading(col, text=header_text, anchor='center')
         
         # Add ALL rows
         for idx in range(len(self.df)):

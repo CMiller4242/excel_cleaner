@@ -238,17 +238,89 @@ class AccessibleTheme:
         # Configure TPanedwindow
         style.configure('TPanedwindow',
                        background=cls.COLORS['bg'])
-        
+
         # Configure Listbox (using tk widget directly)
         root.option_add('*Listbox.font', cls.FONTS['body'])
         root.option_add('*Listbox.background', cls.COLORS['bg'])
         root.option_add('*Listbox.foreground', cls.COLORS['fg'])
         root.option_add('*Listbox.selectBackground', cls.COLORS['primary'])
         root.option_add('*Listbox.selectForeground', cls.COLORS['button_fg'])
-        
+
         # Configure Text widget
         root.option_add('*Text.font', cls.FONTS['body'])
         root.option_add('*Text.background', cls.COLORS['bg'])
         root.option_add('*Text.foreground', cls.COLORS['fg'])
-        
+
+        # ========== EXCEL 365 RIBBON STYLES ==========
+
+        # Ribbon container
+        style.configure('Ribbon.TFrame',
+                       background='#FAFAFA',
+                       relief='flat')
+
+        # Ribbon tab bar
+        style.configure('RibbonTabBar.TFrame',
+                       background='#F3F2F1',
+                       relief='flat')
+
+        # Ribbon group (sections within tabs)
+        style.configure('RibbonGroup.TFrame',
+                       background='#F3F2F1',
+                       relief='flat')
+
+        # Ribbon group separator
+        style.configure('RibbonSeparator.TFrame',
+                       background='#E1DFDD')
+
+        # Ribbon buttons (compact Excel-style)
+        style.configure('RibbonButton.TButton',
+                       background='#F3F2F1',
+                       foreground='#323130',
+                       font=('Segoe UI', 9),
+                       borderwidth=1,
+                       relief='flat',
+                       padding=(4, 4))
+
+        style.map('RibbonButton.TButton',
+                 background=[('active', '#E1DFDD'), ('pressed', '#D0CFCD')],
+                 relief=[('pressed', 'sunken')])
+
+        # Ribbon button variants
+        style.configure('RibbonButtonSuccess.TButton',
+                       background='#107C10',
+                       foreground='#FFFFFF',
+                       font=('Segoe UI', 9, 'bold'),
+                       borderwidth=0,
+                       relief='flat',
+                       padding=(4, 4))
+
+        style.map('RibbonButtonSuccess.TButton',
+                 background=[('active', '#0E6B0E'), ('pressed', '#0C5A0C')])
+
+        style.configure('RibbonButtonAccent.TButton',
+                       background='#6554C0',
+                       foreground='#FFFFFF',
+                       font=('Segoe UI', 9, 'bold'),
+                       borderwidth=0,
+                       relief='flat',
+                       padding=(4, 4))
+
+        style.map('RibbonButtonAccent.TButton',
+                 background=[('active', '#5243AA'), ('pressed', '#4032AA')])
+
+        # Formula Bar
+        style.configure('FormulaBar.TFrame',
+                       background='#FAFAFA',
+                       relief='flat')
+
+        # Status Bar (bottom)
+        style.configure('StatusBar.TFrame',
+                       background='#F3F2F1',
+                       relief='flat')
+
+        # Compact workflow queue
+        style.configure('WorkflowCompact.TFrame',
+                       background='#FAFAFA',
+                       relief='flat')
+
         return style
