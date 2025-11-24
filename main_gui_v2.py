@@ -204,15 +204,20 @@ class UniversalExcelToolV2Enhanced:
         
         self.queue_listbox.pack(side='left', fill='both', expand=True)
         queue_scroll.pack(side='right', fill='y')
-        
+
+        # Double-click to edit
+        self.queue_listbox.bind('<Double-Button-1>', lambda e: self.edit_operation())
+
         # Queue buttons
         queue_btn_frame = ttk.Frame(queue_tab)
         queue_btn_frame.pack(fill='x', padx=5, pady=5)
-        
+
         ttk.Button(queue_btn_frame, text="↑ Move Up",
                   command=self.move_up).pack(side='left', padx=2)
         ttk.Button(queue_btn_frame, text="↓ Move Down",
                   command=self.move_down).pack(side='left', padx=2)
+        ttk.Button(queue_btn_frame, text="✏️ Edit",
+                  command=self.edit_operation).pack(side='left', padx=2)
         ttk.Button(queue_btn_frame, text="🗑 Remove",
                   command=self.remove_operation).pack(side='left', padx=2)
         ttk.Button(queue_btn_frame, text="Clear All",
@@ -398,83 +403,97 @@ class UniversalExcelToolV2Enhanced:
             # Use standard parameter dialog for operations without column selection
             self._show_standard_parameter_dialog(operation)
     
-    def _show_single_column_dialog(self, operation, columns):
+    def _show_single_column_dialog(self, operation, columns, edit_mode=False, edit_index=None, current_params=None):
         """Show dialog with smart single column selector"""
         dialog = tk.Toplevel(self.root)
-        dialog.title(f"Add: {operation.metadata.name}")
+        dialog.title(f"{'Edit' if edit_mode else 'Add'}: {operation.metadata.name}")
         dialog.geometry("600x500")
         dialog.transient(self.root)
         dialog.grab_set()
-        
+
         main_frame = ttk.Frame(dialog, padding=20)
         main_frame.pack(fill='both', expand=True)
-        
+
         # Title and description
         ttk.Label(
             main_frame,
             text=operation.metadata.name,
             font=('Segoe UI', 14, 'bold')
         ).pack(pady=(0, 10))
-        
+
         ttk.Label(
             main_frame,
             text=operation.metadata.description,
             wraplength=550,
             font=('Arial', 11)
         ).pack(pady=(0, 5))
-        
+
         ttk.Label(
             main_frame,
             text=f"Excel equivalent: {operation.metadata.excel_equivalent}",
             font=('Arial', 10),
             foreground='gray'
         ).pack(pady=(0, 20))
-        
+
         param_widgets = {}
-        
+
         # Process each parameter
         for param in operation.metadata.parameters:
             param_frame = ttk.Frame(main_frame)
             param_frame.pack(fill='x', pady=10)
-            
+
             label_text = param.description
             if param.required:
                 label_text += " *"
-            
+
+            # Get current value if in edit mode
+            current_value = current_params.get(param.name) if current_params else None
+
             if param.type == 'column':
                 # Use ColumnSelector
                 selector = ColumnSelector(param_frame, columns, label_text)
                 selector.pack(fill='x')
+                # Pre-fill if editing
+                if current_value:
+                    selector.set_value(current_value)
                 param_widgets[param.name] = selector
-            
+
             elif param.type == 'text':
                 ttk.Label(param_frame, text=label_text, font=('Arial', 11, 'bold')).pack(anchor='w')
                 widget = ttk.Entry(param_frame, font=('Arial', 12))
-                if param.default:
-                    widget.insert(0, str(param.default))
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.insert(0, str(value_to_set))
                 widget.pack(fill='x', pady=2)
                 param_widgets[param.name] = widget
-            
+
             elif param.type == 'number':
                 ttk.Label(param_frame, text=label_text, font=('Arial', 11, 'bold')).pack(anchor='w')
                 widget = ttk.Entry(param_frame, font=('Arial', 12))
-                if param.default:
-                    widget.insert(0, str(param.default))
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.insert(0, str(value_to_set))
                 widget.pack(fill='x', pady=2)
                 param_widgets[param.name] = widget
-            
+
             elif param.type == 'boolean':
-                var = tk.BooleanVar(value=param.default if param.default else False)
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else (param.default if param.default else False)
+                var = tk.BooleanVar(value=value_to_set)
                 widget = ttk.Checkbutton(param_frame, text=label_text, variable=var)
                 widget.pack(anchor='w', pady=2)
                 param_widgets[param.name] = var
-            
+
             elif param.type == 'choice':
                 ttk.Label(param_frame, text=label_text, font=('Arial', 11, 'bold')).pack(anchor='w')
                 widget = ttk.Combobox(param_frame, values=param.choices,
                                      font=('Arial', 12), state='readonly')
-                if param.default:
-                    widget.set(param.default)
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.set(value_to_set)
                 elif param.choices:
                     widget.set(param.choices[0])
                 widget.pack(fill='x', pady=2)
@@ -497,91 +516,115 @@ class UniversalExcelToolV2Enhanced:
                             except:
                                 value = 0
                         params[param.name] = value
-            
-            # Add to queue
-            self.operation_queue.append({
-                'operation_id': operation.metadata.id,
-                'name': operation.metadata.name,
-                'parameters': params,
-                'enabled': True
-            })
-            
+
+            if edit_mode:
+                # Update existing operation in queue
+                self.operation_queue[edit_index] = {
+                    'operation_id': operation.metadata.id,
+                    'name': operation.metadata.name,
+                    'parameters': params,
+                    'enabled': self.operation_queue[edit_index]['enabled']  # Preserve enabled state
+                }
+                self.status_var.set(f"Updated: {operation.metadata.name}")
+            else:
+                # Add new operation to queue
+                self.operation_queue.append({
+                    'operation_id': operation.metadata.id,
+                    'name': operation.metadata.name,
+                    'parameters': params,
+                    'enabled': True
+                })
+                self.status_var.set(f"Added: {operation.metadata.name}")
+
             self.refresh_queue_display()
-            self.status_var.set(f"Added: {operation.metadata.name}")
             dialog.destroy()
-        
+
         # Buttons
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill='x', pady=(20, 0))
-        
+
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="✓ Add to Queue", command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
+        button_text = "✓ Update" if edit_mode else "✓ Add to Queue"
+        ttk.Button(btn_frame, text=button_text, command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
     
-    def _show_multi_column_dialog(self, operation, columns):
+    def _show_multi_column_dialog(self, operation, columns, edit_mode=False, edit_index=None, current_params=None):
         """Show dialog with smart multi-column selector"""
         dialog = tk.Toplevel(self.root)
-        dialog.title(f"Add: {operation.metadata.name}")
+        dialog.title(f"{'Edit' if edit_mode else 'Add'}: {operation.metadata.name}")
         dialog.geometry("600x600")
         dialog.transient(self.root)
         dialog.grab_set()
-        
+
         main_frame = ttk.Frame(dialog, padding=20)
         main_frame.pack(fill='both', expand=True)
-        
+
         # Title and description
         ttk.Label(
             main_frame,
             text=operation.metadata.name,
             font=('Segoe UI', 14, 'bold')
         ).pack(pady=(0, 10))
-        
+
         ttk.Label(
             main_frame,
             text=operation.metadata.description,
             wraplength=550,
             font=('Arial', 11)
         ).pack(pady=(0, 5))
-        
+
         ttk.Label(
             main_frame,
             text=f"Excel equivalent: {operation.metadata.excel_equivalent}",
             font=('Arial', 10),
             foreground='gray'
         ).pack(pady=(0, 20))
-        
+
         param_widgets = {}
-        
+
         # Process each parameter
         for param in operation.metadata.parameters:
             param_frame = ttk.Frame(main_frame)
             param_frame.pack(fill='both', expand=(param.type == 'column_list'), pady=10)
-            
+
             label_text = param.description
             if param.required:
                 label_text += " *"
-            
+
+            # Get current value if in edit mode
+            current_value = current_params.get(param.name) if current_params else None
+
             if param.type == 'column_list':
                 # Use MultiColumnSelector
                 selector = MultiColumnSelector(param_frame, columns, label_text)
                 selector.pack(fill='both', expand=True)
+                # Pre-fill if editing
+                if current_value:
+                    selector.set_selected_columns(current_value)
                 param_widgets[param.name] = selector
-            
+
             elif param.type == 'column':
                 # Single column selector
                 selector = ColumnSelector(param_frame, columns, label_text)
                 selector.pack(fill='x')
+                # Pre-fill if editing
+                if current_value:
+                    selector.set_value(current_value)
                 param_widgets[param.name] = selector
-            
+
             elif param.type == 'text':
                 ttk.Label(param_frame, text=label_text, font=('Arial', 11, 'bold')).pack(anchor='w')
                 widget = ttk.Entry(param_frame, font=('Arial', 12))
-                if param.default:
-                    widget.insert(0, str(param.default))
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.insert(0, str(value_to_set))
                 widget.pack(fill='x', pady=2)
                 param_widgets[param.name] = widget
 
             elif param.type == 'boolean':
-                var = tk.BooleanVar(value=param.default if param.default else False)
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else (param.default if param.default else False)
+                var = tk.BooleanVar(value=value_to_set)
                 widget = ttk.Checkbutton(param_frame, text=label_text, variable=var)
                 widget.pack(anchor='w', pady=2)
                 param_widgets[param.name] = var
@@ -590,8 +633,10 @@ class UniversalExcelToolV2Enhanced:
                 ttk.Label(param_frame, text=label_text, font=('Arial', 11, 'bold')).pack(anchor='w')
                 widget = ttk.Combobox(param_frame, values=param.choices,
                                      font=('Arial', 12), state='readonly')
-                if param.default:
-                    widget.set(param.default)
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.set(value_to_set)
                 elif param.choices:
                     widget.set(param.choices[0])
                 widget.pack(fill='x', pady=2)
@@ -616,102 +661,127 @@ class UniversalExcelToolV2Enhanced:
                             except:
                                 value = 0
                         params[param.name] = value
-            
-            # Add to queue
-            self.operation_queue.append({
-                'operation_id': operation.metadata.id,
-                'name': operation.metadata.name,
-                'parameters': params,
-                'enabled': True
-            })
-            
+
+            if edit_mode:
+                # Update existing operation in queue
+                self.operation_queue[edit_index] = {
+                    'operation_id': operation.metadata.id,
+                    'name': operation.metadata.name,
+                    'parameters': params,
+                    'enabled': self.operation_queue[edit_index]['enabled']  # Preserve enabled state
+                }
+                self.status_var.set(f"Updated: {operation.metadata.name}")
+            else:
+                # Add new operation to queue
+                self.operation_queue.append({
+                    'operation_id': operation.metadata.id,
+                    'name': operation.metadata.name,
+                    'parameters': params,
+                    'enabled': True
+                })
+                self.status_var.set(f"Added: {operation.metadata.name}")
+
             self.refresh_queue_display()
-            self.status_var.set(f"Added: {operation.metadata.name}")
             dialog.destroy()
-        
+
         # Buttons
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill='x', pady=(20, 0))
-        
+
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="✓ Add to Queue", command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
-    
-    def _show_standard_parameter_dialog(self, operation):
+        button_text = "✓ Update" if edit_mode else "✓ Add to Queue"
+        ttk.Button(btn_frame, text=button_text, command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
+
+    def _show_standard_parameter_dialog(self, operation, edit_mode=False, edit_index=None, current_params=None):
         """Standard parameter dialog for operations without column selection"""
         dialog = tk.Toplevel(self.root)
-        dialog.title(f"Add: {operation.metadata.name}")
+        dialog.title(f"{'Edit' if edit_mode else 'Add'}: {operation.metadata.name}")
         dialog.geometry("600x500")
         dialog.transient(self.root)
         dialog.grab_set()
-        
+
         main_frame = ttk.Frame(dialog, padding=20)
         main_frame.pack(fill='both', expand=True)
-        
+
         # Title and description
         ttk.Label(
             main_frame,
             text=operation.metadata.name,
             font=('Segoe UI', 14, 'bold')
         ).pack(pady=(0, 10))
-        
+
         ttk.Label(
             main_frame,
             text=operation.metadata.description,
             wraplength=550,
             font=('Arial', 11)
         ).pack(pady=(0, 5))
-        
+
         ttk.Label(
             main_frame,
             text=f"Excel equivalent: {operation.metadata.excel_equivalent}",
             font=('Arial', 10),
             foreground='gray'
         ).pack(pady=(0, 20))
-        
+
         param_widgets = {}
-        
+
         for param in operation.metadata.parameters:
             frame = ttk.Frame(main_frame)
             frame.pack(fill='x', pady=8)
-            
+
             label_text = param.description
             if param.required:
                 label_text += " *"
-            
+
             ttk.Label(frame, text=label_text, font=('Arial', 11, 'bold')).pack(anchor='w')
-            
+
+            # Get current value if in edit mode
+            current_value = current_params.get(param.name) if current_params else None
+
             if param.type == 'text':
                 widget = ttk.Entry(frame, font=('Arial', 12))
-                if param.default:
-                    widget.insert(0, str(param.default))
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.insert(0, str(value_to_set))
                 widget.pack(fill='x', pady=2)
                 param_widgets[param.name] = widget
-            
+
             elif param.type == 'number':
                 widget = ttk.Entry(frame, font=('Arial', 12))
-                if param.default:
-                    widget.insert(0, str(param.default))
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.insert(0, str(value_to_set))
                 widget.pack(fill='x', pady=2)
                 param_widgets[param.name] = widget
-            
+
             elif param.type == 'boolean':
-                var = tk.BooleanVar(value=param.default if param.default else False)
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else (param.default if param.default else False)
+                var = tk.BooleanVar(value=value_to_set)
                 widget = ttk.Checkbutton(frame, text="Yes", variable=var)
                 widget.pack(anchor='w', pady=2)
                 param_widgets[param.name] = var
-            
+
             elif param.type == 'choice':
                 widget = ttk.Combobox(frame, values=param.choices,
                                      font=('Arial', 12), state='readonly')
-                if param.default:
-                    widget.set(param.default)
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.set(value_to_set)
                 elif param.choices:
                     widget.set(param.choices[0])
                 widget.pack(fill='x', pady=2)
                 param_widgets[param.name] = widget
-            
+
             elif param.type == 'file':
                 widget = ttk.Entry(frame, font=('Arial', 12))
+                # Pre-fill from current_params
+                if current_value:
+                    widget.insert(0, str(current_value))
                 widget.pack(fill='x', pady=2)
                 param_widgets[param.name] = widget
         
@@ -730,25 +800,36 @@ class UniversalExcelToolV2Enhanced:
                             except:
                                 value = 0
                         params[param.name] = value
-            
-            # Add to queue
-            self.operation_queue.append({
-                'operation_id': operation.metadata.id,
-                'name': operation.metadata.name,
-                'parameters': params,
-                'enabled': True
-            })
-            
+
+            if edit_mode:
+                # Update existing operation in queue
+                self.operation_queue[edit_index] = {
+                    'operation_id': operation.metadata.id,
+                    'name': operation.metadata.name,
+                    'parameters': params,
+                    'enabled': self.operation_queue[edit_index]['enabled']  # Preserve enabled state
+                }
+                self.status_var.set(f"Updated: {operation.metadata.name}")
+            else:
+                # Add new operation to queue
+                self.operation_queue.append({
+                    'operation_id': operation.metadata.id,
+                    'name': operation.metadata.name,
+                    'parameters': params,
+                    'enabled': True
+                })
+                self.status_var.set(f"Added: {operation.metadata.name}")
+
             self.refresh_queue_display()
-            self.status_var.set(f"Added: {operation.metadata.name}")
             dialog.destroy()
-        
+
         # Buttons
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill='x', pady=(20, 0))
-        
+
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="✓ Add to Queue", command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
+        button_text = "✓ Update" if edit_mode else "✓ Add to Queue"
+        ttk.Button(btn_frame, text=button_text, command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
 
     def _show_reorder_columns_dialog(self, operation, columns):
         """Show specialized dialog for reordering columns"""
@@ -973,7 +1054,38 @@ class UniversalExcelToolV2Enhanced:
         if selection:
             del self.operation_queue[selection[0]]
             self.refresh_queue_display()
-    
+
+    def edit_operation(self):
+        """Edit selected operation"""
+        selection = self.queue_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select an operation to edit")
+            return
+
+        idx = selection[0]
+        op_config = self.operation_queue[idx]
+
+        # Get the operation from registry
+        operation = registry.get_by_id(op_config['operation_id'])
+        if not operation:
+            messagebox.showerror("Error", f"Operation {op_config['operation_id']} not found")
+            return
+
+        # Get current columns from dataframe
+        columns = list(self.df.columns) if self.df is not None else []
+
+        # Determine which dialog to show based on parameter types
+        needs_single_column = any(p.type == 'column' for p in operation.metadata.parameters)
+        needs_multi_column = any(p.type == 'column_list' for p in operation.metadata.parameters)
+
+        # Show appropriate dialog with edit mode enabled
+        if needs_single_column and not needs_multi_column:
+            self._show_single_column_dialog(operation, columns, edit_mode=True, edit_index=idx, current_params=op_config['parameters'])
+        elif needs_multi_column:
+            self._show_multi_column_dialog(operation, columns, edit_mode=True, edit_index=idx, current_params=op_config['parameters'])
+        else:
+            self._show_standard_parameter_dialog(operation, edit_mode=True, edit_index=idx, current_params=op_config['parameters'])
+
     def clear_queue(self):
         """Clear all operations"""
         if messagebox.askyesno("Confirm", "Clear all operations from queue?"):
