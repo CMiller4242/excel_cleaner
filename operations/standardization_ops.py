@@ -112,6 +112,7 @@ class StandardizeZipCodeOperation(BaseOperation):
                     name='format_type',
                     type='choice',
                     description='Output format for ZIP codes',
+                    required=False,
                     choices=['ZIP+4 (preserve)', '5-digit only', '5-digit with placeholder'],
                     default='ZIP+4 (preserve)'
                 )
@@ -483,12 +484,14 @@ class RemoveRowsContainingOperation(BaseOperation):
                     name='patterns',
                     type='text',
                     description='Text patterns to match (comma-separated). Rows containing ANY of these will be removed.',
+                    required=False,
                     default='PO BOX, P.O. BOX, P O BOX'
                 ),
                 Parameter(
                     name='preset',
                     type='choice',
                     description='Use a preset pattern list',
+                    required=False,
                     choices=[
                         'Custom (use patterns above)',
                         'PO Boxes',
@@ -640,12 +643,14 @@ class FlagRowsContainingOperation(BaseOperation):
                     name='patterns',
                     type='text',
                     description='Text patterns to match (comma-separated)',
+                    required=False,
                     default='PO BOX, P.O. BOX'
                 ),
                 Parameter(
                     name='preset',
                     type='choice',
                     description='Use a preset pattern list',
+                    required=False,
                     choices=[
                         'Custom (use patterns above)',
                         'PO Boxes',
@@ -659,6 +664,7 @@ class FlagRowsContainingOperation(BaseOperation):
                     name='flag_column',
                     type='text',
                     description='Name for the flag column',
+                    required=False,
                     default='_FLAG_REMOVE'
                 ),
                 Parameter(

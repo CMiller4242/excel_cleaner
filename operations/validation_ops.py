@@ -12,7 +12,7 @@ class ValidateEmailOperation(BaseOperation):
             description='Check if email addresses are properly formatted',
             parameters=[
                 Parameter('column', 'column', 'Email column'),
-                Parameter('flag_invalid', 'boolean', 'Create flag column for invalid emails', default=True)
+                Parameter('flag_invalid', 'boolean', 'Create flag column for invalid emails', required=False, default=True)
             ],
             excel_equivalent='Complex IF formula',
             examples=['Flag invalid customer emails'],
@@ -66,8 +66,8 @@ class ValidateStateOperation(BaseOperation):
             description='Validate US state codes and optionally convert full names to 2-letter codes',
             parameters=[
                 Parameter('column', 'column', 'State column'),
-                Parameter('auto_convert', 'boolean', 'Convert full state names to codes', default=True),
-                Parameter('flag_invalid', 'boolean', 'Create flag column for invalid states', default=True)
+                Parameter('auto_convert', 'boolean', 'Convert full state names to codes', required=False, default=True),
+                Parameter('flag_invalid', 'boolean', 'Create flag column for invalid states', required=False, default=True)
             ],
             excel_equivalent='Complex IF with lookup table',
             examples=[

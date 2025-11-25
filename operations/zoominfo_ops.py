@@ -14,7 +14,7 @@ class SplitAddressOperation(BaseOperation):
     Splits full address into Address 1 (street) and Address 2 (suite/unit)
 
     Logic:
-    1. Find LAST occurrence of any suite keyword (case-insensitive)
+    1. Find FIRST occurrence of any suite keyword (case-insensitive)
     2. Split at that point
     3. Address 1 = everything before suite keyword (trimmed)
     4. Address 2 = suite keyword + everything after (trimmed)
@@ -37,24 +37,28 @@ class SplitAddressOperation(BaseOperation):
                     name='suite_keywords',
                     type='list',
                     description='Suite/unit keywords to detect (comma-separated)',
+                    required=False,
                     default='Ste,Suite,Suites,Unit,Units,Apt,Apartment,Bldg,Building,Floor,Flr'
                 ),
                 Parameter(
                     name='address1_column',
                     type='text',
                     description='Output column name for street address',
+                    required=False,
                     default='Address 1'
                 ),
                 Parameter(
                     name='address2_column',
                     type='text',
                     description='Output column name for suite/unit',
+                    required=False,
                     default='Address 2'
                 ),
                 Parameter(
                     name='remove_original',
                     type='boolean',
                     description='Remove original column after split',
+                    required=False,
                     default=True
                 )
             ],
@@ -98,9 +102,9 @@ class SplitAddressOperation(BaseOperation):
                 # No suite keyword found - entire address goes to Address 1
                 return address_str, ''
 
-            # Use the LAST match (rightmost suite keyword)
-            last_match = matches[-1]
-            split_pos = last_match.start()
+            # Use the FIRST match (leftmost suite keyword)
+            first_match = matches[0]
+            split_pos = first_match.start()
 
             # Everything before the suite keyword
             address1 = address_str[:split_pos].strip()
@@ -197,6 +201,7 @@ class StateConverterOperation(BaseOperation):
                     name='flag_unconverted',
                     type='boolean',
                     description='Create flag column for values that could not be converted',
+                    required=False,
                     default=False
                 )
             ],
@@ -265,6 +270,7 @@ class RemoveExcludedStatesOperation(BaseOperation):
                     name='excluded_states',
                     type='list',
                     description='State codes to exclude (comma-separated)',
+                    required=False,
                     default='AK,HI,PR,VI'
                 )
             ],
