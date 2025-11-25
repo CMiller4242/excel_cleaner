@@ -249,7 +249,7 @@ class UniversalExcelToolV2Office365:
         data_frame = ttk.Frame(self.main_paned, style='Card.TFrame')
         self.main_paned.add(data_frame, weight=7)
 
-        # File info header
+        # File info header with Reorder Columns button
         header_frame = ttk.Frame(data_frame, style='Card.TFrame')
         header_frame.pack(fill='x', pady=(10, 5), padx=20)
 
@@ -257,6 +257,15 @@ class UniversalExcelToolV2Office365:
         ttk.Label(header_frame, textvariable=self.file_info_var,
                  font=('Segoe UI', 12, 'bold'),
                  foreground='#323130').pack(side='left')
+
+        # Reorder Columns button (right side)
+        ttk.Button(
+            header_frame,
+            text="⚙️ Reorder Columns",
+            command=self.open_reorder_columns_dialog,
+            style='RibbonButton.TButton',
+            width=18
+        ).pack(side='right', padx=5)
 
         # Enhanced data preview - LARGE and spacious
         self.enhanced_preview = EnhancedDataPreview(data_frame)
@@ -478,6 +487,9 @@ class UniversalExcelToolV2Office365:
         for i, op in enumerate(self.operation_queue):
             self._create_operation_card(i, op)
 
+        # Update preview to show results after current operations
+        self.update_preview_state()
+
     def _create_operation_card(self, index, op):
         """Create a compact card widget for an operation (Excel-style)"""
         # Card frame (more compact)
@@ -674,15 +686,72 @@ class UniversalExcelToolV2Office365:
 
     def get_column_list_with_letters(self):
         """Get column list with Excel-style letters for dropdowns"""
-        if self.df is None:
+        # Use preview state to show columns as they will be after current operations
+        current_df = self.get_current_dataframe_state()
+        if current_df is None:
             return []
-        
+
         columns = []
-        for idx, col in enumerate(self.df.columns):
+        for idx, col in enumerate(current_df.columns):
             letter = self._get_column_letter(idx)
             columns.append(f"{letter}: {col}")
         return columns
-    
+
+    def get_current_dataframe_state(self):
+        """Get current dataframe state after preview execution of queued operations"""
+        if self.df is None:
+            return None
+
+        # If no operations in queue, return original
+        if not self.operation_queue:
+            return self.df
+
+        # Execute operations in preview mode
+        preview_df = self.executor.preview_execute_queue(self.df, self.operation_queue)
+        return preview_df if preview_df is not None else self.df
+
+    def update_preview_state(self):
+        """Update preview display to show results after current operations"""
+        try:
+            preview_df = self.get_current_dataframe_state()
+            if preview_df is not None:
+                # Show preview in results tab
+                self.enhanced_preview.load_dataframe(preview_df, is_result=True)
+
+                # Update status
+                op_count = len([op for op in self.operation_queue if op.get('enabled', True)])
+                if op_count > 0:
+                    self.status_var.set(f"Preview: {op_count} operation(s) queued | {len(preview_df):,} rows")
+                else:
+                    self.status_var.set(f"Loaded: {len(self.df):,} rows")
+        except Exception as e:
+            logging.error(f"Error updating preview state: {e}")
+
+    def open_reorder_columns_dialog(self):
+        """Open the column reordering dialog"""
+        current_df = self.get_current_dataframe_state()
+
+        if current_df is None:
+            messagebox.showwarning("No Data", "Please load a file first")
+            return
+
+        if len(current_df.columns) == 0:
+            messagebox.showwarning("No Columns", "No columns available to reorder")
+            return
+
+        # Get column list with letters (uses preview state)
+        columns = self.get_column_list_with_letters()
+
+        # Get the reorder columns operation from registry
+        from operations.registry import registry
+        operation = registry.get_by_id('data_reorder_columns')
+
+        if operation:
+            # Show the reorder dialog
+            self._show_reorder_columns_dialog(operation, columns)
+        else:
+            messagebox.showerror("Error", "Reorder columns operation not found")
+
 
     def on_operation_select(self, event):
         """Handle operation double-click"""

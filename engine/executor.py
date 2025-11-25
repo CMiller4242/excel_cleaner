@@ -18,6 +18,52 @@ class OperationExecutor:
         self.removed_rows = pd.DataFrame()
         self.removed_rows_metadata = []
 
+    def preview_execute_queue(self, df: pd.DataFrame, operations: List[Dict]) -> Optional[pd.DataFrame]:
+        """
+        Execute operations in preview mode (lightweight, no tracking)
+        Used to show immediate preview of results without full execution
+
+        Args:
+            df: Input DataFrame
+            operations: List of operation configs
+
+        Returns:
+            Preview DataFrame or None if errors occur
+        """
+        if df is None or df.empty:
+            return None
+
+        try:
+            result_df = df.copy()
+
+            for op_config in operations:
+                if not op_config.get('enabled', True):
+                    continue
+
+                operation_id = op_config['operation_id']
+                params = op_config['parameters']
+
+                # Get operation
+                operation = registry.get_by_id(operation_id)
+                if not operation:
+                    # Skip invalid operations in preview
+                    continue
+
+                # Validate parameters (skip if invalid in preview)
+                is_valid, error = operation.validate_params(result_df, params)
+                if not is_valid:
+                    continue
+
+                # Execute operation
+                result_df = operation.execute(result_df, params)
+
+            return result_df
+
+        except Exception as e:
+            # Silently fail in preview mode - just return original
+            print(f"Preview execution error: {e}")
+            return df
+
     def execute_queue(self, df: pd.DataFrame, operations: List[Dict]) -> pd.DataFrame:
         """
         Execute multiple operations in sequence
