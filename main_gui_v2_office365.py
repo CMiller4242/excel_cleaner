@@ -38,7 +38,6 @@ from ai_assistant.claude_assistant import ClaudeAssistant
 from utils.export_helper import ExportHelper
 from enhanced_preview import EnhancedDataPreview
 from smart_column_selector import ColumnSelector, MultiColumnSelector
-from ui.themes.theme_manager import ThemeManager
 from analysis.data_quality_integration import DataQualityIntegration
 from excel_ribbon import ExcelRibbon, FormulaBar, ExcelStatusBar
 from datetime import datetime
@@ -65,11 +64,6 @@ class UniversalExcelToolV2Office365:
         self.auth_manager = None
         if session_token:
             self.auth_manager = AuthManager()
-
-        # Theme Manager
-        self.theme_manager = ThemeManager()
-        # Register callback for theme changes
-        self.theme_manager.register_callback(self.refresh_ui_colors)
 
         # Data
         self.df = None
@@ -99,15 +93,14 @@ class UniversalExcelToolV2Office365:
 
         # Apply theme and create UI
         AccessibleTheme.apply_theme(self.root)
-        # Apply saved theme from ThemeManager
-        self.theme_manager.apply_theme(self.root, self.theme_manager.current_theme)
+        self.setup_office365_theme()
         self.create_widgets()
 
     def setup_office365_theme(self):
-        """Apply Office 365 color scheme"""
+        """Apply Office 365 light color scheme"""
         style = ttk.Style()
 
-        # Office 365 Colors
+        # Office 365 Light Colors (ORIGINAL)
         colors = {
             'primary_blue': '#0078D4',
             'success_green': '#107C10',
@@ -151,6 +144,24 @@ class UniversalExcelToolV2Office365:
                        relief=tk.RAISED,
                        borderwidth=1)
 
+        # Workflow frame style
+        style.configure('WorkflowCompact.TFrame', background='#FAFAFA')
+
+        # Button styles
+        style.configure('HeaderButton.TButton',
+                       font=('Segoe UI', 9),
+                       padding=(8, 4))
+
+        style.configure('RibbonButton.TButton',
+                       font=('Segoe UI', 10),
+                       padding=(10, 5))
+
+        style.configure('RibbonButtonSuccess.TButton',
+                       font=('Segoe UI', 10, 'bold'),
+                       background=colors['success_green'],
+                       foreground='white',
+                       padding=(10, 5))
+
     def create_widgets(self):
         """Create Excel 365-style interface with compact ribbon and data-first layout"""
 
@@ -163,15 +174,15 @@ class UniversalExcelToolV2Office365:
         title_frame = ttk.Frame(header, style='Header.TFrame')
         title_frame.pack(side='left', padx=15, pady=8)
 
-        self.app_title_label = ttk.Label(
+        ttk.Label(
             title_frame,
             text="🔷 Universal Excel Tool",
             font=('Segoe UI', 11, 'bold'),
-            style='HeaderTitle.TLabel'
-        )
-        self.app_title_label.pack(side='left')
+            foreground='#0078D4',
+            background='#F3F2F1'
+        ).pack(side='left')
 
-        # Right side - Mode selector, user info, theme toggle, logout
+        # Right side - Mode selector, user info, logout (NO THEME TOGGLE)
         right_container = ttk.Frame(header, style='Header.TFrame')
         right_container.pack(side='right', padx=15, pady=8)
 
@@ -179,12 +190,10 @@ class UniversalExcelToolV2Office365:
         mode_frame = ttk.Frame(right_container, style='Header.TFrame')
         mode_frame.pack(side='left', padx=(0, 15))
 
-        self.mode_label = ttk.Label(
-            mode_frame,
-            text="Mode:",
-            style='UserInfo.TLabel'
-        )
-        self.mode_label.pack(side='left', padx=(0, 5))
+        ttk.Label(mode_frame, text="Mode:",
+                 font=('Segoe UI', 9),
+                 foreground='#666666',
+                 background='#F3F2F1').pack(side='left', padx=(0, 5))
 
         mode_menu = ttk.Combobox(mode_frame, textvariable=self.mode,
                                  values=["simple", "advanced"],
@@ -193,25 +202,16 @@ class UniversalExcelToolV2Office365:
         mode_menu.pack(side='left')
         mode_menu.bind('<<ComboboxSelected>>', lambda e: self.on_mode_change())
 
-        # User info and buttons
+        # User info and logout button (if authenticated)
         if self.session_token and self.user_email:
             # User email label
-            self.user_email_label = ttk.Label(
+            ttk.Label(
                 right_container,
                 text=f"Logged in: {self.user_email}",
-                style='UserInfo.TLabel'
-            )
-            self.user_email_label.pack(side='left', padx=(0, 10))
-
-            # Theme toggle button
-            self.theme_toggle_btn = ttk.Button(
-                right_container,
-                text=self.theme_manager.get_theme_icon_text(),
-                command=self.toggle_theme,
-                style='HeaderButton.TButton',
-                width=12
-            )
-            self.theme_toggle_btn.pack(side='left', padx=5)
+                font=('Segoe UI', 9),
+                foreground='#666666',
+                background='#F3F2F1'
+            ).pack(side='left', padx=(0, 10))
 
             # Logout button
             ttk.Button(
@@ -221,16 +221,6 @@ class UniversalExcelToolV2Office365:
                 style='HeaderButton.TButton',
                 width=8
             ).pack(side='left', padx=5)
-        else:
-            # Theme toggle button (no user logged in)
-            self.theme_toggle_btn = ttk.Button(
-                right_container,
-                text=self.theme_manager.get_theme_icon_text(),
-                command=self.toggle_theme,
-                style='HeaderButton.TButton',
-                width=12
-            )
-            self.theme_toggle_btn.pack(side='left', padx=5)
 
         # ==================== EXCEL RIBBON (120px) ====================
         self.excel_ribbon = ExcelRibbon(self.root, app_ref=self)
@@ -345,10 +335,6 @@ class UniversalExcelToolV2Office365:
 
         # Load initial display
         self.refresh_queue_display()
-
-        # Apply initial theme colors to all widgets
-        colors = self.theme_manager.get_theme_colors(self.theme_manager.current_theme)
-        self.refresh_ui_colors(colors)
 
     # ==================== RIBBON TAB METHODS (Legacy - now handled by ExcelRibbon) ====================
     # These methods are kept for backward compatibility but ribbon is now handled by ExcelRibbon class
@@ -1732,74 +1718,6 @@ class UniversalExcelToolV2Office365:
     def analyze_data_quality(self):
         """Analyze data quality and suggest cleaning operations"""
         self.dq_integration.analyze_data()
-
-    def refresh_ui_colors(self, colors):
-        """Refresh all UI elements with new theme colors"""
-        try:
-            is_dark = colors.get('name') == 'Dark Mode'
-            bg_color = '#1E1E1E' if is_dark else '#FFFFFF'
-
-            # Update root window
-            self.root.configure(bg=bg_color)
-
-            # CRITICAL: Update data preview (largest white area)
-            if hasattr(self, 'enhanced_preview'):
-                self.enhanced_preview.apply_theme(colors)
-
-            # Update ribbon
-            if hasattr(self, 'excel_ribbon'):
-                self.excel_ribbon.apply_theme(colors)
-
-            # Update formula bar
-            if hasattr(self, 'formula_bar'):
-                self.formula_bar.apply_theme(colors)
-
-            # Update status bar
-            if hasattr(self, 'excel_status_bar'):
-                self.excel_status_bar.apply_theme(colors)
-
-            # Update queue canvas background
-            if hasattr(self, 'queue_canvas'):
-                self.queue_canvas.config(bg=colors.get('bg_secondary', '#252526'))
-
-            # Update main paned window
-            if hasattr(self, 'main_paned'):
-                try:
-                    self.main_paned.configure(background=bg_color)
-                except:
-                    pass
-
-            # Force update
-            self.root.update_idletasks()
-
-            logging.info(f"UI colors refreshed for theme: {self.theme_manager.current_theme}")
-
-        except Exception as e:
-            logging.error(f"Error refreshing UI colors: {e}")
-
-    def toggle_theme(self):
-        """Toggle between light and dark mode"""
-        try:
-            # Toggle theme
-            new_theme = self.theme_manager.toggle_theme()
-
-            # Apply new theme
-            colors = self.theme_manager.apply_theme(self.root, new_theme)
-
-            # Refresh all UI colors
-            self.refresh_ui_colors(colors)
-
-            # Update button text
-            self.theme_toggle_btn.config(text=self.theme_manager.get_theme_icon_text())
-
-            # Update status
-            self.status_var.set(f"Switched to {new_theme.title()} mode")
-
-            logging.info(f"Theme switched to: {new_theme}")
-
-        except Exception as e:
-            logging.error(f"Error toggling theme: {e}")
-            messagebox.showerror("Theme Error", f"Failed to switch theme: {str(e)}")
 
     def handle_logout(self):
         """Handle user logout"""
