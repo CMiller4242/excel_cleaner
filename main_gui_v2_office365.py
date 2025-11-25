@@ -1736,78 +1736,41 @@ class UniversalExcelToolV2Office365:
     def refresh_ui_colors(self, colors):
         """Refresh all UI elements with new theme colors"""
         try:
+            is_dark = colors.get('name') == 'Dark Mode'
+            bg_color = '#1E1E1E' if is_dark else '#FFFFFF'
+
+            # Update root window
+            self.root.configure(bg=bg_color)
+
+            # CRITICAL: Update data preview (largest white area)
+            if hasattr(self, 'enhanced_preview'):
+                self.enhanced_preview.apply_theme(colors)
+
+            # Update ribbon
+            if hasattr(self, 'excel_ribbon'):
+                self.excel_ribbon.apply_theme(colors)
+
+            # Update formula bar
+            if hasattr(self, 'formula_bar'):
+                self.formula_bar.apply_theme(colors)
+
+            # Update status bar
+            if hasattr(self, 'excel_status_bar'):
+                self.excel_status_bar.apply_theme(colors)
+
             # Update queue canvas background
             if hasattr(self, 'queue_canvas'):
-                self.queue_canvas.config(bg=colors['bg_secondary'])
+                self.queue_canvas.config(bg=colors.get('bg_secondary', '#252526'))
 
-            # Update workflow queue header labels
-            if hasattr(self, 'queue_count_label'):
-                self.queue_count_label.config(
-                    foreground=colors['text_secondary'],
-                    background=colors.get('bg_secondary', colors['bg_header'])
-                )
-
-            # Update file info label colors
-            if hasattr(self, 'file_info_var'):
-                # Find and update the label widget
-                for widget in self.root.winfo_children():
-                    if isinstance(widget, ttk.PanedWindow):
-                        for child in widget.winfo_children():
-                            if isinstance(child, ttk.Frame):
-                                for subchild in child.winfo_children():
-                                    if isinstance(subchild, ttk.Frame):
-                                        for label in subchild.winfo_children():
-                                            if isinstance(label, ttk.Label) and hasattr(label, 'cget'):
-                                                try:
-                                                    label.config(foreground=colors['text_primary'])
-                                                except:
-                                                    pass
-
-            # Update data preview (tksheet) colors
-            if hasattr(self, 'enhanced_preview') and hasattr(self.enhanced_preview, 'sheet'):
+            # Update main paned window
+            if hasattr(self, 'main_paned'):
                 try:
-                    theme_name = self.theme_manager.current_theme
-                    if theme_name == 'dark':
-                        # Dark mode colors for data grid
-                        self.enhanced_preview.sheet.set_options(
-                            font=("Segoe UI", 11, "normal"),
-                            header_font=("Segoe UI", 11, "bold"),
-                            header_bg=colors.get('grid_header', '#2D2D30'),
-                            header_fg=colors.get('grid_text', '#CCCCCC'),
-                            index_bg=colors.get('grid_header', '#2D2D30'),
-                            index_fg=colors.get('grid_text', '#CCCCCC'),
-                            top_left_bg=colors.get('grid_header', '#2D2D30'),
-                            frame_bg=colors.get('grid_bg', '#1E1E1E'),
-                            table_bg=colors.get('grid_bg', '#1E1E1E'),
-                            table_fg=colors.get('grid_text', '#CCCCCC'),
-                            table_grid_fg=colors.get('grid_border', '#3E3E42'),
-                            table_selected_cells_border_fg=colors.get('input_focus', '#4FC3F7'),
-                            table_selected_cells_bg=colors.get('grid_selected', '#264F78'),
-                            table_selected_rows_border_fg=colors.get('input_focus', '#4FC3F7'),
-                            table_selected_rows_bg=colors.get('grid_selected', '#264F78'),
-                        )
-                    else:
-                        # Light mode colors for data grid
-                        self.enhanced_preview.sheet.set_options(
-                            font=("Segoe UI", 11, "normal"),
-                            header_font=("Segoe UI", 11, "bold"),
-                            header_bg='#F3F2F1',
-                            header_fg='#323130',
-                            index_bg='#F3F2F1',
-                            index_fg='#323130',
-                            top_left_bg='#F3F2F1',
-                            frame_bg='#FFFFFF',
-                            table_bg='#FFFFFF',
-                            table_fg='#323130',
-                            table_grid_fg='#E1DFDD',
-                            table_selected_cells_border_fg='#0078D4',
-                            table_selected_cells_bg='#CCE4F7',
-                            table_selected_rows_border_fg='#0078D4',
-                            table_selected_rows_bg='#CCE4F7',
-                        )
-                    self.enhanced_preview.sheet.refresh()
-                except Exception as e:
-                    logging.warning(f"Could not update data grid colors: {e}")
+                    self.main_paned.configure(background=bg_color)
+                except:
+                    pass
+
+            # Force update
+            self.root.update_idletasks()
 
             logging.info(f"UI colors refreshed for theme: {self.theme_manager.current_theme}")
 

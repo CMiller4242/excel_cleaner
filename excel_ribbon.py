@@ -143,6 +143,25 @@ class ExcelRibbon(ttk.Frame):
         elif tab_id == 'help':
             self._create_help_tab()
 
+    def apply_theme(self, theme_colors):
+        """Apply theme colors to ribbon"""
+        is_dark = theme_colors.get('name') == 'Dark Mode'
+
+        if is_dark:
+            # Dark mode ribbon - update tab buttons
+            for btn in self.tab_buttons.values():
+                if btn['bg'] == '#FFFFFF':  # Active tab
+                    btn.configure(bg='#1E1E1E', fg='#4FC3F7', activebackground='#252526')
+                else:
+                    btn.configure(bg='#2D2D30', fg='#CCCCCC', activebackground='#3E3E42', activeforeground='#4FC3F7')
+        else:
+            # Light mode ribbon - reset to original colors
+            for btn in self.tab_buttons.values():
+                if btn['bg'] == '#1E1E1E' or btn['bg'] == '#FFFFFF':  # Active tab
+                    btn.configure(bg='#FFFFFF', fg='#0078D4', activebackground='#FFFFFF')
+                else:
+                    btn.configure(bg='#F3F2F1', fg='#323130', activebackground='#FFFFFF', activeforeground='#0078D4')
+
     def _create_home_tab(self):
         """Create Home tab with File, Operations, and Run groups"""
         # Clipboard group
@@ -282,6 +301,28 @@ class FormulaBar(ttk.Frame):
         else:
             self.formula_var.set("No active filter")
 
+    def apply_theme(self, theme_colors):
+        """Apply theme colors to formula bar"""
+        is_dark = theme_colors.get('name') == 'Dark Mode'
+
+        if is_dark:
+            self.configure(style='FormulaBarDark.TFrame')
+            # Update all child widgets
+            for widget in self.winfo_children():
+                if isinstance(widget, ttk.Label):
+                    try:
+                        widget.configure(foreground='#CCCCCC', background='#2D2D30')
+                    except:
+                        pass
+        else:
+            self.configure(style='FormulaBar.TFrame')
+            for widget in self.winfo_children():
+                if isinstance(widget, ttk.Label):
+                    try:
+                        widget.configure(foreground='#323130', background='#FAFAFA')
+                    except:
+                        pass
+
 
 class ExcelStatusBar(ttk.Frame):
     """Excel-style status bar with detailed information"""
@@ -344,3 +385,25 @@ class ExcelStatusBar(ttk.Frame):
             self.row_count_var.set("No data")
         else:
             self.row_count_var.set(f"{count:,} rows")
+
+    def apply_theme(self, theme_colors):
+        """Apply theme colors to status bar"""
+        is_dark = theme_colors.get('name') == 'Dark Mode'
+
+        if is_dark:
+            self.configure(style='StatusBarDark.TFrame')
+            # Update all child label widgets
+            for widget in self.winfo_children():
+                if isinstance(widget, ttk.Label):
+                    try:
+                        widget.configure(foreground='#CCCCCC', background='#2D2D30')
+                    except:
+                        pass
+        else:
+            self.configure(style='StatusBar.TFrame')
+            for widget in self.winfo_children():
+                if isinstance(widget, ttk.Label):
+                    try:
+                        widget.configure(foreground='#323130', background='#F3F2F1')
+                    except:
+                        pass

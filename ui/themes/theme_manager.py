@@ -223,11 +223,29 @@ class ThemeManager:
                        bordercolor=colors.get('input_border', colors['border']))
 
         # ==================== COMBOBOX ====================
-        style.configure('TCombobox',
-                       fieldbackground=colors.get('input_bg', colors['bg_primary']),
-                       foreground=colors['text_primary'],
-                       background=colors['bg_secondary'],
-                       bordercolor=colors['border'])
+        if theme_name == 'dark':
+            style.configure('TCombobox',
+                           fieldbackground='#1E1E1E',
+                           foreground='#CCCCCC',
+                           background='#2D2D30',
+                           bordercolor='#3E3E42',
+                           arrowcolor='#CCCCCC',
+                           lightcolor='#2D2D30',
+                           darkcolor='#2D2D30',
+                           selectbackground='#264F78',
+                           selectforeground='#FFFFFF')
+
+            style.map('TCombobox',
+                     fieldbackground=[('readonly', '#1E1E1E')],
+                     selectbackground=[('readonly', '#264F78')],
+                     selectforeground=[('readonly', '#FFFFFF')],
+                     background=[('readonly', '#2D2D30')])
+        else:
+            style.configure('TCombobox',
+                           fieldbackground=colors.get('input_bg', colors['bg_primary']),
+                           foreground=colors['text_primary'],
+                           background=colors['bg_secondary'],
+                           bordercolor=colors['border'])
 
         # ==================== NOTEBOOK (TABS) ====================
         style.configure('TNotebook',
@@ -266,6 +284,14 @@ class ThemeManager:
                        background=colors['bg_secondary'],
                        troughcolor=colors['bg_primary'],
                        bordercolor=colors['border'])
+
+        # ==================== FORMULA BAR & STATUS BAR ====================
+        if theme_name == 'dark':
+            style.configure('FormulaBarDark.TFrame', background='#2D2D30')
+            style.configure('StatusBarDark.TFrame', background='#2D2D30')
+        else:
+            style.configure('FormulaBar.TFrame', background='#FAFAFA')
+            style.configure('StatusBar.TFrame', background='#F3F2F1')
 
         # Configure root window
         root.configure(bg=colors['bg_primary'])
