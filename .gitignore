@@ -33,3 +33,12 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+
+# Authentication & Security
+.env
+config_local.py
+*.session
+.session
+
+# MongoDB local data
+mongodb_data/
