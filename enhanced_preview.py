@@ -391,6 +391,78 @@ class EnhancedDataPreview(ttk.Frame):
         letter = self._get_column_letter(idx)
         return f"{letter}: {col_name}"
 
+    def apply_theme(self, theme_colors):
+        """Apply theme colors to the data preview sheets"""
+        is_dark = theme_colors.get('name') == 'Dark Mode'
+
+        # Apply theme to both sheets
+        for sheet in [self.original_sheet, self.results_sheet]:
+            if sheet is None:
+                continue
+
+            if is_dark:
+                # Dark mode colors for data grid
+                sheet.set_options(
+                    font=("Segoe UI", 10, "normal"),
+                    header_font=("Segoe UI", 10, "bold"),
+                    index_font=("Segoe UI", 10, "normal"),
+
+                    # Header colors
+                    header_bg="#2D2D30",
+                    header_fg="#CCCCCC",
+                    header_selected_cells_bg="#3E3E42",
+                    header_selected_cells_fg="#FFFFFF",
+
+                    # Index (row numbers) colors
+                    index_bg="#2D2D30",
+                    index_fg="#CCCCCC",
+                    index_selected_cells_bg="#3E3E42",
+                    index_selected_cells_fg="#FFFFFF",
+
+                    # Top left corner
+                    top_left_bg="#2D2D30",
+                    top_left_fg="#CCCCCC",
+
+                    # Main grid
+                    frame_bg="#1E1E1E",
+                    table_bg="#1E1E1E",
+                    table_fg="#CCCCCC",
+                    table_grid_fg="#3E3E42",
+
+                    # Selection colors
+                    table_selected_cells_border_fg="#4FC3F7",
+                    table_selected_cells_bg="#264F78",
+                    table_selected_rows_border_fg="#4FC3F7",
+                    table_selected_rows_bg="#264F78",
+                    table_selected_columns_bg="#264F78",
+                    header_selected_columns_bg="#3E3E42"
+                )
+            else:
+                # Light mode colors
+                sheet.set_options(
+                    font=("Segoe UI", 10, "normal"),
+                    header_font=("Segoe UI", 10, "bold"),
+                    index_font=("Segoe UI", 10, "normal"),
+                    header_bg="#F3F2F1",
+                    header_fg="#323130",
+                    index_bg="#F3F2F1",
+                    index_fg="#323130",
+                    top_left_bg="#F3F2F1",
+                    top_left_fg="#323130",
+                    frame_bg="#FFFFFF",
+                    table_bg="#FFFFFF",
+                    table_fg="#323130",
+                    table_grid_fg="#E0E0E0",
+                    table_selected_cells_border_fg="#0078D4",
+                    table_selected_cells_bg="#CCE4F7",
+                    table_selected_rows_bg="#CCE4F7",
+                    table_selected_columns_bg="#CCE4F7",
+                    header_selected_columns_bg="#DEEBF7"
+                )
+
+            # Refresh the sheet
+            sheet.refresh()
+
 
 # Example usage and testing
 if __name__ == "__main__":
