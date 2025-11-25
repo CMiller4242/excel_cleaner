@@ -38,6 +38,7 @@ from ai_assistant.claude_assistant import ClaudeAssistant
 from utils.export_helper import ExportHelper
 from enhanced_preview import EnhancedDataPreview
 from smart_column_selector import ColumnSelector, MultiColumnSelector
+from ui.themes.theme_manager import ThemeManager
 from analysis.data_quality_integration import DataQualityIntegration
 from excel_ribbon import ExcelRibbon, FormulaBar, ExcelStatusBar
 from datetime import datetime
@@ -64,6 +65,9 @@ class UniversalExcelToolV2Office365:
         self.auth_manager = None
         if session_token:
             self.auth_manager = AuthManager()
+
+        # Theme Manager
+        self.theme_manager = ThemeManager()
 
         # Data
         self.df = None
@@ -93,7 +97,8 @@ class UniversalExcelToolV2Office365:
 
         # Apply theme and create UI
         AccessibleTheme.apply_theme(self.root)
-        self.setup_office365_theme()
+        # Apply saved theme from ThemeManager
+        self.theme_manager.apply_theme(self.root, self.theme_manager.current_theme)
         self.create_widgets()
 
     def setup_office365_theme(self):
@@ -147,20 +152,60 @@ class UniversalExcelToolV2Office365:
     def create_widgets(self):
         """Create Excel 365-style interface with compact ribbon and data-first layout"""
 
-        # ==================== COMPACT HEADER (30px) ====================
-        header = ttk.Frame(self.root, style='Header.TFrame', height=30)
+        # ==================== COMPACT HEADER (35px) ====================
+        header = ttk.Frame(self.root, style='Header.TFrame', height=35)
         header.pack(fill='x')
         header.pack_propagate(False)
 
-        # App name (smaller)
+        # App name (left side)
         ttk.Label(header, text="🔷 Universal Excel Tool",
                  font=('Segoe UI', 11, 'bold'),
                  foreground='#0078D4',
-                 background='#F3F2F1').pack(side='left', padx=15)
+                 background='#F3F2F1').pack(side='left', padx=15, pady=5)
 
-        # Mode selector (compact)
+        # User info bar (right side)
+        user_info_frame = ttk.Frame(header, style='Header.TFrame')
+        user_info_frame.pack(side='right', padx=15, pady=5)
+
+        # Logout button
+        if self.session_token and self.user_email:
+            # User email label
+            ttk.Label(user_info_frame,
+                     text=f"Logged in: {self.user_email}",
+                     style='UserInfo.TLabel').pack(side='left', padx=5)
+
+            # Theme toggle button
+            self.theme_toggle_btn = ttk.Button(
+                user_info_frame,
+                text=self.theme_manager.get_theme_icon_text(),
+                command=self.toggle_theme,
+                style='ThemeToggle.TButton',
+                width=12
+            )
+            self.theme_toggle_btn.pack(side='left', padx=5)
+
+            # Logout button
+            ttk.Button(
+                user_info_frame,
+                text="Logout",
+                command=self.handle_logout,
+                style='Logout.TButton',
+                width=8
+            ).pack(side='left', padx=5)
+        else:
+            # Theme toggle button (no user logged in)
+            self.theme_toggle_btn = ttk.Button(
+                user_info_frame,
+                text=self.theme_manager.get_theme_icon_text(),
+                command=self.toggle_theme,
+                style='ThemeToggle.TButton',
+                width=12
+            )
+            self.theme_toggle_btn.pack(side='left', padx=5)
+
+        # Mode selector (compact) - moved to left of user info
         mode_frame = ttk.Frame(header, style='Header.TFrame')
-        mode_frame.pack(side='right', padx=15)
+        mode_frame.pack(side='right', padx=5)
 
         ttk.Label(mode_frame, text="Mode:",
                  font=('Segoe UI', 9),
@@ -1672,6 +1717,65 @@ class UniversalExcelToolV2Office365:
     def analyze_data_quality(self):
         """Analyze data quality and suggest cleaning operations"""
         self.dq_integration.analyze_data()
+
+    def toggle_theme(self):
+        """Toggle between light and dark mode"""
+        try:
+            # Toggle theme
+            new_theme = self.theme_manager.toggle_theme()
+
+            # Apply new theme
+            self.theme_manager.apply_theme(self.root, new_theme)
+
+            # Update button text
+            self.theme_toggle_btn.config(text=self.theme_manager.get_theme_icon_text())
+
+            # Update status
+            self.status_var.set(f"Switched to {new_theme.title()} mode")
+
+            logging.info(f"Theme switched to: {new_theme}")
+
+        except Exception as e:
+            logging.error(f"Error toggling theme: {e}")
+            messagebox.showerror("Theme Error", f"Failed to switch theme: {str(e)}")
+
+    def handle_logout(self):
+        """Handle user logout"""
+        # Confirm logout
+        if not messagebox.askyesno(
+            "Logout",
+            "Are you sure you want to logout?\n\nYour current work will be preserved."
+        ):
+            return
+
+        try:
+            logging.info(f"User logging out: {self.user_email}")
+
+            # Delete session from MongoDB
+            if self.auth_manager and self.session_token:
+                self.auth_manager.logout(self.session_token)
+                logging.info("Session deleted from MongoDB")
+
+            # Close current window
+            self.root.destroy()
+
+            # Restart application with login window
+            import subprocess
+            import sys
+            subprocess.Popen([sys.executable, __file__])
+
+        except Exception as e:
+            logging.error(f"Logout error: {e}")
+            messagebox.showerror(
+                "Logout Error",
+                f"Failed to logout properly: {str(e)}\n\n"
+                "The application will close, but your session may still be active."
+            )
+            # Close anyway
+            try:
+                self.root.destroy()
+            except:
+                pass
 
 
 def main():
