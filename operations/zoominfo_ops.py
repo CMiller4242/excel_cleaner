@@ -37,24 +37,28 @@ class SplitAddressOperation(BaseOperation):
                     name='suite_keywords',
                     type='list',
                     description='Suite/unit keywords to detect (comma-separated)',
+                    required=False,
                     default='Ste,Suite,Suites,Unit,Units,Apt,Apartment,Bldg,Building,Floor,Flr'
                 ),
                 Parameter(
                     name='address1_column',
                     type='text',
                     description='Output column name for street address',
+                    required=False,
                     default='Address 1'
                 ),
                 Parameter(
                     name='address2_column',
                     type='text',
                     description='Output column name for suite/unit',
+                    required=False,
                     default='Address 2'
                 ),
                 Parameter(
                     name='remove_original',
                     type='boolean',
                     description='Remove original column after split',
+                    required=False,
                     default=True
                 )
             ],
@@ -197,6 +201,7 @@ class StateConverterOperation(BaseOperation):
                     name='flag_unconverted',
                     type='boolean',
                     description='Create flag column for values that could not be converted',
+                    required=False,
                     default=False
                 )
             ],
@@ -265,6 +270,7 @@ class RemoveExcludedStatesOperation(BaseOperation):
                     name='excluded_states',
                     type='list',
                     description='State codes to exclude (comma-separated)',
+                    required=False,
                     default='AK,HI,PR,VI'
                 )
             ],

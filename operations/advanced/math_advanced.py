@@ -69,7 +69,7 @@ class PercentageOperation(BaseOperation):
                 Parameter('numerator_column', 'column', 'Part (numerator)'),
                 Parameter('denominator_column', 'column', 'Whole (denominator)'),
                 Parameter('new_column', 'text', 'Name for percentage column'),
-                Parameter('multiply_by_100', 'boolean', 'Show as 0-100 (not 0-1)', default=True)
+                Parameter('multiply_by_100', 'boolean', 'Show as 0-100 (not 0-1)', required=False, default=True)
             ],
             excel_equivalent='=(A1/B1)*100', examples=['Calculate completion percentage'],
             tags=['percentage', 'percent', 'ratio', 'advanced']

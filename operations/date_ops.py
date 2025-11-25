@@ -11,8 +11,8 @@ class FormatDateOperation(BaseOperation):
             description='Convert dates to a specific format',
             parameters=[
                 Parameter('column', 'column', 'Date column'),
-                Parameter('format', 'choice', 'Date format', 
-                         choices=['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD'], default='MM/DD/YYYY')
+                Parameter('format', 'choice', 'Date format',
+                         required=False, choices=['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD'], default='MM/DD/YYYY')
             ],
             excel_equivalent='TEXT(date,"MM/DD/YYYY")',
             examples=['Standardize all dates to MM/DD/YYYY'],

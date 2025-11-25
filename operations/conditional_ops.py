@@ -12,7 +12,7 @@ class FlagIfContainsOperation(BaseOperation):
             parameters=[
                 Parameter('column', 'column', 'Column to check'),
                 Parameter('text', 'text', 'Text to search for'),
-                Parameter('flag_column', 'text', 'Name for flag column', default='Flag')
+                Parameter('flag_column', 'text', 'Name for flag column', required=False, default='Flag')
             ],
             excel_equivalent='=IF(ISNUMBER(SEARCH(...)))',
             examples=['Flag companies containing "LLC"', 'Flag PO Box addresses'],
