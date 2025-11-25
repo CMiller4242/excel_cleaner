@@ -18,6 +18,7 @@ import pandas as pd
 from pathlib import Path
 import sys
 import os
+import logging
 
 # Add to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -28,6 +29,11 @@ from engine.executor import OperationExecutor
 from engine.validator import Validator
 from presets.preset_manager import PresetManager, Preset, OperationConfig
 from ui.themes.accessible_theme import AccessibleTheme
+
+# Authentication imports
+from auth.login_window import LoginWindow
+from auth.auth_manager import AuthManager
+from config import Config
 from ai_assistant.claude_assistant import ClaudeAssistant
 from utils.export_helper import ExportHelper
 from enhanced_preview import EnhancedDataPreview
@@ -40,11 +46,24 @@ from datetime import datetime
 class UniversalExcelToolV2Office365:
     """Office 365-style application with data-first layout"""
 
-    def __init__(self, root):
+    def __init__(self, root, session_token=None, user_email=None):
         self.root = root
-        self.root.title("🔷 Universal Excel Tool - Professional Edition")
+
+        # Set title with user info if authenticated
+        if user_email:
+            self.root.title(f"🔷 Universal Excel Tool - {user_email}")
+        else:
+            self.root.title("🔷 Universal Excel Tool - Professional Edition")
+
         self.root.geometry("1600x900")
         self.root.minsize(1200, 800)
+
+        # Authentication
+        self.session_token = session_token
+        self.user_email = user_email
+        self.auth_manager = None
+        if session_token:
+            self.auth_manager = AuthManager()
 
         # Data
         self.df = None
@@ -1656,9 +1675,59 @@ class UniversalExcelToolV2Office365:
 
 
 def main():
-    root = tk.Tk()
-    app = UniversalExcelToolV2Office365(root)
-    root.mainloop()
+    """Main entry point with authentication"""
+
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    # Storage for authentication data
+    auth_data = {'token': None, 'email': None}
+
+    def on_login_success(token, email):
+        """
+        Callback invoked when user successfully logs in
+
+        CRITICAL: This function MUST accept TWO arguments (token, email)
+        as this is how LoginWindow calls it.
+
+        Args:
+            token: Session token string
+            email: User's email address
+        """
+        auth_data['token'] = token
+        auth_data['email'] = email
+        logging.info(f"✅ User authenticated: {email}")
+
+    # Show login window
+    try:
+        login_window = LoginWindow(on_success_callback=on_login_success)
+        token, email = login_window.run()
+
+        # If authentication failed or was cancelled, exit
+        if not token or not email:
+            logging.info("Authentication cancelled or failed. Exiting.")
+            return
+
+        # Authentication successful - start main application
+        logging.info(f"Starting main application for user: {email}")
+        root = tk.Tk()
+        app = UniversalExcelToolV2Office365(
+            root,
+            session_token=token,
+            user_email=email
+        )
+        root.mainloop()
+
+    except Exception as e:
+        logging.error(f"Application error: {e}", exc_info=True)
+        messagebox.showerror(
+            "Application Error",
+            f"Failed to start application:\n\n{str(e)}\n\n"
+            "Please check your MongoDB configuration and try again."
+        )
 
 
 if __name__ == "__main__":
