@@ -34,17 +34,52 @@ class ThemeManager:
         },
         'dark': {
             'name': 'Dark Mode',
-            'bg_primary': '#1E1E1E',
-            'bg_secondary': '#252526',
-            'bg_header': '#2D2D30',
-            'text_primary': '#CCCCCC',
-            'text_secondary': '#969696',
-            'border': '#3E3E42',
-            'accent_blue': '#0E639C',
-            'accent_green': '#0E7A0D',
-            'card_bg': '#252526',
-            'hover': '#2D2D30',
-            'selection_bg': '#094771',
+            # Primary backgrounds
+            'bg_primary': '#1E1E1E',           # Main background (softer than pure black)
+            'bg_secondary': '#252526',         # Secondary panels
+            'bg_header': '#2D2D30',            # Header/ribbon area
+            'card_bg': '#252526',              # Card backgrounds
+            'hover': '#2A2D2E',                # Hover states
+
+            # Text colors
+            'text_primary': '#CCCCCC',         # Primary text (easy on eyes)
+            'text_secondary': '#858585',       # Secondary text (not too dim)
+            'text_muted': '#6A6A6A',           # Very muted text
+
+            # Borders and separators
+            'border': '#3E3E42',               # Border color
+            'separator': '#454545',            # Separator lines
+
+            # Accent colors (slightly muted for dark mode)
+            'accent_blue': '#4FC3F7',          # Softer blue (not harsh)
+            'accent_green': '#66BB6A',         # Softer green
+            'accent_orange': '#FFA726',        # Warning/info color
+
+            # Button states
+            'button_bg': '#2D2D30',
+            'button_hover': '#3E3E42',
+            'button_active': '#4A4A4A',
+
+            # Data grid colors
+            'grid_bg': '#1E1E1E',
+            'grid_alt_row': '#252526',         # Alternating row color
+            'grid_header': '#2D2D30',
+            'grid_border': '#3E3E42',
+            'grid_selected': '#264F78',        # Selected row (VS Code blue)
+            'grid_text': '#CCCCCC',
+
+            # Input fields
+            'input_bg': '#2D2D30',
+            'input_border': '#3E3E42',
+            'input_focus': '#4FC3F7',
+
+            # Status colors
+            'success': '#66BB6A',
+            'error': '#F44336',
+            'warning': '#FFA726',
+
+            # Selection
+            'selection_bg': '#264F78',
             'selection_fg': '#FFFFFF'
         }
     }
@@ -100,19 +135,25 @@ class ThemeManager:
         colors = self.get_theme_colors(theme_name)
         style = ttk.Style()
 
-        # Configure ttk styles with theme colors
+        # ==================== FRAMES ====================
         style.configure('TFrame', background=colors['bg_primary'])
         style.configure('Card.TFrame', background=colors['card_bg'], relief='raised')
         style.configure('Header.TFrame', background=colors['bg_header'])
         style.configure('Ribbon.TFrame', background=colors['bg_secondary'])
+        style.configure('WorkflowCompact.TFrame', background=colors.get('bg_secondary', colors['bg_header']))
+        style.configure('QueueCard.TFrame',
+                       background=colors['card_bg'],
+                       relief='raised',
+                       borderwidth=1)
 
+        # ==================== LABELS ====================
         style.configure('TLabel',
                        background=colors['bg_primary'],
                        foreground=colors['text_primary'])
 
         style.configure('HeaderTitle.TLabel',
-                       font=('Segoe UI', 14, 'bold'),
-                       foreground=colors['text_primary'],
+                       font=('Segoe UI', 11, 'bold'),
+                       foreground=colors['accent_blue'],
                        background=colors['bg_header'])
 
         style.configure('HeaderText.TLabel',
@@ -125,36 +166,70 @@ class ThemeManager:
                        foreground=colors['text_secondary'],
                        background=colors['bg_header'])
 
-        # Button styles
+        # ==================== BUTTONS ====================
         style.configure('TButton',
-                       background=colors['bg_secondary'],
+                       background=colors.get('button_bg', colors['bg_secondary']),
                        foreground=colors['text_primary'],
-                       borderwidth=1)
+                       borderwidth=1,
+                       relief='flat',
+                       padding=(8, 4))
 
+        style.map('TButton',
+                 background=[('active', colors.get('button_hover', colors['hover'])),
+                            ('pressed', colors.get('button_active', colors['bg_secondary']))],
+                 foreground=[('active', colors['text_primary'])])
+
+        # Header buttons
+        style.configure('HeaderButton.TButton',
+                       font=('Segoe UI', 9),
+                       padding=(8, 4))
+
+        # Ribbon buttons
+        style.configure('RibbonButton.TButton',
+                       font=('Segoe UI', 10),
+                       padding=(10, 5))
+
+        style.configure('RibbonButtonSuccess.TButton',
+                       background=colors.get('accent_green', '#66BB6A'),
+                       foreground='#FFFFFF',
+                       font=('Segoe UI', 10, 'bold'),
+                       padding=(10, 5))
+
+        style.map('RibbonButtonSuccess.TButton',
+                 background=[('active', '#81C784' if theme_name == 'dark' else '#0F9D0F')])
+
+        # Accent buttons
         style.configure('Accent.TButton',
                        background=colors['accent_blue'],
                        foreground='#FFFFFF',
                        font=('Segoe UI', 10, 'bold'))
 
         style.configure('Success.TButton',
-                       background=colors['accent_green'],
+                       background=colors.get('accent_green', '#66BB6A'),
                        foreground='#FFFFFF')
 
         style.configure('ThemeToggle.TButton',
                        font=('Segoe UI', 9),
-                       padding=5)
+                       padding=(8, 4))
 
         style.configure('Logout.TButton',
                        font=('Segoe UI', 9),
-                       padding=5)
+                       padding=(8, 4))
 
-        # Entry styles
+        # ==================== ENTRIES ====================
         style.configure('TEntry',
-                       fieldbackground=colors['bg_primary'],
+                       fieldbackground=colors.get('input_bg', colors['bg_primary']),
                        foreground=colors['text_primary'],
+                       bordercolor=colors.get('input_border', colors['border']))
+
+        # ==================== COMBOBOX ====================
+        style.configure('TCombobox',
+                       fieldbackground=colors.get('input_bg', colors['bg_primary']),
+                       foreground=colors['text_primary'],
+                       background=colors['bg_secondary'],
                        bordercolor=colors['border'])
 
-        # Notebook (tabs) styles
+        # ==================== NOTEBOOK (TABS) ====================
         style.configure('TNotebook',
                        background=colors['bg_primary'],
                        bordercolor=colors['border'])
@@ -162,7 +237,35 @@ class ThemeManager:
         style.configure('TNotebook.Tab',
                        background=colors['bg_secondary'],
                        foreground=colors['text_primary'],
-                       padding=[10, 5])
+                       padding=[10, 5],
+                       borderwidth=0)
+
+        style.map('TNotebook.Tab',
+                 background=[('selected', colors['bg_primary'])],
+                 foreground=[('selected', colors['text_primary'])],
+                 expand=[('selected', [1, 1, 1, 0])])
+
+        # ==================== TREEVIEW ====================
+        style.configure('Treeview',
+                       background=colors['bg_primary'],
+                       foreground=colors['text_primary'],
+                       fieldbackground=colors['bg_primary'],
+                       bordercolor=colors['border'])
+
+        style.map('Treeview',
+                 background=[('selected', colors['selection_bg'])],
+                 foreground=[('selected', colors['selection_fg'])])
+
+        # ==================== CHECKBUTTON ====================
+        style.configure('TCheckbutton',
+                       background=colors['card_bg'],
+                       foreground=colors['text_primary'])
+
+        # ==================== SCROLLBAR ====================
+        style.configure('Vertical.TScrollbar',
+                       background=colors['bg_secondary'],
+                       troughcolor=colors['bg_primary'],
+                       bordercolor=colors['border'])
 
         # Configure root window
         root.configure(bg=colors['bg_primary'])

@@ -68,6 +68,8 @@ class UniversalExcelToolV2Office365:
 
         # Theme Manager
         self.theme_manager = ThemeManager()
+        # Register callback for theme changes
+        self.theme_manager.register_callback(self.refresh_ui_colors)
 
         # Data
         self.df = None
@@ -152,72 +154,83 @@ class UniversalExcelToolV2Office365:
     def create_widgets(self):
         """Create Excel 365-style interface with compact ribbon and data-first layout"""
 
-        # ==================== COMPACT HEADER (35px) ====================
-        header = ttk.Frame(self.root, style='Header.TFrame', height=35)
+        # ==================== HEADER BAR (45px) ====================
+        header = ttk.Frame(self.root, style='Header.TFrame', height=45)
         header.pack(fill='x')
         header.pack_propagate(False)
 
-        # App name (left side)
-        ttk.Label(header, text="🔷 Universal Excel Tool",
-                 font=('Segoe UI', 11, 'bold'),
-                 foreground='#0078D4',
-                 background='#F3F2F1').pack(side='left', padx=15, pady=5)
+        # Left side - App title
+        title_frame = ttk.Frame(header, style='Header.TFrame')
+        title_frame.pack(side='left', padx=15, pady=8)
 
-        # User info bar (right side)
-        user_info_frame = ttk.Frame(header, style='Header.TFrame')
-        user_info_frame.pack(side='right', padx=15, pady=5)
+        self.app_title_label = ttk.Label(
+            title_frame,
+            text="🔷 Universal Excel Tool",
+            font=('Segoe UI', 11, 'bold'),
+            style='HeaderTitle.TLabel'
+        )
+        self.app_title_label.pack(side='left')
 
-        # Logout button
+        # Right side - Mode selector, user info, theme toggle, logout
+        right_container = ttk.Frame(header, style='Header.TFrame')
+        right_container.pack(side='right', padx=15, pady=8)
+
+        # Mode selector
+        mode_frame = ttk.Frame(right_container, style='Header.TFrame')
+        mode_frame.pack(side='left', padx=(0, 15))
+
+        self.mode_label = ttk.Label(
+            mode_frame,
+            text="Mode:",
+            style='UserInfo.TLabel'
+        )
+        self.mode_label.pack(side='left', padx=(0, 5))
+
+        mode_menu = ttk.Combobox(mode_frame, textvariable=self.mode,
+                                 values=["simple", "advanced"],
+                                 state='readonly', width=10,
+                                 font=('Segoe UI', 9))
+        mode_menu.pack(side='left')
+        mode_menu.bind('<<ComboboxSelected>>', lambda e: self.on_mode_change())
+
+        # User info and buttons
         if self.session_token and self.user_email:
             # User email label
-            ttk.Label(user_info_frame,
-                     text=f"Logged in: {self.user_email}",
-                     style='UserInfo.TLabel').pack(side='left', padx=5)
+            self.user_email_label = ttk.Label(
+                right_container,
+                text=f"Logged in: {self.user_email}",
+                style='UserInfo.TLabel'
+            )
+            self.user_email_label.pack(side='left', padx=(0, 10))
 
             # Theme toggle button
             self.theme_toggle_btn = ttk.Button(
-                user_info_frame,
+                right_container,
                 text=self.theme_manager.get_theme_icon_text(),
                 command=self.toggle_theme,
-                style='ThemeToggle.TButton',
+                style='HeaderButton.TButton',
                 width=12
             )
             self.theme_toggle_btn.pack(side='left', padx=5)
 
             # Logout button
             ttk.Button(
-                user_info_frame,
+                right_container,
                 text="Logout",
                 command=self.handle_logout,
-                style='Logout.TButton',
+                style='HeaderButton.TButton',
                 width=8
             ).pack(side='left', padx=5)
         else:
             # Theme toggle button (no user logged in)
             self.theme_toggle_btn = ttk.Button(
-                user_info_frame,
+                right_container,
                 text=self.theme_manager.get_theme_icon_text(),
                 command=self.toggle_theme,
-                style='ThemeToggle.TButton',
+                style='HeaderButton.TButton',
                 width=12
             )
             self.theme_toggle_btn.pack(side='left', padx=5)
-
-        # Mode selector (compact) - moved to left of user info
-        mode_frame = ttk.Frame(header, style='Header.TFrame')
-        mode_frame.pack(side='right', padx=5)
-
-        ttk.Label(mode_frame, text="Mode:",
-                 font=('Segoe UI', 9),
-                 foreground='#666666',
-                 background='#F3F2F1').pack(side='left', padx=5)
-
-        mode_menu = ttk.Combobox(mode_frame, textvariable=self.mode,
-                                 values=["simple", "advanced"],
-                                 state='readonly', width=10,
-                                 font=('Segoe UI', 9))
-        mode_menu.pack(side='left', padx=5)
-        mode_menu.bind('<<ComboboxSelected>>', lambda e: self.on_mode_change())
 
         # ==================== EXCEL RIBBON (120px) ====================
         self.excel_ribbon = ExcelRibbon(self.root, app_ref=self)
@@ -274,15 +287,18 @@ class UniversalExcelToolV2Office365:
                                        style='RibbonButton.TButton')
         self.collapse_btn.pack(side='left', padx=3)
 
-        ttk.Label(queue_header, text="⚙️ Workflow",
-                 font=('Segoe UI', 11, 'bold'),
-                 foreground='#323130',
-                 background='#FAFAFA').pack(side='left', padx=8)
+        self.workflow_title_label = ttk.Label(
+            queue_header,
+            text="⚙️ Workflow",
+            font=('Segoe UI', 11, 'bold')
+        )
+        self.workflow_title_label.pack(side='left', padx=8)
 
-        self.queue_count_label = ttk.Label(queue_header, text="(0)",
-                                           font=('Segoe UI', 9),
-                                           foreground='#666666',
-                                           background='#FAFAFA')
+        self.queue_count_label = ttk.Label(
+            queue_header,
+            text="(0)",
+            font=('Segoe UI', 9)
+        )
         self.queue_count_label.pack(side='left')
 
         # Queue action buttons (compact)
@@ -329,6 +345,10 @@ class UniversalExcelToolV2Office365:
 
         # Load initial display
         self.refresh_queue_display()
+
+        # Apply initial theme colors to all widgets
+        colors = self.theme_manager.get_theme_colors(self.theme_manager.current_theme)
+        self.refresh_ui_colors(colors)
 
     # ==================== RIBBON TAB METHODS (Legacy - now handled by ExcelRibbon) ====================
     # These methods are kept for backward compatibility but ribbon is now handled by ExcelRibbon class
@@ -464,9 +484,7 @@ class UniversalExcelToolV2Office365:
             # Show empty state (compact)
             empty_label = ttk.Label(self.queue_cards_frame,
                                    text="No operations. Click '+ Add' to start.",
-                                   font=('Segoe UI', 10),
-                                   foreground='#666666',
-                                   background='#FAFAFA')
+                                   font=('Segoe UI', 10))
             empty_label.pack(pady=15)
             return
 
@@ -498,26 +516,23 @@ class UniversalExcelToolV2Office365:
         def toggle_enabled():
             self.operation_queue[index]['enabled'] = check_var.get()
 
-        cb = ttk.Checkbutton(check_frame, variable=check_var, command=toggle_enabled)
+        cb = ttk.Checkbutton(check_frame, variable=check_var, command=toggle_enabled, style='TCheckbutton')
         cb.pack(side='left')
 
         ttk.Label(check_frame, text=f"{index+1}.",
-                 font=('Segoe UI', 11, 'bold'),
-                 foreground='#666666').pack(side='left', padx=5)
+                 font=('Segoe UI', 11, 'bold')).pack(side='left', padx=5)
 
         # Operation info
         info_frame = ttk.Frame(left, style='Card.TFrame')
         info_frame.pack(side='left', fill='both', expand=True)
 
         ttk.Label(info_frame, text=op['name'],
-                 font=('Segoe UI', 10, 'bold'),
-                 foreground='#323130').pack(anchor='w')
+                 font=('Segoe UI', 10, 'bold')).pack(anchor='w')
 
         # Parameters summary (compact)
         params_text = self._format_params_summary(op['parameters'])
         ttk.Label(info_frame, text=params_text,
-                 font=('Segoe UI', 9),
-                 foreground='#666666').pack(anchor='w')
+                 font=('Segoe UI', 9)).pack(anchor='w')
 
         # Right side: action buttons
         actions = ttk.Frame(content, style='Card.TFrame')
@@ -1718,6 +1733,87 @@ class UniversalExcelToolV2Office365:
         """Analyze data quality and suggest cleaning operations"""
         self.dq_integration.analyze_data()
 
+    def refresh_ui_colors(self, colors):
+        """Refresh all UI elements with new theme colors"""
+        try:
+            # Update queue canvas background
+            if hasattr(self, 'queue_canvas'):
+                self.queue_canvas.config(bg=colors['bg_secondary'])
+
+            # Update workflow queue header labels
+            if hasattr(self, 'queue_count_label'):
+                self.queue_count_label.config(
+                    foreground=colors['text_secondary'],
+                    background=colors.get('bg_secondary', colors['bg_header'])
+                )
+
+            # Update file info label colors
+            if hasattr(self, 'file_info_var'):
+                # Find and update the label widget
+                for widget in self.root.winfo_children():
+                    if isinstance(widget, ttk.PanedWindow):
+                        for child in widget.winfo_children():
+                            if isinstance(child, ttk.Frame):
+                                for subchild in child.winfo_children():
+                                    if isinstance(subchild, ttk.Frame):
+                                        for label in subchild.winfo_children():
+                                            if isinstance(label, ttk.Label) and hasattr(label, 'cget'):
+                                                try:
+                                                    label.config(foreground=colors['text_primary'])
+                                                except:
+                                                    pass
+
+            # Update data preview (tksheet) colors
+            if hasattr(self, 'enhanced_preview') and hasattr(self.enhanced_preview, 'sheet'):
+                try:
+                    theme_name = self.theme_manager.current_theme
+                    if theme_name == 'dark':
+                        # Dark mode colors for data grid
+                        self.enhanced_preview.sheet.set_options(
+                            font=("Segoe UI", 11, "normal"),
+                            header_font=("Segoe UI", 11, "bold"),
+                            header_bg=colors.get('grid_header', '#2D2D30'),
+                            header_fg=colors.get('grid_text', '#CCCCCC'),
+                            index_bg=colors.get('grid_header', '#2D2D30'),
+                            index_fg=colors.get('grid_text', '#CCCCCC'),
+                            top_left_bg=colors.get('grid_header', '#2D2D30'),
+                            frame_bg=colors.get('grid_bg', '#1E1E1E'),
+                            table_bg=colors.get('grid_bg', '#1E1E1E'),
+                            table_fg=colors.get('grid_text', '#CCCCCC'),
+                            table_grid_fg=colors.get('grid_border', '#3E3E42'),
+                            table_selected_cells_border_fg=colors.get('input_focus', '#4FC3F7'),
+                            table_selected_cells_bg=colors.get('grid_selected', '#264F78'),
+                            table_selected_rows_border_fg=colors.get('input_focus', '#4FC3F7'),
+                            table_selected_rows_bg=colors.get('grid_selected', '#264F78'),
+                        )
+                    else:
+                        # Light mode colors for data grid
+                        self.enhanced_preview.sheet.set_options(
+                            font=("Segoe UI", 11, "normal"),
+                            header_font=("Segoe UI", 11, "bold"),
+                            header_bg='#F3F2F1',
+                            header_fg='#323130',
+                            index_bg='#F3F2F1',
+                            index_fg='#323130',
+                            top_left_bg='#F3F2F1',
+                            frame_bg='#FFFFFF',
+                            table_bg='#FFFFFF',
+                            table_fg='#323130',
+                            table_grid_fg='#E1DFDD',
+                            table_selected_cells_border_fg='#0078D4',
+                            table_selected_cells_bg='#CCE4F7',
+                            table_selected_rows_border_fg='#0078D4',
+                            table_selected_rows_bg='#CCE4F7',
+                        )
+                    self.enhanced_preview.sheet.refresh()
+                except Exception as e:
+                    logging.warning(f"Could not update data grid colors: {e}")
+
+            logging.info(f"UI colors refreshed for theme: {self.theme_manager.current_theme}")
+
+        except Exception as e:
+            logging.error(f"Error refreshing UI colors: {e}")
+
     def toggle_theme(self):
         """Toggle between light and dark mode"""
         try:
@@ -1725,7 +1821,10 @@ class UniversalExcelToolV2Office365:
             new_theme = self.theme_manager.toggle_theme()
 
             # Apply new theme
-            self.theme_manager.apply_theme(self.root, new_theme)
+            colors = self.theme_manager.apply_theme(self.root, new_theme)
+
+            # Refresh all UI colors
+            self.refresh_ui_colors(colors)
 
             # Update button text
             self.theme_toggle_btn.config(text=self.theme_manager.get_theme_icon_text())
