@@ -61,15 +61,15 @@ def test_split_address_with_defaults():
             print(f"  Address 2: '{addr2}'")
             print()
 
-        # Verify expected results
+        # Verify expected results (splits at FIRST suite keyword encountered)
         expected_results = [
-            ("400 W Illinois Ave", "Ste 950"),
-            ("3715 Northside Pkwy NW", "Bldg 300 Ste 110"),
-            ("123 Main Street", ""),
-            ("2065 E South Blvd", "Suites 201 And 301"),
-            ("251 Stenton Ave", ""),
-            ("", ""),
-            ("", "")
+            ("400 W Illinois Ave", "Ste 950"),  # Only one keyword
+            ("3715 Northside Pkwy NW", "Bldg 300 Ste 110"),  # Splits at "Bldg" (first), keeps "Ste 110" in Address 2
+            ("123 Main Street", ""),  # No suite keyword
+            ("2065 E South Blvd", "Suites 201 And 301"),  # Splits at "Suites"
+            ("251 Stenton Ave", ""),  # No suite keyword
+            ("", ""),  # Empty string
+            ("", "")   # None/NaN
         ]
 
         all_correct = True

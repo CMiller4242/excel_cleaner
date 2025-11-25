@@ -14,7 +14,7 @@ class SplitAddressOperation(BaseOperation):
     Splits full address into Address 1 (street) and Address 2 (suite/unit)
 
     Logic:
-    1. Find LAST occurrence of any suite keyword (case-insensitive)
+    1. Find FIRST occurrence of any suite keyword (case-insensitive)
     2. Split at that point
     3. Address 1 = everything before suite keyword (trimmed)
     4. Address 2 = suite keyword + everything after (trimmed)
@@ -102,9 +102,9 @@ class SplitAddressOperation(BaseOperation):
                 # No suite keyword found - entire address goes to Address 1
                 return address_str, ''
 
-            # Use the LAST match (rightmost suite keyword)
-            last_match = matches[-1]
-            split_pos = last_match.start()
+            # Use the FIRST match (leftmost suite keyword)
+            first_match = matches[0]
+            split_pos = first_match.start()
 
             # Everything before the suite keyword
             address1 = address_str[:split_pos].strip()
