@@ -11,24 +11,18 @@ from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
-from ui.widgets.autosuggest_entry import AutoSuggestEntry
+from ui.widgets.filter_combobox import FilterCombobox
 
 
 class ColumnSelector(ttk.Frame):
     """
-    Smart column selector with production-grade autocomplete.
-
-    Features:
-    - Real-time filtering as you type
-    - Remembers recently used columns
-    - Keyboard navigation (↑↓ Enter Escape)
-    - Non-intrusive suggestions
-    - High performance with caching
+    Column selector with type-to-filter functionality.
+    Simple and reliable implementation.
     """
 
     def __init__(self, parent, columns: List[str], label: str = "Select Column", **kwargs):
         super().__init__(parent, **kwargs)
-        self.columns = columns
+        self.columns = columns if columns else []
         self.label_text = label
 
         self._setup_ui()
@@ -42,57 +36,51 @@ class ColumnSelector(ttk.Frame):
             font=('Segoe UI', 11, 'bold')
         ).pack(anchor='w', pady=(0, 5))
 
-        # Auto-suggest entry with contextual awareness
-        self.entry = AutoSuggestEntry(
+        # Filter combobox
+        self.combo = FilterCombobox(
             self,
             values=self.columns,
             font=('Segoe UI', 11),
-            width=50
+            width=48
         )
-        self.entry.pack(fill='x', pady=5)
+        self.combo.pack(fill='x', pady=5)
 
-        # Hint label with dynamic feedback
-        self.hint_var = tk.StringVar(
-            value=f"💡 Start typing to filter • {len(self.columns)} columns available"
-        )
+        # Hint with dynamic feedback
+        self.hint_var = tk.StringVar()
+        self._update_hint()
+
         self.hint_label = ttk.Label(
             self,
             textvariable=self.hint_var,
             font=('Segoe UI', 9),
-            foreground='#666666'
+            foreground='gray'
         )
         self.hint_label.pack(anchor='w', pady=(2, 0))
 
-        # Update hint on typing
-        self.entry.bind('<KeyRelease>', self._update_hint)
-        self.entry.bind('<<AutoSuggestSelected>>', self._on_selected)
+        # Update hint as user types
+        self.combo.bind('<KeyRelease>', lambda e: self._update_hint())
 
-    def _update_hint(self, event=None):
-        """Update hint text dynamically"""
-        query = self.entry.get().strip()
+    def _update_hint(self):
+        """Update hint text based on current state"""
+        query = self.combo.get().strip()
+        total = len(self.columns)
 
         if not query:
-            self.hint_var.set(
-                f"💡 Start typing to filter • {len(self.columns)} columns available"
-            )
-        elif self.entry.dropdown.is_visible():
-            count = len(self.entry.dropdown.suggestions)
-            if count == 0:
-                self.hint_var.set("❌ No matching columns")
-            else:
-                self.hint_var.set(
-                    f"✓ Showing {count} matching column{'s' if count != 1 else ''}"
-                )
+            self.hint_var.set(f"💡 Type to filter • {total} columns available")
         else:
-            self.hint_var.set("💡 Start typing to filter")
+            filtered = self.combo._filtered_values
+            filtered_count = len(filtered)
 
-    def _on_selected(self, event=None):
-        """Handle selection"""
-        self._update_hint()
+            if filtered_count == 0:
+                self.hint_var.set("❌ No matching columns")
+            elif filtered_count == total:
+                self.hint_var.set(f"💡 Type to filter • {total} columns available")
+            else:
+                self.hint_var.set(f"✓ Showing {filtered_count} of {total} columns")
 
     def get_value(self) -> str:
         """Get selected column name (without letter prefix)"""
-        value = self.entry.get().strip()
+        value = self.combo.get().strip()
         if ':' in value:
             # Remove Excel-style letter (e.g., "A: Column Name" → "Column Name")
             return value.split(':', 1)[1].strip()
@@ -102,17 +90,14 @@ class ColumnSelector(ttk.Frame):
         """Set column value"""
         for col in self.columns:
             if value in col or col.endswith(value):
-                self.entry.delete(0, tk.END)
-                self.entry.insert(0, col)
+                self.combo.set(col)
                 break
 
     def update_columns(self, new_columns: List[str]):
         """Update available columns"""
         self.columns = new_columns
-        self.entry.set_values(new_columns)
-        self.hint_var.set(
-            f"💡 Start typing to filter • {len(new_columns)} columns available"
-        )
+        self.combo.set_values(new_columns)
+        self._update_hint()
 
 
 class MultiColumnSelector(ttk.Frame):
@@ -142,7 +127,27 @@ class MultiColumnSelector(ttk.Frame):
             text=self.label_text,
             font=('Segoe UI', 11, 'bold')
         ).pack(anchor='w', pady=(0, 5))
-        
+
+        # Search/filter box
+        search_frame = ttk.Frame(self)
+        search_frame.pack(fill='x', pady=(0, 5))
+
+        ttk.Label(
+            search_frame,
+            text="Filter:",
+            font=('Segoe UI', 9)
+        ).pack(side='left', padx=(0, 5))
+
+        self.search_var = tk.StringVar()
+        self.search_var.trace('w', self._on_search)
+
+        search_entry = ttk.Entry(
+            search_frame,
+            textvariable=self.search_var,
+            font=('Segoe UI', 10)
+        )
+        search_entry.pack(side='left', fill='x', expand=True)
+
         # Frame with scrollbar for checkboxes
         canvas_frame = ttk.Frame(self)
         canvas_frame.pack(fill='both', expand=True)
@@ -223,7 +228,7 @@ class MultiColumnSelector(ttk.Frame):
         # Helper text
         ttk.Label(
             self,
-            text="💡 Check columns to include in operation",
+            text="💡 Type to filter, click to select multiple columns",
             font=('Segoe UI', 9),
             foreground='#666666'
         ).pack(anchor='w', pady=(5, 0))
@@ -231,7 +236,21 @@ class MultiColumnSelector(ttk.Frame):
     def _on_canvas_configure(self, event):
         """Handle canvas resize"""
         self.canvas.itemconfig(self.canvas_window, width=event.width)
-    
+
+    def _on_search(self, *args):
+        """Filter checkboxes based on search query"""
+        query = self.search_var.get().strip().lower()
+
+        for col, cb in self.checkboxes.items():
+            if not query or query in col.lower():
+                cb.pack(anchor='w', padx=5, pady=2)
+            else:
+                cb.pack_forget()
+
+        # Update scroll region
+        self.checkbox_frame.update_idletasks()
+        self.canvas.configure(scrollregion=self.canvas.bbox('all'))
+
     def _select_all(self):
         """Select all checkboxes"""
         # Clear and rebuild selection order in column appearance order
