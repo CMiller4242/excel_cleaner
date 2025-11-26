@@ -421,24 +421,19 @@ class UniversalExcelToolV2Office365:
             operations = registry.get_by_category(category)
             all_op_names.extend([op.metadata.name for op in operations])
 
-        # Create autocomplete combobox
+        # Create autocomplete combobox (no placeholder, let filtering work naturally)
         self.search_combo = AutocompleteCombobox(
             search_frame,
             values=sorted(all_op_names),
-            placeholder="Type to search operations...",
-            match_anywhere=True,
             width=25
         )
         self.search_combo.configure(font=('Segoe UI', 10))
         self.search_combo.pack(side='left', fill='x', expand=True, padx=5)
 
-        # Sync search_var with combo
+        # Sync search_var with combo for tree filtering
         def on_search_change(*args):
-            current = self.search_combo.get()
-            if current and current != "Type to search operations...":
-                self.search_var.set(current)
-            else:
-                self.search_var.set("")
+            current = self.search_combo.get().strip()
+            self.search_var.set(current)
 
         self.search_combo.bind('<KeyRelease>', on_search_change)
         self.search_combo.bind('<<ComboboxSelected>>', on_search_change)

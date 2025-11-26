@@ -1,260 +1,305 @@
 """
-Autocomplete Combobox Widget
-Type-to-filter dropdown with keyboard navigation
+Auto-complete Combobox Widget
+Provides real-time type-to-search functionality for column selection
 """
 
 import tkinter as tk
 from tkinter import ttk
-from typing import List, Optional, Callable
 
 
 class AutocompleteCombobox(ttk.Combobox):
     """
-    Enhanced combobox with autocomplete/type-to-filter functionality
+    Combobox with real-time autocomplete functionality.
 
     Features:
-    - Type to filter dropdown list in real-time
+    - Type to filter options in real-time
+    - Arrow keys to navigate suggestions
+    - Enter to select first match
     - Case-insensitive matching
-    - Keyboard navigation (arrows, Enter)
-    - Visual hints for users
-    - Automatic dropdown management
+    - Matches anywhere in the text
     """
 
-    def __init__(self, parent, values: List[str] = None, placeholder: str = "Type to search...",
-                 match_anywhere: bool = True, on_select: Optional[Callable] = None, **kwargs):
-        """
-        Initialize autocomplete combobox
+    def __init__(self, parent, values=None, **kwargs):
+        # CRITICAL: Remove state parameter if present, we'll set it ourselves
+        kwargs.pop('state', None)
 
-        Args:
-            parent: Parent widget
-            values: List of items to display
-            placeholder: Placeholder text when empty
-            match_anywhere: If True, match anywhere in string; if False, match from start only
-            on_select: Optional callback when item is selected
-            **kwargs: Additional ttk.Combobox arguments
-        """
         super().__init__(parent, **kwargs)
 
-        self._all_values = values or []
+        # CRITICAL: Set state to 'normal' to allow typing
+        self.configure(state='normal')
+
+        self._all_values = values if values else []
         self._filtered_values = self._all_values.copy()
-        self.placeholder = placeholder
-        self.match_anywhere = match_anywhere
-        self.on_select_callback = on_select
 
-        # Configure combobox
+        # Set initial values
         self['values'] = self._all_values
-        self['state'] = 'normal'  # Allow typing
 
-        # Bind events
-        self.bind('<KeyRelease>', self._on_key_release)
-        self.bind('<<ComboboxSelected>>', self._on_select)
-        self.bind('<FocusIn>', self._on_focus_in)
-        self.bind('<FocusOut>', self._on_focus_out)
+        # Bind events for real-time filtering
+        self.bind('<KeyRelease>', self._on_keyrelease)
+        self.bind('<Return>', self._on_return)
+        self.bind('<<ComboboxSelected>>', self._on_selected)
 
-        # Show placeholder if empty
-        if not self.get():
-            self._show_placeholder()
+    def set_values(self, values):
+        """Update the list of available values"""
+        self._all_values = values if values else []
+        self._filtered_values = self._all_values.copy()
+        self['values'] = self._all_values
 
-    def _show_placeholder(self):
-        """Show placeholder text"""
-        self.delete(0, tk.END)
-        self.insert(0, self.placeholder)
-        self.config(foreground='gray')
+    def set_completion_list(self, values):
+        """Alias for set_values for compatibility"""
+        self.set_values(values)
 
-    def _hide_placeholder(self):
-        """Hide placeholder text"""
-        if self.get() == self.placeholder:
-            self.delete(0, tk.END)
-            self.config(foreground='black')
-
-    def _on_focus_in(self, event):
-        """Handle focus in event"""
-        self._hide_placeholder()
-
-    def _on_focus_out(self, event):
-        """Handle focus out event"""
-        if not self.get():
-            self._show_placeholder()
-
-    def _on_key_release(self, event):
-        """Handle key release for filtering"""
-        # Ignore special keys
-        if event.keysym in ('Up', 'Down', 'Left', 'Right', 'Return', 'Tab',
-                            'Shift_L', 'Shift_R', 'Control_L', 'Control_R',
-                            'Alt_L', 'Alt_R', 'Escape'):
+    def _on_keyrelease(self, event):
+        """Filter values in real-time as user types"""
+        # Ignore special navigation keys
+        if event.keysym in ('Up', 'Down', 'Left', 'Right', 'Home', 'End',
+                           'Tab', 'Escape', 'Shift_L', 'Shift_R',
+                           'Control_L', 'Control_R', 'Alt_L', 'Alt_R',
+                           'Caps_Lock', 'Num_Lock', 'Scroll_Lock', 'Return'):
             return
 
-        # Get current text
-        current_text = self.get()
+        # Get current text in the entry
+        current_text = self.get().strip()
 
-        # If placeholder or empty, show all
-        if not current_text or current_text == self.placeholder:
+        # DEBUG: Print filtering info (can be removed in production)
+        print(f"[DEBUG] Search text: '{current_text}'")
+        print(f"[DEBUG] Total values: {len(self._all_values)}")
+
+        if not current_text:
+            # If empty, show all values
             self._filtered_values = self._all_values.copy()
             self['values'] = self._filtered_values
+            print(f"[DEBUG] Empty search - showing all {len(self._filtered_values)} values")
             return
 
-        # Filter values based on current text
+        # Filter values that contain the typed text (case-insensitive)
         search_text = current_text.lower()
+        self._filtered_values = [
+            value for value in self._all_values
+            if search_text in value.lower()
+        ]
 
-        if self.match_anywhere:
-            # Match anywhere in the string
-            self._filtered_values = [
-                val for val in self._all_values
-                if search_text in val.lower()
-            ]
-        else:
-            # Match from start only
-            self._filtered_values = [
-                val for val in self._all_values
-                if val.lower().startswith(search_text)
-            ]
-
-        # Update dropdown values
-        self['values'] = self._filtered_values
-
-        # Show dropdown if there are matches
+        # DEBUG: Print filtered results
+        print(f"[DEBUG] Filtered to: {len(self._filtered_values)} values")
         if self._filtered_values:
-            self.event_generate('<Down>')
+            print(f"[DEBUG] First 3 matches: {self._filtered_values[:3]}")
+        else:
+            print(f"[DEBUG] No matches found")
 
-    def _on_select(self, event):
-        """Handle selection event"""
-        selected = self.get()
-
-        # Hide placeholder style
-        self.config(foreground='black')
-
-        # Call callback if provided
-        if self.on_select_callback:
-            try:
-                self.on_select_callback(selected)
-            except Exception as e:
-                print(f"Error in selection callback: {e}")
-
-    def set_values(self, values: List[str]):
-        """
-        Update the list of available values
-
-        Args:
-            values: New list of items
-        """
-        self._all_values = values
-        self._filtered_values = values.copy()
+        # Update the dropdown with filtered values
         self['values'] = self._filtered_values
 
-    def get_values(self) -> List[str]:
-        """Get current list of all available values"""
-        return self._all_values.copy()
+        # CRITICAL: Open dropdown to show filtered results
+        if self._filtered_values:
+            # Save cursor position
+            cursor_pos = self.index(tk.INSERT)
 
-    def clear(self):
-        """Clear the selection and show placeholder"""
-        self.delete(0, tk.END)
-        self._show_placeholder()
+            # Open dropdown
+            try:
+                self.event_generate('<Down>')
+                # Restore cursor position
+                self.icursor(cursor_pos)
+            except:
+                pass
 
-    def set_selection(self, value: str):
-        """
-        Set the selected value
+    def _on_return(self, event):
+        """Select first filtered value when Enter is pressed"""
+        if self._filtered_values:
+            # Set to first match
+            self.set(self._filtered_values[0])
+            # Clear selection and move cursor to end
+            self.selection_clear()
+            self.icursor(tk.END)
+            # Close dropdown
+            self.event_generate('<Escape>')
+            return 'break'  # Prevent default Enter behavior
 
-        Args:
-            value: Value to select
-        """
-        if value in self._all_values:
+    def _on_selected(self, event):
+        """Handle selection from dropdown"""
+        # Selection made, cursor to end
+        self.icursor(tk.END)
+
+
+class AutocompleteEntry(ttk.Entry):
+    """
+    Alternative: Entry widget with popup suggestion list
+    (More reliable than Combobox on some systems)
+    """
+
+    def __init__(self, parent, values=None, **kwargs):
+        super().__init__(parent, **kwargs)
+
+        self._all_values = values if values else []
+        self._listbox = None
+        self._listbox_window = None
+
+        # Bind events
+        self.bind('<KeyRelease>', self._on_keyrelease)
+        self.bind('<FocusOut>', self._hide_listbox)
+        self.bind('<Return>', self._on_return)
+        self.bind('<Down>', self._on_down)
+        self.bind('<Up>', self._on_up)
+        self.bind('<Escape>', self._hide_listbox)
+
+    def set_completion_list(self, values):
+        """Update the list of available values"""
+        self._all_values = values if values else []
+
+    def set_values(self, values):
+        """Alias for set_completion_list"""
+        self.set_completion_list(values)
+
+    def _on_keyrelease(self, event):
+        """Show filtered suggestions as user types"""
+        # Ignore special keys
+        if event.keysym in ('Up', 'Down', 'Left', 'Right', 'Home', 'End',
+                           'Return', 'Tab', 'Escape', 'Shift_L', 'Shift_R',
+                           'Control_L', 'Control_R', 'Alt_L', 'Alt_R'):
+            return
+
+        current_text = self.get().strip().lower()
+
+        if not current_text:
+            self._hide_listbox()
+            return
+
+        # Filter values
+        filtered = [
+            value for value in self._all_values
+            if current_text in value.lower()
+        ]
+
+        if filtered:
+            self._show_listbox(filtered)
+        else:
+            self._hide_listbox()
+
+    def _show_listbox(self, values):
+        """Show popup listbox with suggestions"""
+        if self._listbox_window:
+            self._listbox.delete(0, tk.END)
+        else:
+            # Create popup window
+            self._listbox_window = tk.Toplevel(self)
+            self._listbox_window.wm_overrideredirect(True)
+
+            # Create listbox
+            self._listbox = tk.Listbox(
+                self._listbox_window,
+                height=min(8, len(values)),
+                font=self['font']
+            )
+            self._listbox.pack()
+
+            # Bind selection
+            self._listbox.bind('<Button-1>', self._on_listbox_select)
+            self._listbox.bind('<Return>', self._on_listbox_select)
+
+        # Populate listbox
+        for value in values[:15]:  # Limit to 15 suggestions
+            self._listbox.insert(tk.END, value)
+
+        # Position below entry
+        x = self.winfo_rootx()
+        y = self.winfo_rooty() + self.winfo_height()
+        width = self.winfo_width()
+
+        self._listbox_window.geometry(f"{width}x{self._listbox.winfo_reqheight()}+{x}+{y}")
+
+        # Select first item
+        if self._listbox.size() > 0:
+            self._listbox.selection_set(0)
+            self._listbox.activate(0)
+
+    def _hide_listbox(self, event=None):
+        """Hide popup listbox"""
+        if self._listbox_window:
+            self._listbox_window.destroy()
+            self._listbox_window = None
+            self._listbox = None
+
+    def _on_listbox_select(self, event):
+        """Handle selection from listbox"""
+        if self._listbox and self._listbox.curselection():
+            selected = self._listbox.get(self._listbox.curselection()[0])
             self.delete(0, tk.END)
-            self.insert(0, value)
-            self.config(foreground='black')
+            self.insert(0, selected)
+            self._hide_listbox()
+            self.icursor(tk.END)
 
-    def is_valid_selection(self) -> bool:
-        """Check if current value is a valid selection from the list"""
-        current = self.get()
-        return current in self._all_values and current != self.placeholder
+    def _on_return(self, event):
+        """Select first suggestion on Enter"""
+        if self._listbox and self._listbox.size() > 0:
+            selected = self._listbox.get(0)
+            self.delete(0, tk.END)
+            self.insert(0, selected)
+            self._hide_listbox()
+            return 'break'
+
+    def _on_down(self, event):
+        """Navigate down in suggestion list"""
+        if self._listbox:
+            current = self._listbox.curselection()
+            if current:
+                next_idx = current[0] + 1
+                if next_idx < self._listbox.size():
+                    self._listbox.selection_clear(0, tk.END)
+                    self._listbox.selection_set(next_idx)
+                    self._listbox.activate(next_idx)
+                    self._listbox.see(next_idx)
+            return 'break'
+
+    def _on_up(self, event):
+        """Navigate up in suggestion list"""
+        if self._listbox:
+            current = self._listbox.curselection()
+            if current and current[0] > 0:
+                prev_idx = current[0] - 1
+                self._listbox.selection_clear(0, tk.END)
+                self._listbox.selection_set(prev_idx)
+                self._listbox.activate(prev_idx)
+                self._listbox.see(prev_idx)
+            return 'break'
 
 
-# Test/demo code
+# Test code
 if __name__ == "__main__":
     root = tk.Tk()
-    root.title("Autocomplete Combobox Test")
-    root.geometry("400x300")
+    root.title("Autocomplete Test")
+    root.geometry("600x400")
 
-    # Sample data
-    operations = [
-        "Remove Duplicates",
-        "Remove Empty Rows",
-        "Remove Empty Columns",
-        "Trim Whitespace",
-        "Convert to Uppercase",
-        "Convert to Lowercase",
-        "Replace Values",
-        "Fill Missing Values",
-        "Sort by Column",
-        "Filter Rows",
-        "Rename Column",
-        "Delete Column",
-        "Add Column",
-        "Merge Columns",
-        "Split Column"
+    test_columns = [
+        "A: Company Name",
+        "B: Contact Name",
+        "C: Email",
+        "D: Phone",
+        "E: Amount",
+        "F: Person Street",
+        "G: Person City",
+        "H: Person State",
+        "I: Person Zip Code",
+        "J: Company Street",
+        "K: Company City"
     ]
 
-    columns = [
-        "A - Customer ID",
-        "B - Company Name",
-        "C - Contact Name",
-        "D - Email",
-        "E - Phone",
-        "F - Address",
-        "G - City",
-        "H - State",
-        "I - Zip Code",
-        "J - Amount"
-    ]
+    ttk.Label(root, text="Test Autocomplete Combobox",
+              font=('Arial', 14, 'bold')).pack(pady=20)
 
-    # Create UI
-    frame = ttk.Frame(root, padding="20")
-    frame.pack(fill=tk.BOTH, expand=True)
+    ttk.Label(root, text="Type 'per' to see Person columns only:",
+              font=('Arial', 11)).pack(pady=5)
 
-    ttk.Label(frame, text="Autocomplete Combobox Demo",
-              font=('Segoe UI', 14, 'bold')).pack(pady=10)
+    combo = AutocompleteCombobox(root, values=test_columns, width=50)
+    combo.pack(pady=10)
 
-    # Operation selector
-    ttk.Label(frame, text="Select Operation:", font=('Segoe UI', 10)).pack(pady=(10, 5))
+    ttk.Label(root, text="Type 'company' to see Company columns only:",
+              font=('Arial', 11)).pack(pady=5)
 
-    def on_operation_select(value):
-        print(f"Selected operation: {value}")
+    ttk.Label(root, text="💡 Type to filter • Use arrows to navigate • Enter to select",
+              font=('Arial', 9), foreground='gray').pack(pady=5)
 
-    op_combo = AutocompleteCombobox(
-        frame,
-        values=operations,
-        placeholder="Type to search operations...",
-        width=40,
-        on_select=on_operation_select
-    )
-    op_combo.pack(pady=5)
+    def show_selection():
+        print(f"Selected: {combo.get()}")
 
-    # Column selector
-    ttk.Label(frame, text="Select Column:", font=('Segoe UI', 10)).pack(pady=(20, 5))
-
-    def on_column_select(value):
-        print(f"Selected column: {value}")
-
-    col_combo = AutocompleteCombobox(
-        frame,
-        values=columns,
-        placeholder="Type to search columns...",
-        width=40,
-        on_select=on_column_select
-    )
-    col_combo.pack(pady=5)
-
-    # Test buttons
-    btn_frame = ttk.Frame(frame)
-    btn_frame.pack(pady=20)
-
-    ttk.Button(btn_frame, text="Clear Operation",
-               command=op_combo.clear).pack(side='left', padx=5)
-    ttk.Button(btn_frame, text="Clear Column",
-               command=col_combo.clear).pack(side='left', padx=5)
-
-    # Status label
-    status_label = ttk.Label(frame, text="Try typing to filter the list!",
-                            font=('Segoe UI', 9), foreground='gray')
-    status_label.pack(pady=10)
+    ttk.Button(root, text="Show Selection", command=show_selection).pack(pady=20)
 
     root.mainloop()
