@@ -127,10 +127,90 @@ class PresetManager:
         
         return presets
     
-    def delete_preset(self, preset_id: str):
-        """Delete a user preset"""
-        filepath = self.user_dir / f"{preset_id}.json"
-        if filepath.exists():
-            filepath.unlink()
-        else:
-            raise ValueError(f"Preset {preset_id} not found")
+    def can_modify_preset(self, preset_id: str) -> bool:
+        """Check if a preset can be modified (deleted/renamed)"""
+        # System presets cannot be modified
+        system_file = self.system_dir / f"{preset_id}.json"
+        if system_file.exists():
+            return False
+
+        # User presets can be modified
+        user_file = self.user_dir / f"{preset_id}.json"
+        return user_file.exists()
+
+    def delete_preset(self, preset_id: str) -> bool:
+        """
+        Delete a user preset
+
+        Args:
+            preset_id: ID of the preset to delete
+
+        Returns:
+            bool: True if deleted successfully, False otherwise
+        """
+        # Check if preset can be modified
+        if not self.can_modify_preset(preset_id):
+            return False
+
+        try:
+            filepath = self.user_dir / f"{preset_id}.json"
+            if filepath.exists():
+                filepath.unlink()
+                return True
+            return False
+        except Exception as e:
+            print(f"Error deleting preset {preset_id}: {e}")
+            return False
+
+    def rename_preset(self, old_preset_id: str, new_name: str, new_description: str = None) -> bool:
+        """
+        Rename a user preset
+
+        Args:
+            old_preset_id: Current preset ID
+            new_name: New display name for the preset
+            new_description: Optional new description
+
+        Returns:
+            bool: True if renamed successfully, False otherwise
+        """
+        # Check if preset can be modified
+        if not self.can_modify_preset(old_preset_id):
+            return False
+
+        try:
+            # Load existing preset
+            preset = self.load_preset(old_preset_id)
+            if preset is None:
+                return False
+
+            # Create new preset ID from name
+            new_preset_id = new_name.lower().replace(' ', '_')
+
+            # Check if new ID already exists
+            if new_preset_id != old_preset_id:
+                new_file = self.user_dir / f"{new_preset_id}.json"
+                if new_file.exists():
+                    return False  # Name conflict
+
+            # Update preset data
+            preset.id = new_preset_id
+            preset.name = new_name
+            if new_description is not None:
+                preset.description = new_description
+            preset.updated_at = datetime.now().isoformat()
+
+            # Save with new ID
+            self.save_preset(preset)
+
+            # Delete old file if ID changed
+            if new_preset_id != old_preset_id:
+                old_filepath = self.user_dir / f"{old_preset_id}.json"
+                if old_filepath.exists():
+                    old_filepath.unlink()
+
+            return True
+
+        except Exception as e:
+            print(f"Error renaming preset {old_preset_id}: {e}")
+            return False

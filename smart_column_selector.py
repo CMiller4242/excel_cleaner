@@ -6,6 +6,12 @@ Provides intelligent column selection with dropdowns, search, and multi-select
 import tkinter as tk
 from tkinter import ttk
 from typing import List, Optional, Callable
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from ui.widgets.autocomplete_combobox import AutocompleteCombobox
 
 
 class ColumnSelector(ttk.Frame):
@@ -30,21 +36,25 @@ class ColumnSelector(ttk.Frame):
             text=self.label_text,
             font=('Segoe UI', 11, 'bold')
         ).pack(anchor='w', pady=(0, 5))
-        
-        # Combobox with search
-        self.combo = ttk.Combobox(
+
+        # AutocompleteCombobox with improved search
+        self.combo = AutocompleteCombobox(
             self,
-            textvariable=self.selected_value,
             values=self.columns,
-            state='normal',  # Allow typing for search
-            font=('Segoe UI', 11),
+            placeholder="Type to search columns...",
+            match_anywhere=True,
             width=40
         )
+        self.combo.configure(font=('Segoe UI', 11))
         self.combo.pack(fill='x', pady=(0, 10))
-        
-        # Bind for auto-complete/search
-        self.combo.bind('<KeyRelease>', self._on_key_release)
-        
+
+        # Update selected_value when selection changes
+        def on_combo_change(*args):
+            self.selected_value.set(self.combo.get())
+
+        self.combo.bind('<<ComboboxSelected>>', on_combo_change)
+        self.combo.bind('<KeyRelease>', on_combo_change)
+
         # Helper text
         ttk.Label(
             self,
@@ -52,17 +62,6 @@ class ColumnSelector(ttk.Frame):
             font=('Segoe UI', 9),
             foreground='#666666'
         ).pack(anchor='w')
-    
-    def _on_key_release(self, event):
-        """Handle key release for search/filter functionality"""
-        typed = self.selected_value.get().lower()
-        
-        if typed == '':
-            self.combo['values'] = self.columns
-        else:
-            # Filter columns that contain typed text
-            filtered = [col for col in self.columns if typed in col.lower()]
-            self.combo['values'] = filtered
     
     def get_value(self) -> str:
         """Get selected column name"""
@@ -80,7 +79,7 @@ class ColumnSelector(ttk.Frame):
     def update_columns(self, columns: List[str]):
         """Update available columns"""
         self.columns = columns
-        self.combo['values'] = columns
+        self.combo.set_values(columns)
 
 
 class MultiColumnSelector(ttk.Frame):

@@ -40,6 +40,7 @@ from enhanced_preview import EnhancedDataPreview
 from smart_column_selector import ColumnSelector, MultiColumnSelector
 from analysis.data_quality_integration import DataQualityIntegration
 from excel_ribbon import ExcelRibbon, FormulaBar, ExcelStatusBar
+from ui.widgets.autocomplete_combobox import AutocompleteCombobox
 from datetime import datetime
 
 
@@ -408,13 +409,39 @@ class UniversalExcelToolV2Office365:
                   command=self.hide_operations_sidebar,
                   width=3).pack(side='right')
 
-        # Search box
+        # Search box with autocomplete
         search_frame = ttk.Frame(sidebar_frame, style='Card.TFrame')
         search_frame.pack(fill='x', padx=10, pady=5)
 
         ttk.Label(search_frame, text="Search:", font=('Segoe UI', 10)).pack(side='left', padx=5)
-        search_entry = ttk.Entry(search_frame, textvariable=self.search_var, font=('Segoe UI', 10))
-        search_entry.pack(side='left', fill='x', expand=True, padx=5)
+
+        # Get all operation names for autocomplete
+        all_op_names = []
+        for category in registry.get_all_categories():
+            operations = registry.get_by_category(category)
+            all_op_names.extend([op.metadata.name for op in operations])
+
+        # Create autocomplete combobox
+        self.search_combo = AutocompleteCombobox(
+            search_frame,
+            values=sorted(all_op_names),
+            placeholder="Type to search operations...",
+            match_anywhere=True,
+            width=25
+        )
+        self.search_combo.configure(font=('Segoe UI', 10))
+        self.search_combo.pack(side='left', fill='x', expand=True, padx=5)
+
+        # Sync search_var with combo
+        def on_search_change(*args):
+            current = self.search_combo.get()
+            if current and current != "Type to search operations...":
+                self.search_var.set(current)
+            else:
+                self.search_var.set("")
+
+        self.search_combo.bind('<KeyRelease>', on_search_change)
+        self.search_combo.bind('<<ComboboxSelected>>', on_search_change)
 
         # Operations tree
         tree_frame = ttk.Frame(sidebar_frame, style='Card.TFrame')
@@ -1578,38 +1605,49 @@ class UniversalExcelToolV2Office365:
     
 
     def load_preset(self):
-        """Load a preset"""
+        """Load a preset with context menu for delete/rename"""
         presets = self.preset_manager.list_presets()
-        
+
         if not presets:
             messagebox.showinfo("Info", "No presets available")
             return
-        
+
         dialog = tk.Toplevel(self.root)
         dialog.title("Load Preset")
         dialog.geometry("600x400")
         dialog.transient(self.root)
         dialog.grab_set()
-        
+
         ttk.Label(dialog, text="Select a Preset:",
                  style='Heading.TLabel').pack(pady=10)
-        
+
+        ttk.Label(dialog, text="💡 Right-click on user presets to delete or rename",
+                 font=('Segoe UI', 9), foreground='gray').pack(pady=5)
+
         listbox = tk.Listbox(dialog, font=('Arial', 11))
         listbox.pack(fill='both', expand=True, padx=20, pady=10)
-        
+
+        def refresh_preset_list():
+            """Refresh the preset listbox"""
+            listbox.delete(0, tk.END)
+            preset_map.clear()
+
+            current_presets = self.preset_manager.list_presets()
+            for preset in current_presets:
+                icon = "🔒" if preset.is_system else "📝"
+                text = f"{icon} {preset.name} - {preset.description}"
+                listbox.insert(tk.END, text)
+                preset_map[listbox.size()-1] = preset
+
         preset_map = {}
-        for preset in presets:
-            icon = "🔒" if preset.is_system else "📝"
-            text = f"{icon} {preset.name} - {preset.description}"
-            listbox.insert(tk.END, text)
-            preset_map[listbox.size()-1] = preset
-        
+        refresh_preset_list()
+
         def on_load():
             selection = listbox.curselection()
             if selection:
                 preset = preset_map[selection[0]]
                 self.operation_queue = []
-                
+
                 for op_config in preset.operations:
                     operation = registry.get_by_id(op_config.operation_id)
                     if operation:
@@ -1619,13 +1657,139 @@ class UniversalExcelToolV2Office365:
                             'parameters': op_config.parameters,
                             'enabled': op_config.enabled
                         })
-                
+
                 self.refresh_queue_display()
                 self.status_var.set(f"Loaded preset: {preset.name}")
                 dialog.destroy()
                 messagebox.showinfo("Success",
                                   f"Loaded '{preset.name}' with {len(preset.operations)} operations")
-        
+
+        def on_delete_preset():
+            """Delete selected preset"""
+            selection = listbox.curselection()
+            if not selection:
+                return
+
+            preset = preset_map[selection[0]]
+
+            # Check if can be modified
+            if not self.preset_manager.can_modify_preset(preset.id):
+                messagebox.showwarning("Cannot Delete",
+                                      "System presets cannot be deleted.\n\nOnly user-created presets can be removed.")
+                return
+
+            # Confirm deletion
+            response = messagebox.askyesno("Confirm Delete",
+                                          f"Are you sure you want to delete preset:\n\n'{preset.name}'?\n\nThis cannot be undone.")
+
+            if response:
+                success = self.preset_manager.delete_preset(preset.id)
+                if success:
+                    messagebox.showinfo("Success", f"Preset '{preset.name}' deleted successfully")
+                    refresh_preset_list()
+                else:
+                    messagebox.showerror("Error", f"Failed to delete preset '{preset.name}'")
+
+        def on_rename_preset():
+            """Rename selected preset"""
+            selection = listbox.curselection()
+            if not selection:
+                return
+
+            preset = preset_map[selection[0]]
+
+            # Check if can be modified
+            if not self.preset_manager.can_modify_preset(preset.id):
+                messagebox.showwarning("Cannot Rename",
+                                      "System presets cannot be renamed.\n\nOnly user-created presets can be modified.")
+                return
+
+            # Create rename dialog
+            rename_dialog = tk.Toplevel(dialog)
+            rename_dialog.title("Rename Preset")
+            rename_dialog.geometry("450x200")
+            rename_dialog.transient(dialog)
+            rename_dialog.grab_set()
+
+            ttk.Label(rename_dialog, text=f"Rename: {preset.name}",
+                     font=('Segoe UI', 12, 'bold')).pack(pady=10)
+
+            ttk.Label(rename_dialog, text="New Name:").pack(pady=5)
+            name_var = tk.StringVar(value=preset.name)
+            name_entry = ttk.Entry(rename_dialog, textvariable=name_var, width=40)
+            name_entry.pack(pady=5)
+            name_entry.select_range(0, tk.END)
+            name_entry.focus()
+
+            ttk.Label(rename_dialog, text="New Description:").pack(pady=5)
+            desc_var = tk.StringVar(value=preset.description)
+            ttk.Entry(rename_dialog, textvariable=desc_var, width=40).pack(pady=5)
+
+            def do_rename():
+                new_name = name_var.get().strip()
+                new_desc = desc_var.get().strip()
+
+                if not new_name:
+                    messagebox.showwarning("Invalid Name", "Please enter a valid name")
+                    return
+
+                success = self.preset_manager.rename_preset(preset.id, new_name, new_desc)
+
+                if success:
+                    messagebox.showinfo("Success", f"Preset renamed to '{new_name}'")
+                    refresh_preset_list()
+                    rename_dialog.destroy()
+                else:
+                    messagebox.showerror("Error",
+                                       "Failed to rename preset.\n\nA preset with this name may already exist.")
+
+            btn_frame = ttk.Frame(rename_dialog)
+            btn_frame.pack(pady=15)
+            ttk.Button(btn_frame, text="Rename", command=do_rename,
+                      style='Accent.TButton').pack(side='left', padx=5)
+            ttk.Button(btn_frame, text="Cancel", command=rename_dialog.destroy).pack(side='left', padx=5)
+
+        def show_context_menu(event):
+            """Show context menu on right-click"""
+            # Get item under cursor
+            index = listbox.nearest(event.y)
+            if index < 0:
+                return
+
+            # Select the item
+            listbox.selection_clear(0, tk.END)
+            listbox.selection_set(index)
+            listbox.activate(index)
+
+            preset = preset_map[index]
+
+            # Create context menu
+            context_menu = tk.Menu(dialog, tearoff=0)
+
+            # Load option (always available)
+            context_menu.add_command(label="📂 Load", command=on_load)
+
+            # Separator
+            if not preset.is_system:
+                context_menu.add_separator()
+
+                # Delete and Rename (only for user presets)
+                context_menu.add_command(label="✏️ Rename", command=on_rename_preset)
+                context_menu.add_command(label="🗑 Delete", command=on_delete_preset)
+
+            # Show menu
+            try:
+                context_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                context_menu.grab_release()
+
+        # Bind right-click
+        listbox.bind("<Button-3>", show_context_menu)  # Windows/Linux
+        listbox.bind("<Button-2>", show_context_menu)  # macOS
+
+        # Bind double-click to load
+        listbox.bind("<Double-Button-1>", lambda e: on_load())
+
         ttk.Button(dialog, text="Load",
                   command=on_load,
                   style='Primary.TButton').pack(pady=10)
