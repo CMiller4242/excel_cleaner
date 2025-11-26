@@ -799,6 +799,25 @@ class UniversalExcelToolV2Office365:
                 self.add_operation_to_queue_smart(operation)
     
 
+    def add_operation_by_id(self, operation_id):
+        """
+        Add operation to queue by ID (for ribbon buttons)
+
+        Args:
+            operation_id: Operation ID to add
+        """
+        if self.df is None:
+            messagebox.showwarning("No Data", "Please load a file first")
+            return
+
+        operation = registry.get_by_id(operation_id)
+        if not operation:
+            messagebox.showerror("Error", f"Operation {operation_id} not found")
+            return
+
+        # Show parameter dialog
+        self.add_operation_to_queue_smart(operation)
+
     def add_operation_to_queue_smart(self, operation):
         """
         Add operation with SMART column selection dialogs
@@ -1459,7 +1478,7 @@ class UniversalExcelToolV2Office365:
     
 
     def load_file(self):
-        """Load data file with enhanced preview"""
+        """Load data file with smart header detection"""
         filename = filedialog.askopenfilename(
             title="Select Data File",
             filetypes=[
@@ -1468,21 +1487,59 @@ class UniversalExcelToolV2Office365:
                 ("All files", "*.*")
             ]
         )
-        
+
         if not filename:
             return
-        
+
         try:
+            # Initial load to detect headers
             if filename.endswith('.csv'):
-                self.df = pd.read_csv(filename, header=0)  # First row is headers
+                df_test = pd.read_csv(filename, nrows=5)
             else:
-                self.df = pd.read_excel(filename, header=0)  # First row is headers
-            
+                df_test = pd.read_excel(filename, nrows=5)
+
+            # Check if first row has mostly "Unnamed" columns
+            unnamed_count = sum(1 for col in df_test.columns if str(col).startswith('Unnamed'))
+            unnamed_ratio = unnamed_count / len(df_test.columns) if len(df_test.columns) > 0 else 0
+
+            # If >50% columns are "Unnamed", headers are probably in row 1
+            if unnamed_ratio > 0.5:
+                logging.info(f"Detected {unnamed_ratio:.0%} unnamed columns - headers likely in row 1")
+
+                # Ask user for confirmation
+                response = messagebox.askyesno(
+                    "Header Row Detection",
+                    f"Detected {unnamed_count} unnamed columns.\n\n"
+                    f"This usually means the first row contains metadata/titles "
+                    f"and the actual headers are in the second row.\n\n"
+                    f"Use row 2 as headers?\n\n"
+                    f"(You can change this later using Transform → Set Header Row)",
+                    icon='question'
+                )
+
+                if response:
+                    # Load with header in row 1 (0-indexed)
+                    header_row = 1
+                else:
+                    # Use default (row 0)
+                    header_row = 0
+            else:
+                # Looks good, use row 0 as headers
+                header_row = 0
+
+            # Load file with correct header row
+            if filename.endswith('.csv'):
+                self.df = pd.read_csv(filename, header=header_row)
+            else:
+                self.df = pd.read_excel(filename, header=header_row)
+
             self.current_file = filename
+
+            # Update UI
             self.file_info_var.set(
                 f"📁 {Path(filename).name} • {len(self.df):,} rows × {len(self.df.columns)} columns"
             )
-            
+
             # Use enhanced preview
             self.enhanced_preview.load_dataframe(self.df, is_result=False)
 
@@ -1493,8 +1550,9 @@ class UniversalExcelToolV2Office365:
                 self.excel_status_bar.update_row_count(len(self.df))
 
             messagebox.showinfo("Success",
-                              f"Loaded {len(self.df):,} records with {len(self.df.columns)} columns")
-            
+                              f"Loaded {len(self.df):,} records with {len(self.df.columns)} columns\n\n"
+                              f"Header row: {header_row + 1}")
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load file:\n{str(e)}")
     

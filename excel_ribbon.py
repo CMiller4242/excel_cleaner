@@ -195,6 +195,12 @@ class ExcelRibbon(ttk.Frame):
 
     def _create_transform_tab(self):
         """Create Transform tab"""
+        # Data Structure group
+        structure_group = RibbonGroup(self.content_area, "Data Structure")
+        structure_group.pack(side='left', fill='y', padx=2)
+        structure_group.add_button("Set Header\nRow", lambda: self.app.add_operation_by_id('data_set_header_row'), "📋", row=0, column=0)
+        structure_group.add_button("Reorder\nColumns", lambda: self.app.add_operation_by_id('data_reorder_columns'), "⇅", row=0, column=1)
+
         text_group = RibbonGroup(self.content_area, "Text")
         text_group.pack(side='left', fill='y', padx=2)
         text_group.add_button("Upper", lambda: None, "ABC", row=0, column=0)
@@ -202,8 +208,8 @@ class ExcelRibbon(ttk.Frame):
 
         columns_group = RibbonGroup(self.content_area, "Columns")
         columns_group.pack(side='left', fill='y', padx=2)
-        columns_group.add_button("Reorder", lambda: None, "⇅", row=0, column=0)
-        columns_group.add_button("Split", lambda: None, "⚡", row=0, column=1)
+        columns_group.add_button("Split", lambda: None, "⚡", row=0, column=0)
+        columns_group.add_button("Merge", lambda: None, "⚡", row=0, column=1)
 
     def _create_review_tab(self):
         """Create Review tab"""

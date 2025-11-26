@@ -617,9 +617,91 @@ class ReorderColumnsOperation(BaseOperation):
         return df
 
 
+class SetHeaderRowOperation(BaseOperation):
+    """Set which row contains column headers"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='data_set_header_row',
+            name='Set Header Row',
+            category='Transform',
+            description='Specify which row contains column headers and remove rows above it',
+            parameters=[
+                Parameter(
+                    name='header_row_number',
+                    type='number',
+                    description='Row number to use as headers (1-based, e.g., row 2 = enter "2")',
+                    required=True,
+                    default=2
+                ),
+                Parameter(
+                    name='remove_above',
+                    type='boolean',
+                    description='Remove all rows above the new header row',
+                    required=False,
+                    default=True
+                )
+            ],
+            excel_equivalent='Data → Remove Top Rows + Promote Headers',
+            examples=[
+                'File has title in row 1, headers in row 2 - use row 2 as headers',
+                'Skip first 3 rows of metadata and use row 4 as column names',
+                'Correct files with "Unnamed: 0" columns by using row 2'
+            ],
+            tags=['headers', 'columns', 'metadata', 'rows', 'transform']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        """
+        Set header row and optionally remove rows above it.
+
+        Args:
+            df: Input dataframe
+            params: {
+                'header_row_number': int (1-based row number),
+                'remove_above': bool (remove rows above new headers)
+            }
+
+        Returns:
+            Dataframe with new headers
+        """
+        header_row_number = int(params.get('header_row_number', 2))
+        remove_above = params.get('remove_above', True)
+
+        # Convert to 0-based index
+        header_row_idx = header_row_number - 1
+
+        # Validate row number
+        if header_row_idx < 0 or header_row_idx >= len(df):
+            raise ValueError(
+                f"Invalid row number: {header_row_number}. "
+                f"Must be between 1 and {len(df)}"
+            )
+
+        # Get the row that will become headers
+        new_headers = df.iloc[header_row_idx].values
+
+        # Create new dataframe
+        if remove_above:
+            # Start from the row AFTER the new header row
+            new_df = df.iloc[header_row_idx + 1:].copy()
+        else:
+            # Keep all rows but set new headers
+            new_df = df.copy()
+
+        # Set new column names
+        new_df.columns = new_headers
+
+        # Reset index
+        new_df.reset_index(drop=True, inplace=True)
+
+        return new_df
+
+
 # Register all operations
 registry.register(VLookupOperation())
 registry.register(RemoveDuplicatesOperation())
 registry.register(SortDataOperation())
 registry.register(RemoveRowsIfOperation())
 registry.register(ReorderColumnsOperation())
+registry.register(SetHeaderRowOperation())
