@@ -37,12 +37,10 @@ class ColumnSelector(ttk.Frame):
             font=('Segoe UI', 11, 'bold')
         ).pack(anchor='w', pady=(0, 5))
 
-        # AutocompleteCombobox with improved search
+        # AutocompleteCombobox with real-time filtering
         self.combo = AutocompleteCombobox(
             self,
             values=self.columns,
-            placeholder="Type to search columns...",
-            match_anywhere=True,
             width=40
         )
         self.combo.configure(font=('Segoe UI', 11))
@@ -53,15 +51,34 @@ class ColumnSelector(ttk.Frame):
             self.selected_value.set(self.combo.get())
 
         self.combo.bind('<<ComboboxSelected>>', on_combo_change)
-        self.combo.bind('<KeyRelease>', on_combo_change)
 
-        # Helper text
-        ttk.Label(
+        # Helper text with dynamic feedback
+        self.hint_var = tk.StringVar(
+            value=f"💡 Type to filter • {len(self.columns)} columns available"
+        )
+        self.hint_label = ttk.Label(
             self,
-            text="💡 Type to search or click dropdown to select",
+            textvariable=self.hint_var,
             font=('Segoe UI', 9),
             foreground='#666666'
-        ).pack(anchor='w')
+        )
+        self.hint_label.pack(anchor='w')
+
+        # Update hint on typing
+        def update_hint(*args):
+            current_text = self.combo.get().strip()
+            if not current_text:
+                self.hint_var.set(f"💡 Type to filter • {len(self.columns)} columns available")
+            else:
+                filtered_count = len(self.combo._filtered_values)
+                if filtered_count == 0:
+                    self.hint_var.set("❌ No matching columns")
+                elif filtered_count == len(self.columns):
+                    self.hint_var.set(f"💡 Type to filter • {len(self.columns)} columns available")
+                else:
+                    self.hint_var.set(f"✓ Showing {filtered_count} of {len(self.columns)} columns")
+
+        self.combo.bind('<KeyRelease>', lambda e: (on_combo_change(), update_hint()))
     
     def get_value(self) -> str:
         """Get selected column name"""
