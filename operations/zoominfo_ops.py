@@ -11,10 +11,14 @@ from .registry import registry
 
 class SplitAddressOperation(BaseOperation):
     """
-    Splits full address into Address 1 (street) and Address 2 (suite/unit)
+    Splits address into Address 1 (street) and Address 2 (suite/unit)
+
+    Two modes:
+    1. Split Full Address: Split one column into Address 1 + Address 2 (NEW columns)
+    2. Extract Suite from Address 1: Extract suite from Address 1 → move to Address 2 (EXISTING columns)
 
     Logic:
-    1. Find FIRST occurrence of any suite keyword (case-insensitive)
+    1. Find LAST occurrence of any suite keyword (case-insensitive)
     2. Split at that point
     3. Address 1 = everything before suite keyword (trimmed)
     4. Address 2 = suite keyword + everything after (trimmed)
@@ -26,45 +30,74 @@ class SplitAddressOperation(BaseOperation):
             id='zoominfo_split_address',
             name='Split Address - Street/Suite',
             category='ZoomInfo',
-            description='Split full address into street (Address 1) and suite/unit (Address 2)',
+            description='''Split address into street and suite components.
+
+TWO MODES:
+
+1. Split Full Address (for unsplit addresses)
+   Input: "150 BERGEN ST STE 1"
+   Output: Address 1: "150 BERGEN ST"
+           Address 2: "STE 1"
+
+2. Extract Suite from Address 1 (for pre-split addresses)
+   Input Address 1: "150 BERGEN ST STE 1"
+   Input Address 2: "EVS"
+   Output Address 1: "150 BERGEN ST"
+          Address 2: "STE 1"
+''',
             parameters=[
+                Parameter(
+                    name='mode',
+                    type='choice',
+                    description='Operation mode',
+                    required=True,
+                    choices=['Split Full Address', 'Extract Suite from Address 1'],
+                    default='Split Full Address'
+                ),
                 Parameter(
                     name='source_column',
                     type='column',
-                    description='Column containing full address'
+                    description='Source column (full address OR Address 1)'
+                ),
+                Parameter(
+                    name='address2_column',
+                    type='column',
+                    description='Address 2 column (for Extract Suite mode - where to put extracted suite)',
+                    required=False
                 ),
                 Parameter(
                     name='suite_keywords',
-                    type='list',
-                    description='Suite/unit keywords to detect (comma-separated)',
+                    type='text',
+                    description='Suite keywords (comma-separated)',
                     required=False,
-                    default='Ste,Suite,Suites,Unit,Units,Apt,Apartment,Bldg,Building,Floor,Flr'
+                    default='Ste,Suite,Suites,Unit,Units,Apt,Apartment,Bldg,Building,Floor,Flr,#,Room,Rm'
                 ),
                 Parameter(
-                    name='address1_column',
+                    name='address1_output',
                     type='text',
-                    description='Output column name for street address',
+                    description='Output column name for street address (Split Full Address mode only)',
                     required=False,
                     default='Address 1'
                 ),
                 Parameter(
-                    name='address2_column',
+                    name='address2_output',
                     type='text',
-                    description='Output column name for suite/unit',
+                    description='Output column name for suite/unit (Split Full Address mode only)',
                     required=False,
                     default='Address 2'
                 ),
                 Parameter(
                     name='remove_original',
                     type='boolean',
-                    description='Remove original column after split',
+                    description='Remove original column after split (Split Full Address mode only)',
                     required=False,
-                    default=True
+                    default=False
                 )
             ],
-            excel_equivalent='Text to Columns (with custom logic)',
+            excel_equivalent='Text to Columns + Find/Replace',
             examples=[
-                'Split "400 W Illinois Ave Ste 950" → "400 W Illinois Ave" + "Ste 950"',
+                'Split "150 BERGEN ST STE 1" → "150 BERGEN ST" + "STE 1"',
+                'Extract suite from Address 1 containing "150 BERGEN ST STE 1" → move "STE 1" to Address 2',
                 'Split "3715 Northside Pkwy NW Bldg 300 Ste 110" → "3715 Northside Pkwy NW" + "Bldg 300 Ste 110"',
                 'No suite: "251 Stenton Ave" → "251 Stenton Ave" + ""'
             ],
@@ -72,20 +105,40 @@ class SplitAddressOperation(BaseOperation):
         )
 
     def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        """Execute address splitting based on selected mode"""
         df = df.copy()
+
+        mode = params.get('mode', 'Split Full Address')
         source_col = params['source_column']
 
         # Parse suite keywords
-        suite_keywords = params.get('suite_keywords', 'Ste,Suite,Suites,Unit,Units,Apt,Apartment,Bldg,Building,Floor,Flr')
+        suite_keywords = params.get('suite_keywords',
+            'Ste,Suite,Suites,Unit,Units,Apt,Apartment,Bldg,Building,Floor,Flr,#,Room,Rm')
         if isinstance(suite_keywords, str):
             suite_keywords = [kw.strip() for kw in suite_keywords.split(',')]
 
-        address1_col = params.get('address1_column', 'Address 1')
-        address2_col = params.get('address2_column', 'Address 2')
-        remove_original = params.get('remove_original', True)
+        # Validate source column
+        if source_col not in df.columns:
+            raise ValueError(f"Source column '{source_col}' not found")
+
+        if mode == 'Split Full Address':
+            return self._split_full_address(df, params, source_col, suite_keywords)
+        else:  # Extract Suite from Address 1
+            return self._extract_suite_from_address1(df, params, source_col, suite_keywords)
+
+    def _split_full_address(self, df, params, source_col, suite_keywords):
+        """
+        Mode 1: Split full address into NEW Address 1 + Address 2 columns
+
+        Example:
+        Input: "150 BERGEN ST STE 1"
+        Output: Address 1: "150 BERGEN ST", Address 2: "STE 1"
+        """
+        address1_col = params.get('address1_output', 'Address 1')
+        address2_col = params.get('address2_output', 'Address 2')
+        remove_original = params.get('remove_original', False)
 
         # Create pattern for finding suite keywords (case-insensitive)
-        # Use word boundaries to avoid matching "Street" when looking for "Ste"
         pattern_parts = [r'\b' + re.escape(kw) + r'\b' for kw in suite_keywords]
         pattern = '(' + '|'.join(pattern_parts) + ')'
 
@@ -102,9 +155,9 @@ class SplitAddressOperation(BaseOperation):
                 # No suite keyword found - entire address goes to Address 1
                 return address_str, ''
 
-            # Use the FIRST match (leftmost suite keyword)
-            first_match = matches[0]
-            split_pos = first_match.start()
+            # Use the LAST match (rightmost suite keyword)
+            last_match = matches[-1]
+            split_pos = last_match.start()
 
             # Everything before the suite keyword
             address1 = address_str[:split_pos].strip()
@@ -122,6 +175,73 @@ class SplitAddressOperation(BaseOperation):
         # Remove original column if requested
         if remove_original and source_col in df.columns:
             df = df.drop(columns=[source_col])
+
+        return df
+
+    def _extract_suite_from_address1(self, df, params, address1_col, suite_keywords):
+        """
+        Mode 2: Extract suite from EXISTING Address 1 → move to Address 2
+
+        Example:
+        Input Address 1: "150 BERGEN ST STE 1"
+        Input Address 2: "EVS" (or empty)
+
+        Output Address 1: "150 BERGEN ST"
+        Output Address 2: "STE 1"
+        """
+        address2_col = params.get('address2_column')
+
+        if not address2_col or address2_col not in df.columns:
+            raise ValueError(
+                "For 'Extract Suite from Address 1' mode, you must specify the Address 2 column "
+                "where extracted suite info will be moved."
+            )
+
+        # Create pattern for finding suite keywords (case-insensitive)
+        pattern_parts = [r'\b' + re.escape(kw) + r'\b' for kw in suite_keywords]
+        pattern = '(' + '|'.join(pattern_parts) + ')'
+
+        def split_address(address_str):
+            if pd.isna(address_str) or str(address_str).strip() == '':
+                return '', ''
+
+            address_str = str(address_str).strip()
+
+            # Find all matches of suite keywords
+            matches = list(re.finditer(pattern, address_str, re.IGNORECASE))
+
+            if not matches:
+                # No suite keyword found - leave address as-is
+                return address_str, ''
+
+            # Use the LAST match (rightmost suite keyword)
+            last_match = matches[-1]
+            split_pos = last_match.start()
+
+            # Everything before the suite keyword
+            street = address_str[:split_pos].strip()
+
+            # Suite keyword and everything after
+            suite = address_str[split_pos:].strip()
+
+            return street, suite
+
+        # Process each row
+        for idx in df.index:
+            address1 = df.at[idx, address1_col]
+
+            if pd.isna(address1) or not str(address1).strip():
+                continue
+
+            # Split the address
+            street, suite = split_address(str(address1))
+
+            # Update Address 1 (remove suite)
+            df.at[idx, address1_col] = street
+
+            # Update Address 2 (add suite if found)
+            if suite:
+                df.at[idx, address2_col] = suite
 
         return df
 
