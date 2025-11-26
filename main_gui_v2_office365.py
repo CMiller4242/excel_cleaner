@@ -40,7 +40,6 @@ from enhanced_preview import EnhancedDataPreview
 from smart_column_selector import ColumnSelector, MultiColumnSelector
 from analysis.data_quality_integration import DataQualityIntegration
 from excel_ribbon import ExcelRibbon, FormulaBar, ExcelStatusBar
-from ui.widgets.autocomplete_combobox import AutocompleteCombobox
 from datetime import datetime
 
 
@@ -421,22 +420,31 @@ class UniversalExcelToolV2Office365:
             operations = registry.get_by_category(category)
             all_op_names.extend([op.metadata.name for op in operations])
 
-        # Create autocomplete combobox (no placeholder, let filtering work naturally)
-        self.search_combo = AutocompleteCombobox(
+        # Create auto-suggest entry (production-grade autocomplete)
+        from ui.widgets.autosuggest_entry import AutoSuggestEntry
+
+        self.search_entry = AutoSuggestEntry(
             search_frame,
             values=sorted(all_op_names),
-            width=25
+            font=('Segoe UI', 10),
+            width=35
         )
-        self.search_combo.configure(font=('Segoe UI', 10))
-        self.search_combo.pack(side='left', fill='x', expand=True, padx=5)
+        self.search_entry.pack(side='left', fill='x', expand=True, padx=5)
 
-        # Sync search_var with combo for tree filtering
+        # Sync search_var with entry for tree filtering
         def on_search_change(*args):
-            current = self.search_combo.get().strip()
+            current = self.search_entry.get().strip()
             self.search_var.set(current)
 
-        self.search_combo.bind('<KeyRelease>', on_search_change)
-        self.search_combo.bind('<<ComboboxSelected>>', on_search_change)
+        def on_search_selected(event):
+            """When operation is selected from suggestions"""
+            selected = self.search_entry.get().strip()
+            if selected:
+                self.search_var.set(selected)
+
+        self.search_entry.bind('<KeyRelease>', on_search_change)
+        self.search_entry.bind('<<AutoSuggestSelected>>', on_search_selected)
+        self.search_entry.bind('<Return>', on_search_selected)
 
         # Operations tree
         tree_frame = ttk.Frame(sidebar_frame, style='Card.TFrame')

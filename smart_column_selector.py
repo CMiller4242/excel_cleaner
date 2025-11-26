@@ -11,23 +11,28 @@ from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
-from ui.widgets.autocomplete_combobox import AutocompleteCombobox
+from ui.widgets.autosuggest_entry import AutoSuggestEntry
 
 
 class ColumnSelector(ttk.Frame):
     """
-    Smart column selector with search and dropdown
-    For single-column operations
+    Smart column selector with production-grade autocomplete.
+
+    Features:
+    - Real-time filtering as you type
+    - Remembers recently used columns
+    - Keyboard navigation (↑↓ Enter Escape)
+    - Non-intrusive suggestions
+    - High performance with caching
     """
-    
+
     def __init__(self, parent, columns: List[str], label: str = "Select Column", **kwargs):
         super().__init__(parent, **kwargs)
         self.columns = columns
         self.label_text = label
-        self.selected_value = tk.StringVar()
-        
+
         self._setup_ui()
-    
+
     def _setup_ui(self):
         """Setup the selector interface"""
         # Label
@@ -37,24 +42,18 @@ class ColumnSelector(ttk.Frame):
             font=('Segoe UI', 11, 'bold')
         ).pack(anchor='w', pady=(0, 5))
 
-        # AutocompleteCombobox with real-time filtering
-        self.combo = AutocompleteCombobox(
+        # Auto-suggest entry with contextual awareness
+        self.entry = AutoSuggestEntry(
             self,
             values=self.columns,
-            width=40
+            font=('Segoe UI', 11),
+            width=50
         )
-        self.combo.configure(font=('Segoe UI', 11))
-        self.combo.pack(fill='x', pady=(0, 10))
+        self.entry.pack(fill='x', pady=5)
 
-        # Update selected_value when selection changes
-        def on_combo_change(*args):
-            self.selected_value.set(self.combo.get())
-
-        self.combo.bind('<<ComboboxSelected>>', on_combo_change)
-
-        # Helper text with dynamic feedback
+        # Hint label with dynamic feedback
         self.hint_var = tk.StringVar(
-            value=f"💡 Type to filter • {len(self.columns)} columns available"
+            value=f"💡 Start typing to filter • {len(self.columns)} columns available"
         )
         self.hint_label = ttk.Label(
             self,
@@ -62,41 +61,58 @@ class ColumnSelector(ttk.Frame):
             font=('Segoe UI', 9),
             foreground='#666666'
         )
-        self.hint_label.pack(anchor='w')
+        self.hint_label.pack(anchor='w', pady=(2, 0))
 
         # Update hint on typing
-        def update_hint(*args):
-            current_text = self.combo.get().strip()
-            if not current_text:
-                self.hint_var.set(f"💡 Type to filter • {len(self.columns)} columns available")
-            else:
-                filtered_count = len(self.combo._filtered_values)
-                if filtered_count == 0:
-                    self.hint_var.set("❌ No matching columns")
-                elif filtered_count == len(self.columns):
-                    self.hint_var.set(f"💡 Type to filter • {len(self.columns)} columns available")
-                else:
-                    self.hint_var.set(f"✓ Showing {filtered_count} of {len(self.columns)} columns")
+        self.entry.bind('<KeyRelease>', self._update_hint)
+        self.entry.bind('<<AutoSuggestSelected>>', self._on_selected)
 
-        self.combo.bind('<KeyRelease>', lambda e: (on_combo_change(), update_hint()))
-    
+    def _update_hint(self, event=None):
+        """Update hint text dynamically"""
+        query = self.entry.get().strip()
+
+        if not query:
+            self.hint_var.set(
+                f"💡 Start typing to filter • {len(self.columns)} columns available"
+            )
+        elif self.entry.dropdown.is_visible():
+            count = len(self.entry.dropdown.suggestions)
+            if count == 0:
+                self.hint_var.set("❌ No matching columns")
+            else:
+                self.hint_var.set(
+                    f"✓ Showing {count} matching column{'s' if count != 1 else ''}"
+                )
+        else:
+            self.hint_var.set("💡 Start typing to filter")
+
+    def _on_selected(self, event=None):
+        """Handle selection"""
+        self._update_hint()
+
     def get_value(self) -> str:
-        """Get selected column name"""
-        value = self.selected_value.get()
-        
-        # Remove column letter prefix if present (e.g., "A: Company" -> "Company")
+        """Get selected column name (without letter prefix)"""
+        value = self.entry.get().strip()
         if ':' in value:
+            # Remove Excel-style letter (e.g., "A: Column Name" → "Column Name")
             return value.split(':', 1)[1].strip()
         return value
-    
+
     def set_value(self, value: str):
-        """Set selected column"""
-        self.selected_value.set(value)
-    
-    def update_columns(self, columns: List[str]):
+        """Set column value"""
+        for col in self.columns:
+            if value in col or col.endswith(value):
+                self.entry.delete(0, tk.END)
+                self.entry.insert(0, col)
+                break
+
+    def update_columns(self, new_columns: List[str]):
         """Update available columns"""
-        self.columns = columns
-        self.combo.set_values(columns)
+        self.columns = new_columns
+        self.entry.set_values(new_columns)
+        self.hint_var.set(
+            f"💡 Start typing to filter • {len(new_columns)} columns available"
+        )
 
 
 class MultiColumnSelector(ttk.Frame):
