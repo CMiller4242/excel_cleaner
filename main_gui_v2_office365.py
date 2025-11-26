@@ -420,10 +420,10 @@ class UniversalExcelToolV2Office365:
             operations = registry.get_by_category(category)
             all_op_names.extend([op.metadata.name for op in operations])
 
-        # Create auto-suggest entry (production-grade autocomplete)
-        from ui.widgets.autosuggest_entry import AutoSuggestEntry
+        # Create filter combobox (simple and reliable)
+        from ui.widgets.filter_combobox import FilterCombobox
 
-        self.search_entry = AutoSuggestEntry(
+        self.search_entry = FilterCombobox(
             search_frame,
             values=sorted(all_op_names),
             font=('Segoe UI', 10),
@@ -437,13 +437,13 @@ class UniversalExcelToolV2Office365:
             self.search_var.set(current)
 
         def on_search_selected(event):
-            """When operation is selected from suggestions"""
+            """When operation is selected from dropdown"""
             selected = self.search_entry.get().strip()
             if selected:
                 self.search_var.set(selected)
 
         self.search_entry.bind('<KeyRelease>', on_search_change)
-        self.search_entry.bind('<<AutoSuggestSelected>>', on_search_selected)
+        self.search_entry.bind('<<ComboboxSelected>>', on_search_selected)
         self.search_entry.bind('<Return>', on_search_selected)
 
         # Operations tree
