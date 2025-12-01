@@ -1,0 +1,183 @@
+{
+  "id": "definitive_healthcare_contacts",
+  "name": "Definitive Healthcare - Contact Cleaning",
+  "description": "Clean Definitive Healthcare contact lists: standardize, dedupe by location, keep best contact",
+  "category": "Healthcare",
+  "file_type": "Definitive Healthcare",
+  "format_variant": "Contact List",
+  "version": "1.0",
+  "expected_columns": [
+    "Customer #",
+    "Segment",
+    "First Name",
+    "Last Name",
+    "Job Title",
+    "Hospital Name",
+    "Address 1",
+    "Address 2",
+    "City",
+    "State",
+    "Zip",
+    "Phone",
+    "Email"
+  ],
+  "operations": [
+    {
+      "operation_id": "data_set_header_row",
+      "parameters": {
+        "header_row_number": 1,
+        "remove_above": false
+      },
+      "order": 0,
+      "enabled": true,
+      "description": "Step 1: Ensure correct header row is set",
+      "editable": true,
+      "required": false
+    },
+    {
+      "operation_id": "clean_remove_blank_rows",
+      "parameters": {},
+      "order": 1,
+      "enabled": true,
+      "description": "Step 2: Remove completely empty rows",
+      "editable": false,
+      "required": true
+    },
+    {
+      "operation_id": "text_standardize_customer_numbers",
+      "parameters": {
+        "customer_number_column": "Customer #",
+        "segment_column": "Segment",
+        "customer_length": 8,
+        "segment_length": 2,
+        "blank_segment_value": "00"
+      },
+      "order": 2,
+      "enabled": true,
+      "description": "Step 3: Pad customer numbers with leading zeros (8 digits + 2 segment digits)",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "text_concatenate",
+      "parameters": {
+        "columns": ["First Name", "Last Name"],
+        "separator": " ",
+        "new_column": "Contact Name",
+        "remove_original": false
+      },
+      "order": 3,
+      "enabled": true,
+      "description": "Step 4: Combine First Name + Last Name → Contact Name",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "zoominfo_split_address",
+      "parameters": {
+        "mode": "Extract Suite from Address 1",
+        "source_column": "Address 1",
+        "address2_column": "Address 2",
+        "suite_keywords": "Ste,Suite,Unit,Apt,Bldg,Floor,#",
+        "remove_original": false
+      },
+      "order": 4,
+      "enabled": true,
+      "description": "Step 5: Extract suite/unit from Address 1 to Address 2",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "data_keep_best_contact_per_location",
+      "parameters": {
+        "location_columns": "Hospital Name,Address 1,City,State",
+        "title_column": "Job Title",
+        "tie_breaker": "first",
+        "add_rank_column": true
+      },
+      "order": 5,
+      "enabled": true,
+      "description": "Step 6: Keep only highest-ranking contact per hospital (CEO > Director > Manager > Nurse)",
+      "editable": true,
+      "required": true,
+      "notes": "Ranks titles by authority: 1=Executive, 2=Director, 3=Manager, 4=Supervisor, 5=Clinical, 6=Admin, 7=Unknown"
+    },
+    {
+      "operation_id": "data_remove_duplicates",
+      "parameters": {
+        "multi_level_deduplication": false,
+        "columns": "Contact Name,Address 1,City,State",
+        "keep": "first",
+        "smart_matching": true,
+        "address_columns": "Address 1"
+      },
+      "order": 6,
+      "enabled": true,
+      "description": "Step 7: Remove duplicate addresses using smart matching (PKWY=PARKWAY, ST=STREET)",
+      "editable": true,
+      "required": true
+    },
+    {
+      "operation_id": "data_reorder_columns",
+      "parameters": {
+        "column_order": [
+          "Customer #",
+          "Segment",
+          "Contact Name",
+          "First Name",
+          "Last Name",
+          "Job Title",
+          "Title Rank",
+          "Hospital Name",
+          "Address 1",
+          "Address 2",
+          "City",
+          "State",
+          "Zip",
+          "Phone",
+          "Email"
+        ],
+        "keep_unlisted": true
+      },
+      "order": 7,
+      "enabled": true,
+      "description": "Step 8: Reorder columns to standard format",
+      "editable": true,
+      "required": true
+    }
+  ],
+  "created_at": "2025-01-31T00:00:00Z",
+  "updated_at": "2025-01-31T00:00:00Z",
+  "author": "system",
+  "usage_count": 0,
+  "is_system": true,
+  "expected_output": {
+    "columns": 15,
+    "column_names": [
+      "Customer #",
+      "Segment",
+      "Contact Name",
+      "First Name",
+      "Last Name",
+      "Job Title",
+      "Title Rank",
+      "Hospital Name",
+      "Address 1",
+      "Address 2",
+      "City",
+      "State",
+      "Zip",
+      "Phone",
+      "Email"
+    ],
+    "filters_applied": [
+      "Customer numbers standardized (8 digits padded)",
+      "Segment numbers standardized (2 digits padded)",
+      "Suite/unit info extracted to Address 2",
+      "Only highest-ranking contact per location kept",
+      "Duplicate addresses removed with smart matching",
+      "Title ranks added for verification"
+    ]
+  },
+  "notes": "This preset cleans Definitive Healthcare contact lists (NURSES_250_HOSP_ONLY.csv format) by standardizing customer identifiers, deduplicating by location while keeping highest-authority contacts, and applying smart address matching to catch semantic duplicates. Expected significant row reduction due to keeping only best contact per facility."
+}
