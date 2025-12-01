@@ -810,6 +810,170 @@ class BatchRenameColumnsOperation(BaseOperation):
         return df
 
 
+class StandardizeCustomerNumbersOperation(BaseOperation):
+    """
+    Standardize customer numbers and segments to company format.
+
+    Company Standard:
+    - Customer Number: 8 digits with leading zeros (e.g., 00005164)
+    - Segment: 2 digits with leading zeros (e.g., 06, or 00 if blank)
+    """
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='text_standardize_customer_numbers',
+            name='Standardize Customer Numbers',
+            category='Text',
+            description='Pad customer numbers (8 digits) and segments (2 digits) with leading zeros',
+            parameters=[
+                Parameter(
+                    name='customer_number_column',
+                    type='column',
+                    description='Customer Number column (will be padded to 8 digits)'
+                ),
+                Parameter(
+                    name='segment_column',
+                    type='column',
+                    description='Segment column (will be padded to 2 digits)'
+                ),
+                Parameter(
+                    name='customer_length',
+                    type='number',
+                    description='Customer number length (default: 8)',
+                    required=False,
+                    default=8
+                ),
+                Parameter(
+                    name='segment_length',
+                    type='number',
+                    description='Segment length (default: 2)',
+                    required=False,
+                    default=2
+                ),
+                Parameter(
+                    name='blank_segment_value',
+                    type='text',
+                    description='Value for blank segments (default: "00")',
+                    required=False,
+                    default='00'
+                )
+            ],
+            excel_equivalent='TEXT() function with format codes',
+            examples=[
+                'Pad 5164 → 00005164 (8 digits)',
+                'Pad segment 6 → 06 (2 digits)',
+                'Blank segment → 00',
+                'Already correct: 00005164 → 00005164 (unchanged)'
+            ],
+            tags=['customer', 'number', 'pad', 'zeros', 'format', 'standardize']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        """
+        Standardize customer numbers and segments with leading zeros.
+
+        Args:
+            df: Input dataframe
+            params: {
+                'customer_number_column': str,
+                'segment_column': str,
+                'customer_length': int (default 8),
+                'segment_length': int (default 2),
+                'blank_segment_value': str (default '00')
+            }
+
+        Returns:
+            Dataframe with standardized customer numbers and segments
+        """
+        df = df.copy()
+
+        customer_col = params.get('customer_number_column')
+        segment_col = params.get('segment_column')
+        customer_length = int(params.get('customer_length', 8))
+        segment_length = int(params.get('segment_length', 2))
+        blank_segment_value = params.get('blank_segment_value', '00')
+
+        # Validate columns exist
+        if customer_col not in df.columns:
+            raise ValueError(f"Customer number column '{customer_col}' not found")
+        if segment_col not in df.columns:
+            raise ValueError(f"Segment column '{segment_col}' not found")
+
+        # Standardize Customer Numbers
+        df[customer_col] = df[customer_col].apply(
+            lambda x: self._pad_with_zeros(x, customer_length)
+        )
+
+        # Standardize Segments (handle blanks specially)
+        df[segment_col] = df[segment_col].apply(
+            lambda x: self._pad_segment(x, segment_length, blank_segment_value)
+        )
+
+        return df
+
+    def _pad_with_zeros(self, value, length):
+        """
+        Pad a number with leading zeros to specified length.
+
+        Args:
+            value: Number or string to pad
+            length: Target length
+
+        Returns:
+            String padded with leading zeros
+        """
+        # Handle NaN/None
+        if pd.isna(value):
+            return '0' * length
+
+        # Convert to string and remove any decimals
+        value_str = str(value).strip()
+
+        # Remove decimal point if present (e.g., "5164.0" → "5164")
+        if '.' in value_str:
+            value_str = value_str.split('.')[0]
+
+        # Remove any non-digit characters except leading minus
+        if value_str.startswith('-'):
+            sign = '-'
+            value_str = value_str[1:]
+        else:
+            sign = ''
+
+        # Keep only digits
+        value_str = ''.join(c for c in value_str if c.isdigit())
+
+        # If empty after cleaning, return zeros
+        if not value_str:
+            return '0' * length
+
+        # Pad with leading zeros
+        padded = value_str.zfill(length)
+
+        # If result is longer than target (value already longer), return as-is
+        # This preserves data integrity
+        return sign + padded
+
+    def _pad_segment(self, value, length, blank_value):
+        """
+        Pad segment with leading zeros, treating blanks specially.
+
+        Args:
+            value: Segment number or blank
+            length: Target length (default 2)
+            blank_value: Value to use for blanks (default '00')
+
+        Returns:
+            String padded with leading zeros, or blank_value if empty
+        """
+        # Handle NaN/None/empty as blank segment (00)
+        if pd.isna(value) or str(value).strip() == '':
+            return blank_value
+
+        # Use standard padding for non-blank values
+        return self._pad_with_zeros(value, length)
+
+
 # Register all text operations
 registry.register(UppercaseOperation())
 registry.register(LowercaseOperation())
@@ -827,3 +991,4 @@ registry.register(PhoneFormatterOperation())
 registry.register(LenOperation())
 registry.register(RenameColumnOperation())
 registry.register(BatchRenameColumnsOperation())
+registry.register(StandardizeCustomerNumbersOperation())
