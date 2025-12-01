@@ -915,6 +915,172 @@ class SetHeaderRowOperation(BaseOperation):
         return new_df
 
 
+class KeepBestContactPerLocationOperation(BaseOperation):
+    """
+    Keep only the highest-ranking contact per location.
+
+    Groups contacts by location (hospital/facility) and keeps only the contact
+    with the highest-ranking title (CEO > Director > Manager > Supervisor > Clinical).
+    """
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='data_keep_best_contact_per_location',
+            name='Keep Best Contact Per Location',
+            category='Data Matching',
+            description='Keep only the highest-ranking contact per location (deduplicates by facility, prioritizing executives/directors over managers/clinical staff)',
+            parameters=[
+                Parameter(
+                    name='location_columns',
+                    type='text',
+                    description='Location identifier columns (comma-separated, e.g., "Hospital Name,Address,City")',
+                    required=True,
+                    default='Hospital Name,Address'
+                ),
+                Parameter(
+                    name='title_column',
+                    type='column',
+                    description='Column containing job titles',
+                    required=True
+                ),
+                Parameter(
+                    name='tie_breaker',
+                    type='choice',
+                    description='If multiple contacts have same rank, how to choose',
+                    required=False,
+                    choices=['first', 'last', 'random'],
+                    default='first'
+                ),
+                Parameter(
+                    name='add_rank_column',
+                    type='boolean',
+                    description='Add a column showing the title rank (1=Executive, 2=Director, etc.)',
+                    required=False,
+                    default=False
+                )
+            ],
+            excel_equivalent='Group by Location + Custom Ranking',
+            examples=[
+                'Keep only the CEO per hospital (remove managers/nurses)',
+                'Deduplicate facility contacts, prioritizing executives',
+                'Get highest-authority contact for each location'
+            ],
+            tags=['dedupe', 'rank', 'title', 'healthcare', 'contacts', 'location']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        """
+        Keep best contact per location based on title ranking.
+
+        Args:
+            df: Input dataframe
+            params: {
+                'location_columns': comma-separated column names,
+                'title_column': column with job titles,
+                'tie_breaker': 'first', 'last', or 'random',
+                'add_rank_column': bool
+            }
+
+        Returns:
+            Dataframe with only highest-ranked contact per location
+        """
+        from utils.title_ranker import HealthcareTitleRanker
+
+        location_cols_str = params.get('location_columns', '')
+        title_column = params.get('title_column')
+        tie_breaker = params.get('tie_breaker', 'first')
+        add_rank_column = params.get('add_rank_column', False)
+
+        # Parse location columns
+        if not location_cols_str or not location_cols_str.strip():
+            raise ValueError("Location columns are required")
+
+        location_columns = [col.strip() for col in location_cols_str.split(',')]
+
+        # Validate columns exist
+        for col in location_columns:
+            if col not in df.columns:
+                raise ValueError(f"Location column '{col}' not found")
+
+        if title_column not in df.columns:
+            raise ValueError(f"Title column '{title_column}' not found")
+
+        # Make a copy
+        df = df.copy()
+
+        # Add rank column
+        df['_title_rank'] = df[title_column].apply(HealthcareTitleRanker.get_rank_number)
+
+        if add_rank_column:
+            df['Title Rank'] = df[title_column].apply(HealthcareTitleRanker.get_rank_name)
+
+        # Sort by location + rank (ascending, so rank 1 comes first)
+        sort_columns = location_columns + ['_title_rank']
+        df_sorted = df.sort_values(by=sort_columns, ascending=True)
+
+        # Keep first (best rank) per location
+        if tie_breaker == 'first':
+            result_df = df_sorted.drop_duplicates(subset=location_columns, keep='first')
+        elif tie_breaker == 'last':
+            result_df = df_sorted.drop_duplicates(subset=location_columns, keep='last')
+        else:  # random
+            # Group and sample one per group
+            result_df = df_sorted.groupby(location_columns, as_index=False).sample(n=1)
+
+        # Remove temporary rank column
+        result_df = result_df.drop(columns=['_title_rank'])
+
+        # Reset index
+        result_df.reset_index(drop=True, inplace=True)
+
+        return result_df
+
+
+class AnalyzeTitleRanksOperation(BaseOperation):
+    """Add title rank columns for analysis"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='data_analyze_title_ranks',
+            name='Analyze Title Rankings',
+            category='Analysis',
+            description='Add columns showing title rank number and category (for verification)',
+            parameters=[
+                Parameter(
+                    name='title_column',
+                    type='column',
+                    description='Column containing job titles',
+                    required=True
+                )
+            ],
+            excel_equivalent='Helper function',
+            examples=[
+                'Show rank distribution before deduplication',
+                'Verify title ranking logic',
+                'Debug contact selection'
+            ],
+            tags=['analysis', 'rank', 'title', 'debug', 'healthcare']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        """Add rank columns"""
+        from utils.title_ranker import HealthcareTitleRanker
+
+        title_column = params.get('title_column')
+
+        if title_column not in df.columns:
+            raise ValueError(f"Title column '{title_column}' not found")
+
+        # Make a copy
+        df = df.copy()
+
+        # Add rank columns
+        df['Title Rank Number'] = df[title_column].apply(HealthcareTitleRanker.get_rank_number)
+        df['Title Rank Category'] = df[title_column].apply(HealthcareTitleRanker.get_rank_name)
+
+        return df
+
+
 # Register all operations
 registry.register(VLookupOperation())
 registry.register(RemoveDuplicatesOperation())
@@ -922,3 +1088,5 @@ registry.register(SortDataOperation())
 registry.register(RemoveRowsIfOperation())
 registry.register(ReorderColumnsOperation())
 registry.register(SetHeaderRowOperation())
+registry.register(KeepBestContactPerLocationOperation())
+registry.register(AnalyzeTitleRanksOperation())
