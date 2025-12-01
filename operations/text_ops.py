@@ -765,13 +765,14 @@ class BatchRenameColumnsOperation(BaseOperation):
             id='text_rename_batch',
             name='Rename Multiple Columns',
             category='Text - Basic',
-            description='Rename multiple columns at once using a mapping dictionary',
+            description='Rename multiple columns at once with an intuitive interface',
             parameters=[
                 Parameter(
-                    name='mappings',
-                    type='dict',
-                    description='Dictionary of old_name: new_name mappings',
-                    required=True
+                    name='column_mappings',
+                    type='column_rename_list',
+                    description='Column rename mappings',
+                    required=True,
+                    default=[]
                 )
             ],
             excel_equivalent='Right-click columns > Rename (multiple times)',
@@ -785,10 +786,37 @@ class BatchRenameColumnsOperation(BaseOperation):
 
     def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
         df = df.copy()
-        mappings = params['mappings']
 
-        if not isinstance(mappings, dict):
-            raise ValueError("mappings parameter must be a dictionary")
+        # Support both old dict format and new list format for backwards compatibility
+        if 'column_mappings' in params:
+            # New format: list of {old_name, new_name} dicts
+            column_mappings = params['column_mappings']
+
+            if not isinstance(column_mappings, list):
+                raise ValueError("column_mappings parameter must be a list")
+
+            # Convert to dict format
+            mappings = {}
+            for mapping in column_mappings:
+                old_name = mapping.get('old_name', '').strip()
+                new_name = mapping.get('new_name', '').strip()
+
+                if not old_name or not new_name:
+                    continue
+
+                mappings[old_name] = new_name
+
+        elif 'mappings' in params:
+            # Old format: dict (for backwards compatibility)
+            mappings = params['mappings']
+
+            if not isinstance(mappings, dict):
+                raise ValueError("mappings parameter must be a dictionary")
+        else:
+            raise ValueError("No column mappings provided")
+
+        if not mappings:
+            raise ValueError("No valid column mappings provided")
 
         # Validate all old columns exist
         missing_columns = [old_name for old_name in mappings.keys() if old_name not in df.columns]
