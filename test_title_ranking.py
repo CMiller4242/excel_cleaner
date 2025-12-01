@@ -175,6 +175,18 @@ def test_keep_best_contact():
     print(f"\nTotal rows: {len(result)}")
     print(f"Rows removed: {len(df) - len(result)}")
 
+    # Check for removed rows tracking
+    print("\n" + "=" * 80)
+    print("REMOVED ROWS TRACKING:")
+    print("-" * 80)
+    if hasattr(result, 'attrs') and 'removed_rows' in result.attrs:
+        removed_df = result.attrs['removed_rows']
+        print(f"Removed rows tracked: {len(removed_df)}")
+        print("\nRemoved contacts:")
+        print(removed_df[['Hospital Name', 'First Name', 'Last Name', 'Job Title', '_removal_reason']].to_string(index=False))
+    else:
+        print("⚠️  WARNING: No removed rows metadata found")
+
     # Verify results
     print("\n" + "=" * 80)
     print("VERIFICATION:")
@@ -202,6 +214,12 @@ def test_keep_best_contact():
 
         # Title Rank column added
         ('Title Rank' in result.columns, "Title Rank column added"),
+
+        # Removed rows tracked
+        (hasattr(result, 'attrs') and 'removed_rows' in result.attrs, "Removed rows tracked in metadata"),
+
+        # Correct number of removed rows
+        (hasattr(result, 'attrs') and result.attrs.get('removed_count', 0) == 6, "Correct number removed (6)"),
     ]
 
     all_checks_passed = True

@@ -948,7 +948,7 @@ class KeepBestContactPerLocationOperation(BaseOperation):
                     type='choice',
                     description='If multiple contacts have same rank, how to choose',
                     required=False,
-                    choices=['first', 'last', 'random'],
+                    choices=['first', 'last'],
                     default='first'
                 ),
                 Parameter(
@@ -956,7 +956,7 @@ class KeepBestContactPerLocationOperation(BaseOperation):
                     type='boolean',
                     description='Add a column showing the title rank (1=Executive, 2=Director, etc.)',
                     required=False,
-                    default=False
+                    default=True
                 )
             ],
             excel_equivalent='Group by Location + Custom Ranking',
@@ -971,25 +971,27 @@ class KeepBestContactPerLocationOperation(BaseOperation):
     def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
         """
         Keep best contact per location based on title ranking.
+        REMOVES all lower-ranked contacts and tracks them.
 
         Args:
             df: Input dataframe
             params: {
                 'location_columns': comma-separated column names,
                 'title_column': column with job titles,
-                'tie_breaker': 'first', 'last', or 'random',
+                'tie_breaker': 'first' or 'last',
                 'add_rank_column': bool
             }
 
         Returns:
-            Dataframe with only highest-ranked contact per location
+            Dataframe with ONLY highest-ranked contact per location
         """
+        import sys
         from utils.title_ranker import HealthcareTitleRanker
 
         location_cols_str = params.get('location_columns', '')
         title_column = params.get('title_column')
         tie_breaker = params.get('tie_breaker', 'first')
-        add_rank_column = params.get('add_rank_column', False)
+        add_rank_column = params.get('add_rank_column', True)
 
         # Parse location columns
         if not location_cols_str or not location_cols_str.strip():
@@ -1005,35 +1007,124 @@ class KeepBestContactPerLocationOperation(BaseOperation):
         if title_column not in df.columns:
             raise ValueError(f"Title column '{title_column}' not found")
 
-        # Make a copy
-        df = df.copy()
+        # Create a copy to work with
+        df_work = df.copy()
 
-        # Add rank column
-        df['_title_rank'] = df[title_column].apply(HealthcareTitleRanker.get_rank_number)
+        print(f"\n{'='*80}", file=sys.stderr)
+        print(f"KEEP BEST CONTACT PER LOCATION OPERATION", file=sys.stderr)
+        print(f"{'='*80}", file=sys.stderr)
+        print(f"Input rows: {len(df_work)}", file=sys.stderr)
+        print(f"Location columns: {location_columns}", file=sys.stderr)
+        print(f"Title column: {title_column}", file=sys.stderr)
+        print(f"Tie breaker: {tie_breaker}", file=sys.stderr)
 
+        # Add rank columns
+        df_work['_rank_number'] = df_work[title_column].apply(HealthcareTitleRanker.get_rank_number)
+        df_work['_rank_category'] = df_work[title_column].apply(HealthcareTitleRanker.get_rank_name)
+
+        # Add original index to track which rows are kept/removed
+        df_work['_original_index'] = df_work.index
+
+        # Sort by location columns + rank number (lower rank = higher priority)
+        sort_by = location_columns + ['_rank_number']
+        df_sorted = df_work.sort_values(by=sort_by, ascending=True)
+
+        print(f"\nAfter ranking and sorting:", file=sys.stderr)
+        print(f"  Sorted rows: {len(df_sorted)}", file=sys.stderr)
+
+        # Count unique locations before deduplication
+        unique_locations_before = df_sorted.drop_duplicates(subset=location_columns).shape[0]
+        print(f"  Unique locations: {unique_locations_before}", file=sys.stderr)
+
+        # Keep only the FIRST (best ranked) contact per location group
+        df_kept = df_sorted.drop_duplicates(subset=location_columns, keep=tie_breaker)
+
+        print(f"\nAfter drop_duplicates:", file=sys.stderr)
+        print(f"  Kept rows: {len(df_kept)}", file=sys.stderr)
+        print(f"  Removed rows: {len(df_sorted) - len(df_kept)}", file=sys.stderr)
+
+        # Get list of removed indices
+        kept_indices = set(df_kept['_original_index'].values)
+        all_indices = set(df_work['_original_index'].values)
+        removed_indices = all_indices - kept_indices
+
+        # Create removed dataframe for tracking
+        df_removed = df_work[df_work['_original_index'].isin(removed_indices)].copy()
+
+        print(f"\nRemoved contacts breakdown:", file=sys.stderr)
+        if len(df_removed) > 0:
+            rank_counts = df_removed['_rank_category'].value_counts()
+            for rank, count in rank_counts.items():
+                print(f"  {rank}: {count} contacts", file=sys.stderr)
+
+            # Add removal reason to removed rows
+            df_removed['_removal_reason'] = df_removed.apply(
+                lambda row: self._create_removal_reason(row, location_columns, df_kept),
+                axis=1
+            )
+
+        # Prepare result dataframe
+        result_df = df_kept.copy()
+
+        # Add rank column if requested
         if add_rank_column:
-            df['Title Rank'] = df[title_column].apply(HealthcareTitleRanker.get_rank_name)
+            result_df['Title Rank'] = result_df['_rank_category']
 
-        # Sort by location + rank (ascending, so rank 1 comes first)
-        sort_columns = location_columns + ['_title_rank']
-        df_sorted = df.sort_values(by=sort_columns, ascending=True)
-
-        # Keep first (best rank) per location
-        if tie_breaker == 'first':
-            result_df = df_sorted.drop_duplicates(subset=location_columns, keep='first')
-        elif tie_breaker == 'last':
-            result_df = df_sorted.drop_duplicates(subset=location_columns, keep='last')
-        else:  # random
-            # Group and sample one per group
-            result_df = df_sorted.groupby(location_columns, as_index=False).sample(n=1)
-
-        # Remove temporary rank column
-        result_df = result_df.drop(columns=['_title_rank'])
+        # Clean up temporary columns
+        result_df = result_df.drop(columns=['_rank_number', '_rank_category', '_original_index'])
 
         # Reset index
         result_df.reset_index(drop=True, inplace=True)
 
+        # CRITICAL: Attach removed rows metadata for UI to display
+        if len(df_removed) > 0:
+            # Clean up removed dataframe
+            df_removed_clean = df_removed.drop(columns=['_rank_number', '_rank_category', '_original_index'])
+
+            # Store removed rows in result metadata
+            result_df.attrs['removed_rows'] = df_removed_clean
+            result_df.attrs['removed_count'] = len(df_removed_clean)
+            result_df.attrs['removal_operation'] = 'Keep Best Contact Per Location'
+
+            print(f"\nStored {len(df_removed_clean)} removed rows in result metadata", file=sys.stderr)
+
+        print(f"\nFinal result: {len(result_df)} rows", file=sys.stderr)
+        print(f"{'='*80}\n", file=sys.stderr)
+
         return result_df
+
+    def _create_removal_reason(self, row, location_columns, df_kept):
+        """
+        Create a descriptive reason for why this contact was removed.
+
+        Args:
+            row: The removed row
+            location_columns: Columns that define location
+            df_kept: Dataframe of kept contacts
+
+        Returns:
+            String explaining removal reason
+        """
+        import pandas as pd
+
+        # Find the kept contact for this location
+        location_values = {col: row[col] for col in location_columns}
+
+        # Find matching location in kept dataframe
+        mask = pd.Series([True] * len(df_kept))
+        for col, val in location_values.items():
+            mask &= (df_kept[col] == val)
+
+        kept_contact = df_kept[mask]
+
+        if len(kept_contact) > 0:
+            kept_row = kept_contact.iloc[0]
+            kept_rank = kept_row['_rank_category']
+            removed_rank = row['_rank_category']
+
+            return f"Lower rank ({removed_rank}) - Kept higher-ranking contact ({kept_rank})"
+        else:
+            return "Duplicate location - lower priority"
 
 
 class AnalyzeTitleRanksOperation(BaseOperation):
