@@ -1002,6 +1002,181 @@ class StandardizeCustomerNumbersOperation(BaseOperation):
         return self._pad_with_zeros(value, length)
 
 
+class StandardizePhoneNumbersOperation(BaseOperation):
+    """
+    Standardize phone numbers by removing formatting and applying consistent format.
+
+    Handles various input formats:
+    - Periods: 386.917.5481 → 3869175481
+    - Dashes: 941-766-4125 → 9417664125
+    - Parentheses: (256) 429-4000 → 2564294000
+    - Spaces: 256 429 4000 → 2564294000
+    - Mixed: (256) 429.4000 → 2564294000
+    """
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='text_standardize_phone_numbers',
+            name='Standardize Phone Numbers',
+            category='Text',
+            description='Clean and format phone numbers consistently (remove periods, dashes, spaces, parentheses)',
+            parameters=[
+                Parameter(
+                    name='phone_column',
+                    type='column',
+                    description='Column containing phone numbers',
+                    required=True
+                ),
+                Parameter(
+                    name='output_format',
+                    type='choice',
+                    description='Output format',
+                    required=True,
+                    choices=[
+                        'Digits Only (2564294000)',
+                        'US Format (256) 429-4000',
+                        'US Format with Dashes (256-429-4000)',
+                        'International +1 (256) 429-4000'
+                    ],
+                    default='Digits Only (2564294000)'
+                ),
+                Parameter(
+                    name='handle_extensions',
+                    type='boolean',
+                    description='Preserve extensions (e.g., "x123", "ext 123")',
+                    required=False,
+                    default=False
+                ),
+                Parameter(
+                    name='remove_country_code',
+                    type='boolean',
+                    description='Remove country code (e.g., +1, 1) from start',
+                    required=False,
+                    default=True
+                ),
+                Parameter(
+                    name='validate_length',
+                    type='boolean',
+                    description='Add validation column marking invalid phone numbers (not 10 digits)',
+                    required=False,
+                    default=False
+                )
+            ],
+            excel_equivalent='Find & Replace + Text formatting',
+            examples=[
+                '386.917.5481 → 3869175481',
+                '(256) 429-4000 → 2564294000',
+                '256-429-4000 → 2564294000',
+                '+1 (256) 429-4000 → 2564294000',
+                '256 429 4000 → 2564294000'
+            ],
+            tags=['phone', 'format', 'standardize', 'clean', 'numbers']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        """
+        Standardize phone numbers in specified column.
+
+        Args:
+            df: Input dataframe
+            params: Operation parameters
+
+        Returns:
+            Dataframe with standardized phone numbers
+        """
+        df = df.copy()
+
+        phone_column = params.get('phone_column')
+        output_format = params.get('output_format', 'Digits Only (2564294000)')
+        handle_extensions = params.get('handle_extensions', False)
+        remove_country_code = params.get('remove_country_code', True)
+        validate_length = params.get('validate_length', False)
+
+        if phone_column not in df.columns:
+            raise ValueError(f"Phone column '{phone_column}' not found")
+
+        # Apply standardization
+        df[phone_column] = df[phone_column].apply(
+            lambda x: self._standardize_phone(
+                x,
+                output_format,
+                handle_extensions,
+                remove_country_code
+            )
+        )
+
+        # Add validation column if requested
+        if validate_length:
+            df['_Phone_Valid'] = df[phone_column].apply(self._is_valid_phone)
+
+        return df
+
+    def _standardize_phone(self, phone, output_format, handle_extensions, remove_country_code):
+        """
+        Standardize a single phone number.
+
+        Args:
+            phone: Phone number string
+            output_format: Desired output format
+            handle_extensions: Whether to preserve extensions
+            remove_country_code: Whether to remove +1 or 1 prefix
+
+        Returns:
+            Standardized phone number string
+        """
+        if pd.isna(phone) or not phone:
+            return ""
+
+        phone_str = str(phone).strip()
+
+        # Extract extension if present
+        extension = ""
+        if handle_extensions:
+            ext_match = re.search(r'(x|ext|extension)[\s:.]?(\d+)', phone_str, re.IGNORECASE)
+            if ext_match:
+                extension = f" x{ext_match.group(2)}"
+                # Remove extension from phone string
+                phone_str = phone_str[:ext_match.start()].strip()
+
+        # Remove all non-digit characters
+        digits = re.sub(r'\D', '', phone_str)
+
+        # Remove country code if present (1 at start)
+        if remove_country_code:
+            if digits.startswith('1') and len(digits) == 11:
+                digits = digits[1:]  # Remove leading 1
+
+        # Handle invalid lengths
+        if len(digits) != 10:
+            # Return as-is if not 10 digits
+            return phone_str + extension
+
+        # Format based on output_format
+        if output_format == 'Digits Only (2564294000)':
+            return digits + extension
+
+        elif output_format == 'US Format (256) 429-4000':
+            return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}" + extension
+
+        elif output_format == 'US Format with Dashes (256-429-4000)':
+            return f"{digits[:3]}-{digits[3:6]}-{digits[6:]}" + extension
+
+        elif output_format == 'International +1 (256) 429-4000':
+            return f"+1 ({digits[:3]}) {digits[3:6]}-{digits[6:]}" + extension
+
+        else:
+            # Default: digits only
+            return digits + extension
+
+    def _is_valid_phone(self, phone):
+        """Check if phone number is valid (10 digits)"""
+        if pd.isna(phone) or not phone:
+            return False
+
+        digits = re.sub(r'\D', '', str(phone))
+        return len(digits) == 10
+
+
 # Register all text operations
 registry.register(UppercaseOperation())
 registry.register(LowercaseOperation())
@@ -1020,3 +1195,4 @@ registry.register(LenOperation())
 registry.register(RenameColumnOperation())
 registry.register(BatchRenameColumnsOperation())
 registry.register(StandardizeCustomerNumbersOperation())
+registry.register(StandardizePhoneNumbersOperation())
