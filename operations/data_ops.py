@@ -84,14 +84,27 @@ class VLookupOperation(BaseOperation):
 
 
 class RemoveDuplicatesOperation(BaseOperation):
-    """Remove duplicate rows"""
-    
+    """Remove duplicate rows with optional smart matching"""
+
     def get_metadata(self) -> OperationMetadata:
         return OperationMetadata(
             id='data_remove_duplicates',
             name='Remove Duplicate Rows',
             category='Data Matching',
-            description='Remove duplicate records based on one or more columns',
+            description='''Remove duplicate records based on one or more columns.
+
+SMART MATCHING (when enabled):
+- Normalizes addresses: "PKWY"→"PARKWAY", "ST"→"STREET", "AVE"→"AVENUE"
+- Removes extra spaces and punctuation
+- Case-insensitive comparison
+- Detects semantic duplicates that exact matching would miss
+
+Example without smart matching:
+  "2000 PEPPERELL PKWY" ≠ "2000 PEPPERELL PARKWAY" (kept as separate)
+
+Example with smart matching:
+  "2000 PEPPERELL PKWY" = "2000 PEPPERELL PARKWAY" (duplicate removed)
+''',
             parameters=[
                 Parameter(
                     name='multi_level_deduplication',
@@ -111,6 +124,20 @@ class RemoveDuplicatesOperation(BaseOperation):
                     description='Which duplicate to keep',
                     choices=['first', 'last'],
                     default='first'
+                ),
+                Parameter(
+                    name='smart_matching',
+                    type='boolean',
+                    description='Enable smart matching (normalizes addresses and text for better duplicate detection)',
+                    required=False,
+                    default=False
+                ),
+                Parameter(
+                    name='address_columns',
+                    type='text',
+                    description='Address columns to normalize (comma-separated, e.g., "Address 1,Address 2"). Only used if smart matching is enabled.',
+                    required=False,
+                    default=''
                 )
             ],
             excel_equivalent='Remove Duplicates',
@@ -118,16 +145,25 @@ class RemoveDuplicatesOperation(BaseOperation):
                 'Remove duplicate customers by Customer ID',
                 'Remove duplicate emails from contact list',
                 'Keep only unique product codes',
-                'Smart deduplication: by email, then by name+address, then by name+phone'
+                'Smart deduplication: by email, then by name+address, then by name+phone',
+                'Smart matching: "2000 PEPPERELL PKWY" = "2000 PEPPERELL PARKWAY"'
             ],
             tags=['duplicates', 'unique', 'dedupe', 'remove']
         )
-    
+
     def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
         import sys
 
         keep = self.get_param_value(params, 'keep', 'first')
         multi_level = self.get_param_value(params, 'multi_level_deduplication', True)
+        smart_matching = self.get_param_value(params, 'smart_matching', False)
+        address_columns_str = self.get_param_value(params, 'address_columns', '')
+
+        # Parse address columns
+        if address_columns_str and address_columns_str.strip():
+            address_columns = [col.strip() for col in address_columns_str.split(',')]
+        else:
+            address_columns = []
 
         # DEBUG: Log parameter values
         print(f"\n{'='*80}", file=sys.stderr)
@@ -137,7 +173,58 @@ class RemoveDuplicatesOperation(BaseOperation):
         print(f"Parameters:", file=sys.stderr)
         print(f"  keep: {keep}", file=sys.stderr)
         print(f"  multi_level_deduplication: {multi_level} (type: {type(multi_level)})", file=sys.stderr)
+        print(f"  smart_matching: {smart_matching}", file=sys.stderr)
+        print(f"  address_columns: {address_columns}", file=sys.stderr)
         print(f"  columns: {params.get('columns', [])}", file=sys.stderr)
+
+        # If smart matching is enabled, normalize columns first
+        if smart_matching:
+            print(f"\n→ Using SMART MATCHING", file=sys.stderr)
+            from utils.address_normalizer import AddressNormalizer, TextNormalizer
+
+            df_work = df.copy()
+
+            # Determine which columns to check for duplicates
+            if multi_level:
+                # For multi-level, we need to normalize the specific columns used
+                columns_to_normalize = []
+                email_col = 'Email Address'
+                name_cols = ['First Name', 'Last Name']
+                address_cols = ['Person Street', 'Person City', 'Person State']
+                phone_col = 'Direct Phone Number'
+
+                # Check if these columns exist
+                if email_col in df.columns:
+                    columns_to_normalize.append(email_col)
+                columns_to_normalize.extend([col for col in name_cols if col in df.columns])
+                columns_to_normalize.extend([col for col in address_cols if col in df.columns])
+                if phone_col in df.columns:
+                    columns_to_normalize.append(phone_col)
+            else:
+                columns_param = params.get('columns', [])
+                columns_to_normalize = columns_param if columns_param else df.columns.tolist()
+
+            # Normalize columns
+            for col in columns_to_normalize:
+                # Check if this column should be treated as an address
+                is_address_col = (col in address_columns or
+                                any(addr_hint in col.lower() for addr_hint in ['address', 'street', 'ave', 'road']))
+
+                if is_address_col:
+                    print(f"  Normalizing address column: {col}", file=sys.stderr)
+                    df_work[f'_normalized_{col}'] = AddressNormalizer.normalize_dataframe_column(df[col])
+                else:
+                    print(f"  Normalizing text column: {col}", file=sys.stderr)
+                    df_work[f'_normalized_{col}'] = df[col].apply(TextNormalizer.normalize)
+
+            # Now perform deduplication on normalized columns
+            if multi_level:
+                result = self._execute_multi_level_smart(df_work, df, keep, sys)
+            else:
+                result = self._execute_standard_smart(df_work, df, params, keep, columns_to_normalize, sys)
+
+            print(f"{'='*80}\n", file=sys.stderr)
+            return result
 
         # If multi-level deduplication is not enabled, use standard logic
         if not multi_level:
@@ -151,7 +238,7 @@ class RemoveDuplicatesOperation(BaseOperation):
             print(f"{'='*80}\n", file=sys.stderr)
             return result
 
-        # Multi-level deduplication logic
+        # Multi-level deduplication logic (existing code)
         print(f"\n→ Using MULTI-LEVEL deduplication", file=sys.stderr)
 
         # Define required columns
@@ -271,6 +358,136 @@ class RemoveDuplicatesOperation(BaseOperation):
             print(f"  ⚠️  No groups had data, returning empty dataframe", file=sys.stderr)
             print(f"{'='*80}\n", file=sys.stderr)
             return df.iloc[:0].copy()
+
+    def _execute_standard_smart(self, df_work, df_original, params, keep, columns_to_normalize, sys):
+        """Execute standard deduplication with smart matching"""
+        print(f"\n→ Standard deduplication with smart matching", file=sys.stderr)
+
+        # Use normalized columns for deduplication
+        normalized_cols = [f'_normalized_{col}' for col in columns_to_normalize]
+        print(f"  Deduplicating by normalized columns: {normalized_cols}", file=sys.stderr)
+
+        # Find duplicates based on normalized columns
+        mask = df_work.duplicated(subset=normalized_cols, keep=keep)
+
+        # Return original rows that are not duplicates
+        result = df_original[~mask].copy()
+        print(f"  Result: {len(result)} rows (removed {len(df_original) - len(result)} duplicates)", file=sys.stderr)
+
+        return result
+
+    def _execute_multi_level_smart(self, df_work, df_original, keep, sys):
+        """Execute multi-level deduplication with smart matching"""
+        print(f"\n→ Multi-level deduplication with smart matching", file=sys.stderr)
+
+        # Define required columns (normalized versions)
+        email_col = '_normalized_Email Address'
+        name_cols = ['_normalized_First Name', '_normalized_Last Name']
+        address_cols = ['_normalized_Person Street', '_normalized_Person City', '_normalized_Person State']
+        phone_col = '_normalized_Direct Phone Number'
+
+        # Check if normalized columns exist
+        all_required_norm_cols = [email_col] + name_cols + address_cols + [phone_col]
+        missing_norm_cols = [col for col in all_required_norm_cols if col not in df_work.columns]
+
+        if missing_norm_cols:
+            print(f"  ⚠️  Missing normalized columns: {missing_norm_cols}", file=sys.stderr)
+            print(f"  Falling back to standard smart deduplication", file=sys.stderr)
+            # Use all normalized columns
+            norm_cols = [col for col in df_work.columns if col.startswith('_normalized_')]
+            mask = df_work.duplicated(subset=norm_cols, keep=keep)
+            result = df_original[~mask].copy()
+            print(f"  Result: {len(result)} rows (removed {len(df_original) - len(result)} duplicates)", file=sys.stderr)
+            return result
+
+        # Create masks based on original columns
+        has_email = df_original['Email Address'].notna()
+        no_email = df_original['Email Address'].isna()
+        has_address = df_original['Person Street'].notna()
+        no_address = df_original['Person Street'].isna()
+
+        group1_mask = has_email
+        group2_mask = no_email & has_address
+        group3_mask = no_email & no_address
+
+        print(f"\n  Group breakdown:", file=sys.stderr)
+        print(f"    Level 1 (has email): {group1_mask.sum()} rows", file=sys.stderr)
+        print(f"    Level 2 (no email, has address): {group2_mask.sum()} rows", file=sys.stderr)
+        print(f"    Level 3 (no email, no address): {group3_mask.sum()} rows", file=sys.stderr)
+
+        results = []
+        total_removed = 0
+
+        # Level 1: Deduplicate by normalized email
+        if group1_mask.any():
+            group1_work = df_work[group1_mask]
+            group1_orig = df_original[group1_mask]
+
+            print(f"\n  Level 1: Deduplicating by normalized Email Address", file=sys.stderr)
+            print(f"    Input: {len(group1_orig)} rows", file=sys.stderr)
+
+            mask_dup = group1_work.duplicated(subset=[email_col], keep=keep)
+            group1_deduped = group1_orig[~mask_dup]
+            removed_level1 = len(group1_orig) - len(group1_deduped)
+            total_removed += removed_level1
+
+            print(f"    Output: {len(group1_deduped)} rows", file=sys.stderr)
+            print(f"    Removed: {removed_level1} duplicates", file=sys.stderr)
+
+            results.append(group1_deduped)
+
+        # Level 2: Deduplicate by normalized name + address
+        if group2_mask.any():
+            group2_work = df_work[group2_mask]
+            group2_orig = df_original[group2_mask]
+            dedupe_cols_level2 = name_cols + address_cols
+
+            print(f"\n  Level 2: Deduplicating by normalized Name + Address", file=sys.stderr)
+            print(f"    Input: {len(group2_orig)} rows", file=sys.stderr)
+
+            mask_dup = group2_work.duplicated(subset=dedupe_cols_level2, keep=keep)
+            group2_deduped = group2_orig[~mask_dup]
+            removed_level2 = len(group2_orig) - len(group2_deduped)
+            total_removed += removed_level2
+
+            print(f"    Output: {len(group2_deduped)} rows", file=sys.stderr)
+            print(f"    Removed: {removed_level2} duplicates", file=sys.stderr)
+
+            results.append(group2_deduped)
+
+        # Level 3: Deduplicate by normalized name + phone
+        if group3_mask.any():
+            group3_work = df_work[group3_mask]
+            group3_orig = df_original[group3_mask]
+            dedupe_cols_level3 = name_cols + [phone_col]
+
+            print(f"\n  Level 3: Deduplicating by normalized Name + Phone", file=sys.stderr)
+            print(f"    Input: {len(group3_orig)} rows", file=sys.stderr)
+
+            mask_dup = group3_work.duplicated(subset=dedupe_cols_level3, keep=keep)
+            group3_deduped = group3_orig[~mask_dup]
+            removed_level3 = len(group3_orig) - len(group3_deduped)
+            total_removed += removed_level3
+
+            print(f"    Output: {len(group3_deduped)} rows", file=sys.stderr)
+            print(f"    Removed: {removed_level3} duplicates", file=sys.stderr)
+
+            results.append(group3_deduped)
+
+        # Combine results
+        if results:
+            result_df = pd.concat(results, axis=0)
+            result_df = result_df.sort_index()
+
+            print(f"\n  Final Result:", file=sys.stderr)
+            print(f"    Total input: {len(df_original)} rows", file=sys.stderr)
+            print(f"    Total output: {len(result_df)} rows", file=sys.stderr)
+            print(f"    Total removed: {total_removed} duplicates", file=sys.stderr)
+
+            return result_df
+        else:
+            print(f"  ⚠️  No groups had data, returning empty dataframe", file=sys.stderr)
+            return df_original.iloc[:0].copy()
 
 
 class SortDataOperation(BaseOperation):
