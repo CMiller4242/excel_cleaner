@@ -1231,14 +1231,41 @@ class UniversalExcelToolV2Office365:
                     widget.insert(0, str(current_value))
                 widget.pack(fill='x', pady=2)
                 param_widgets[param.name] = widget
-        
+
+            elif param.type == 'column_rename_list':
+                # Special widget for column renaming with dynamic add/remove rows
+                from ui.widgets.column_rename_widget import ColumnRenameWidget
+
+                # Get current columns for dropdown
+                columns = self.get_column_list_with_letters() if hasattr(self, 'get_column_list_with_letters') else []
+
+                # Create the rename widget
+                widget = ColumnRenameWidget(frame, columns)
+                widget.pack(fill='both', expand=True, pady=2)
+
+                # Pre-fill mappings if in edit mode
+                if current_value and isinstance(current_value, list):
+                    widget.set_mappings(current_value)
+
+                param_widgets[param.name] = widget
+
         def on_add():
+            from ui.widgets.column_rename_widget import ColumnRenameWidget
+
             params = {}
             for param in operation.metadata.parameters:
                 widget = param_widgets.get(param.name)
                 if widget:
                     if isinstance(widget, tk.BooleanVar):
                         params[param.name] = widget.get()
+                    elif isinstance(widget, ColumnRenameWidget):
+                        # Get mappings from the column rename widget
+                        mappings = widget.get_mappings()
+                        if not mappings and param.required:
+                            from tkinter import messagebox
+                            messagebox.showwarning("Missing Mappings", f"{param.description} is required")
+                            return
+                        params[param.name] = mappings
                     elif isinstance(widget, (ttk.Entry, ttk.Combobox)):
                         value = widget.get()
                         if param.type == 'number':
