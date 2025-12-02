@@ -215,8 +215,8 @@ class FirstRunConfigDialog:
         ).pack(anchor=tk.W, pady=(5, 0))
 
         # Buttons
-        button_frame = tk.Frame(self.dialog, padx=30, pady=(0, 30))
-        button_frame.pack(fill=tk.X)
+        button_frame = tk.Frame(self.dialog)
+        button_frame.pack(fill=tk.X, padx=30, pady=(0, 30))
 
         self.test_button = tk.Button(
             button_frame,

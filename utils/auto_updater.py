@@ -256,8 +256,8 @@ class UpdateNotificationDialog:
             ).pack(anchor=tk.W, pady=(0, 10))
 
         # Buttons
-        button_frame = tk.Frame(self.dialog, padx=20, pady=(0, 20))
-        button_frame.pack(fill=tk.X)
+        button_frame = tk.Frame(self.dialog)
+        button_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
 
         tk.Button(
             button_frame,
