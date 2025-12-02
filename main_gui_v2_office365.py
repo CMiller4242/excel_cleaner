@@ -2185,13 +2185,18 @@ class CleanSheetApp:
         about_window.geometry("500x400")
         about_window.resizable(False, False)
         about_window.transient(self.root)
-        about_window.grab_set()
 
         # Center window
         about_window.update_idletasks()
         x = (about_window.winfo_screenwidth() // 2) - (500 // 2)
         y = (about_window.winfo_screenheight() // 2) - (400 // 2)
         about_window.geometry(f"+{x}+{y}")
+
+        # Force dialog to appear
+        about_window.deiconify()
+        about_window.lift()
+        about_window.focus_force()
+        about_window.grab_set()
 
         # Header
         header_frame = tk.Frame(about_window, bg="#0078D4", height=100)
@@ -2334,6 +2339,7 @@ def main():
         # Create temporary root for first-run dialog
         temp_root = tk.Tk()
         temp_root.withdraw()  # Hide the root window
+        temp_root.update()  # Process pending events to ensure window is ready
 
         # Show first-run configuration dialog
         dialog = FirstRunConfigDialog(temp_root)
