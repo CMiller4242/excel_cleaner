@@ -1177,22 +1177,24 @@ class StandardizePhoneNumbersOperation(BaseOperation):
         return len(digits) == 10
 
 
-class StandardizeCustomerNumberSingleOperation(BaseOperation):
+class CleanMailingCustomerDataOperation(BaseOperation):
     """
-    Standardize customer numbers from hyphenated format (XXXXX-YYYYY) to padded format.
+    Clean customer and segment data from mailing list files.
 
-    Takes values like "1726274-639507" or "9609-640231" and:
-    1. Extracts the part BEFORE the hyphen
-    2. Pads to 8 digits with leading zeros
-    3. Returns: "01726274" or "00009609"
+    Processes customer numbers and segment numbers for mailing list standardization:
+    - Customer Number: "1726274-639507" → "01726274" (8 digits, extract before hyphen)
+    - Segment Number: "0" → "00" or "1" → "01" (2 digits, pad existing value)
+
+    This operation is designed for cleaning data from mailing list exports
+    that need standardized customer and segment formatting.
     """
 
     def get_metadata(self) -> OperationMetadata:
         return OperationMetadata(
-            id='text_standardize_customer_number_single',
-            name='Standardize Customer Number (Single Column)',
+            id='text_clean_mailing_customer_data',
+            name='Clean Mailing List Customer Data',
             category='Text',
-            description='Extract customer number from hyphenated format (XXXXX-YYYYY) and pad to 8 digits',
+            description='Clean customer and segment numbers from mailing list files (customer: extract & pad to 8, segment: pad to 2)',
             parameters=[
                 Parameter(
                     name='customer_column',
@@ -1203,63 +1205,98 @@ class StandardizeCustomerNumberSingleOperation(BaseOperation):
                 Parameter(
                     name='customer_length',
                     type='number',
-                    description='Target length for padding (default: 8 digits)',
+                    description='Target length for customer number padding (default: 8 digits)',
                     required=False,
                     default=8
                 ),
                 Parameter(
+                    name='segment_column',
+                    type='column',
+                    description='(Optional) Column containing segment numbers to pad (e.g., "0" → "00")',
+                    required=False
+                ),
+                Parameter(
+                    name='segment_length',
+                    type='number',
+                    description='Target length for segment number padding (default: 2 digits)',
+                    required=False,
+                    default=2
+                ),
+                Parameter(
                     name='handle_non_hyphenated',
                     type='choice',
-                    description='How to handle values without hyphens',
+                    description='How to handle customer numbers without hyphens',
                     required=False,
                     choices=['Pad as-is', 'Mark as error', 'Leave unchanged'],
                     default='Pad as-is'
+                ),
+                Parameter(
+                    name='blank_segments_to_zero',
+                    type='boolean',
+                    description='Convert blank segment values to "00" (if unchecked, keeps blank)',
+                    required=False,
+                    default=False
                 )
             ],
-            excel_equivalent='LEFT() + TEXT() with format codes',
+            excel_equivalent='LEFT() + TEXT() with format codes, multiple columns',
             examples=[
-                '1726274-639507 → 01726274',
-                '4441157-639473 → 04441157',
-                '9609-640231 → 00009609',
-                '1172785-639691 → 01172785'
+                'Customer: "1726274-639507" → "01726274"',
+                'Customer: "9609-640231" → "00009609"',
+                'Segment: "0" → "00"',
+                'Segment: "1" → "01"',
+                'Segment: "31" → "31"'
             ],
-            tags=['customer', 'number', 'extract', 'pad', 'zeros', 'hyphen']
+            tags=['customer', 'mailing', 'segment', 'standardize', 'pad', 'zeros', 'extract', 'hyphen', 'list']
         )
 
     def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
         """
-        Standardize customer numbers from hyphenated format.
+        Clean customer and segment data from mailing list files.
 
         Args:
             df: Input dataframe
             params: {
                 'customer_column': str,
                 'customer_length': int (default 8),
-                'handle_non_hyphenated': str (default 'Pad as-is')
+                'segment_column': str (optional),
+                'segment_length': int (default 2),
+                'handle_non_hyphenated': str (default 'Pad as-is'),
+                'blank_segments_to_zero': bool (default False)
             }
 
         Returns:
-            Dataframe with standardized customer numbers
+            Dataframe with standardized customer and segment numbers
         """
         df = df.copy()
 
         customer_col = params.get('customer_column')
         customer_length = int(params.get('customer_length', 8))
+        segment_col = params.get('segment_column')
+        segment_length = int(params.get('segment_length', 2))
         handle_non_hyphenated = params.get('handle_non_hyphenated', 'Pad as-is')
+        blank_segments_to_zero = params.get('blank_segments_to_zero', False)
 
         if customer_col not in df.columns:
             raise ValueError(f"Customer column '{customer_col}' not found")
 
-        # Apply transformation
+        # Process customer numbers
         df[customer_col] = df[customer_col].apply(
             lambda x: self._standardize_customer(x, customer_length, handle_non_hyphenated)
         )
+
+        # Process segment numbers (if column specified)
+        if segment_col and segment_col in df.columns:
+            df[segment_col] = df[segment_col].apply(
+                lambda x: self._standardize_segment(x, segment_length, blank_segments_to_zero)
+            )
 
         return df
 
     def _standardize_customer(self, value, length, handle_non_hyphenated):
         """
         Standardize a single customer number.
+
+        Extracts the part BEFORE the hyphen and pads to target length.
 
         Args:
             value: Customer number value (e.g., "1726274-639507")
@@ -1299,6 +1336,44 @@ class StandardizeCustomerNumberSingleOperation(BaseOperation):
 
         return padded
 
+    def _standardize_segment(self, value, length, blank_to_zero):
+        """
+        Standardize a single segment number.
+
+        Pads existing segment value to target length (typically 2 digits).
+
+        Args:
+            value: Segment number value (e.g., "0", "1", "31")
+            length: Target length (default 2)
+            blank_to_zero: Whether to convert blank values to zeros
+
+        Returns:
+            Standardized segment number string
+        """
+        if pd.isna(value) or value == '':
+            # Handle blank values
+            if blank_to_zero:
+                return '0' * length
+            else:
+                return ""
+
+        value_str = str(value).strip()
+
+        # Remove any non-digit characters
+        digits = re.sub(r'\D', '', value_str)
+
+        # If empty after cleaning
+        if not digits:
+            if blank_to_zero:
+                return '0' * length
+            else:
+                return ""
+
+        # Pad with leading zeros to target length
+        padded = digits.zfill(length)
+
+        return padded
+
 
 # Register all text operations
 registry.register(UppercaseOperation())
@@ -1319,4 +1394,4 @@ registry.register(RenameColumnOperation())
 registry.register(BatchRenameColumnsOperation())
 registry.register(StandardizeCustomerNumbersOperation())
 registry.register(StandardizePhoneNumbersOperation())
-registry.register(StandardizeCustomerNumberSingleOperation())
+registry.register(CleanMailingCustomerDataOperation())
