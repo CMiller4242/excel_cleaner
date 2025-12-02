@@ -229,10 +229,10 @@ class ExcelRibbon(ttk.Frame):
         assist_group.pack(side='left', fill='y', padx=2)
         assist_group.add_button("AI Help", lambda: None, "🤖", row=0, column=0)
 
-        docs_group = RibbonGroup(self.content_area, "Documentation")
+        docs_group = RibbonGroup(self.content_area, "Information")
         docs_group.pack(side='left', fill='y', padx=2)
-        docs_group.add_button("Guide", lambda: None, "📖", row=0, column=0)
-        docs_group.add_button("About", lambda: None, "ℹ️", row=0, column=1)
+        docs_group.add_button("About", self.app.show_about_dialog, "ℹ️", row=0, column=0)
+        docs_group.add_button("Updates", self.app.check_for_updates_manual, "🔄", row=0, column=1)
 
 
 class FormulaBar(ttk.Frame):

@@ -1,5 +1,5 @@
 """
-Login/Register Window
+Clean Sheet - Login/Register Window
 Provides UI for user authentication
 """
 import tkinter as tk
@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from auth.auth_manager import AuthManager
 from config import Config
+from version import __version__, __app_name__, __app_tagline__
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,8 @@ class LoginWindow:
 
         # Create window
         self.root = tk.Tk()
-        self.root.title(f"{Config.APP_NAME} - Login")
-        self.root.geometry("500x620")
+        self.root.title(f"{__app_name__} - Login")
+        self.root.geometry("500x650")
         self.root.resizable(False, False)
 
         # Center window on screen
@@ -100,7 +101,7 @@ class LoginWindow:
 
         title_label = ttk.Label(
             title_frame,
-            text=Config.APP_NAME,
+            text=f"🔷 {__app_name__}",
             font=("Segoe UI", 22, "bold"),
             foreground="#0078D4"
         )
@@ -108,11 +109,19 @@ class LoginWindow:
 
         subtitle_label = ttk.Label(
             title_frame,
-            text=f"Version {Config.APP_VERSION}",
-            font=("Segoe UI", 10),
+            text=__app_tagline__,
+            font=("Segoe UI", 11),
+            foreground="#0078D4"
+        )
+        subtitle_label.pack(pady=(5, 0))
+
+        version_label = ttk.Label(
+            title_frame,
+            text=f"Version {__version__}",
+            font=("Segoe UI", 9),
             foreground="gray"
         )
-        subtitle_label.pack()
+        version_label.pack(pady=(5, 0))
 
         # Separator
         ttk.Separator(main_frame, orient='horizontal').pack(fill=tk.X, pady=15)
