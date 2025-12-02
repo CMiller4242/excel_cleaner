@@ -181,7 +181,6 @@ class UpdateNotificationDialog:
         self.dialog.geometry("550x450")
         self.dialog.resizable(False, False)
         self.dialog.transient(parent)
-        self.dialog.grab_set()
 
         self._create_widgets()
 
@@ -190,6 +189,12 @@ class UpdateNotificationDialog:
         x = (self.dialog.winfo_screenwidth() // 2) - (550 // 2)
         y = (self.dialog.winfo_screenheight() // 2) - (450 // 2)
         self.dialog.geometry(f"+{x}+{y}")
+
+        # Force dialog to appear and stay on top
+        self.dialog.deiconify()
+        self.dialog.lift()
+        self.dialog.focus_force()
+        self.dialog.grab_set()
 
     def _create_widgets(self):
         """Create dialog widgets"""
@@ -318,7 +323,6 @@ class UpdateProgressDialog:
         self.dialog.geometry("450x150")
         self.dialog.resizable(False, False)
         self.dialog.transient(parent)
-        self.dialog.grab_set()
 
         self._create_widgets()
 
@@ -327,6 +331,12 @@ class UpdateProgressDialog:
         x = (self.dialog.winfo_screenwidth() // 2) - (450 // 2)
         y = (self.dialog.winfo_screenheight() // 2) - (150 // 2)
         self.dialog.geometry(f"+{x}+{y}")
+
+        # Force dialog to appear
+        self.dialog.deiconify()
+        self.dialog.lift()
+        self.dialog.focus_force()
+        self.dialog.grab_set()
 
     def _create_widgets(self):
         """Create progress widgets"""

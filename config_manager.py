@@ -122,7 +122,6 @@ class FirstRunConfigDialog:
         self.dialog.geometry("650x500")
         self.dialog.resizable(False, False)
         self.dialog.transient(parent)
-        self.dialog.grab_set()
 
         # Prevent closing without configuration
         self.dialog.protocol("WM_DELETE_WINDOW", self._on_cancel)
@@ -134,6 +133,12 @@ class FirstRunConfigDialog:
         x = (self.dialog.winfo_screenwidth() // 2) - (650 // 2)
         y = (self.dialog.winfo_screenheight() // 2) - (500 // 2)
         self.dialog.geometry(f"+{x}+{y}")
+
+        # Force dialog to appear and stay on top
+        self.dialog.deiconify()  # Ensure window is visible
+        self.dialog.lift()  # Bring to front
+        self.dialog.focus_force()  # Force focus
+        self.dialog.grab_set()  # Modal dialog
 
     def _create_widgets(self):
         """Create dialog widgets"""
