@@ -1177,6 +1177,129 @@ class StandardizePhoneNumbersOperation(BaseOperation):
         return len(digits) == 10
 
 
+class StandardizeCustomerNumberSingleOperation(BaseOperation):
+    """
+    Standardize customer numbers from hyphenated format (XXXXX-YYYYY) to padded format.
+
+    Takes values like "1726274-639507" or "9609-640231" and:
+    1. Extracts the part BEFORE the hyphen
+    2. Pads to 8 digits with leading zeros
+    3. Returns: "01726274" or "00009609"
+    """
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='text_standardize_customer_number_single',
+            name='Standardize Customer Number (Single Column)',
+            category='Text',
+            description='Extract customer number from hyphenated format (XXXXX-YYYYY) and pad to 8 digits',
+            parameters=[
+                Parameter(
+                    name='customer_column',
+                    type='column',
+                    description='Column containing hyphenated customer numbers (e.g., "1726274-639507")',
+                    required=True
+                ),
+                Parameter(
+                    name='customer_length',
+                    type='number',
+                    description='Target length for padding (default: 8 digits)',
+                    required=False,
+                    default=8
+                ),
+                Parameter(
+                    name='handle_non_hyphenated',
+                    type='choice',
+                    description='How to handle values without hyphens',
+                    required=False,
+                    choices=['Pad as-is', 'Mark as error', 'Leave unchanged'],
+                    default='Pad as-is'
+                )
+            ],
+            excel_equivalent='LEFT() + TEXT() with format codes',
+            examples=[
+                '1726274-639507 → 01726274',
+                '4441157-639473 → 04441157',
+                '9609-640231 → 00009609',
+                '1172785-639691 → 01172785'
+            ],
+            tags=['customer', 'number', 'extract', 'pad', 'zeros', 'hyphen']
+        )
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        """
+        Standardize customer numbers from hyphenated format.
+
+        Args:
+            df: Input dataframe
+            params: {
+                'customer_column': str,
+                'customer_length': int (default 8),
+                'handle_non_hyphenated': str (default 'Pad as-is')
+            }
+
+        Returns:
+            Dataframe with standardized customer numbers
+        """
+        df = df.copy()
+
+        customer_col = params.get('customer_column')
+        customer_length = int(params.get('customer_length', 8))
+        handle_non_hyphenated = params.get('handle_non_hyphenated', 'Pad as-is')
+
+        if customer_col not in df.columns:
+            raise ValueError(f"Customer column '{customer_col}' not found")
+
+        # Apply transformation
+        df[customer_col] = df[customer_col].apply(
+            lambda x: self._standardize_customer(x, customer_length, handle_non_hyphenated)
+        )
+
+        return df
+
+    def _standardize_customer(self, value, length, handle_non_hyphenated):
+        """
+        Standardize a single customer number.
+
+        Args:
+            value: Customer number value (e.g., "1726274-639507")
+            length: Target length (default 8)
+            handle_non_hyphenated: How to handle non-hyphenated values
+
+        Returns:
+            Standardized customer number string
+        """
+        if pd.isna(value) or not value:
+            return ""
+
+        value_str = str(value).strip()
+
+        # Check if hyphen exists
+        if '-' in value_str:
+            # Extract part before hyphen
+            before_hyphen = value_str.split('-')[0].strip()
+        else:
+            # No hyphen found
+            if handle_non_hyphenated == 'Mark as error':
+                return f"ERROR: {value_str}"
+            elif handle_non_hyphenated == 'Leave unchanged':
+                return value_str
+            else:  # 'Pad as-is'
+                before_hyphen = value_str
+
+        # Remove any non-digit characters
+        digits = re.sub(r'\D', '', before_hyphen)
+
+        # If empty after cleaning, return zeros
+        if not digits:
+            return '0' * length
+
+        # Pad with leading zeros to target length
+        padded = digits.zfill(length)
+
+        return padded
+
+
 # Register all text operations
 registry.register(UppercaseOperation())
 registry.register(LowercaseOperation())
@@ -1196,3 +1319,4 @@ registry.register(RenameColumnOperation())
 registry.register(BatchRenameColumnsOperation())
 registry.register(StandardizeCustomerNumbersOperation())
 registry.register(StandardizePhoneNumbersOperation())
+registry.register(StandardizeCustomerNumberSingleOperation())

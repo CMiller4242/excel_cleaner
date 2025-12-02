@@ -1646,7 +1646,8 @@ class UniversalExcelToolV2Office365:
             defaultextension=".xlsx",
             filetypes=[
                 ("Excel files", "*.xlsx"),
-                ("CSV files", "*.csv")
+                ("CSV files", "*.csv"),
+                ("Text files", "*.txt")
             ]
         )
 
@@ -1658,6 +1659,10 @@ class UniversalExcelToolV2Office365:
                 # CSV can only save one sheet - save results only
                 ExportHelper.export_to_csv(self.result_df, filename)
                 success_msg = f"Results saved to:\n{filename}\n\nNote: CSV format only saves Results sheet."
+            elif filename.endswith('.txt'):
+                # TXT format - comma-delimited with quotes
+                ExportHelper.export_to_txt(self.result_df, filename, include_header=True)
+                success_msg = f"Results saved to:\n{filename}\n\nFormat: Comma-delimited with quoted fields\nNote: TXT format only saves Results sheet."
             else:
                 # Excel - export multi-sheet workbook
                 sheets = {}
