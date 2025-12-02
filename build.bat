@@ -105,9 +105,22 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo.
 
-REM Verify output
-echo [7/7] Verifying build output...
+REM Verify output and copy documentation
+echo [7/7] Verifying build output and copying documentation...
 if exist "dist\CleanSheet.exe" (
+    REM Copy setup documentation to dist folder
+    if exist ".env.example" (
+        copy /Y ".env.example" "dist\.env.example" >nul
+        echo ✓ Copied .env.example to dist\
+    )
+    if exist "SETUP.md" (
+        copy /Y "SETUP.md" "dist\SETUP.md" >nul
+        echo ✓ Copied SETUP.md to dist\
+    )
+    if exist "USER_GUIDE.md" (
+        copy /Y "USER_GUIDE.md" "dist\USER_GUIDE.md" >nul
+        echo ✓ Copied USER_GUIDE.md to dist\
+    )
     echo.
     echo ========================================
     echo ✓ BUILD SUCCESSFUL!
@@ -124,26 +137,33 @@ if exist "dist\CleanSheet.exe" (
     echo NEXT STEPS
     echo ========================================
     echo.
-    echo 1. Test the executable:
+    echo 1. Configure the application:
+    echo    cd dist
+    echo    copy .env.example .env
+    echo    edit .env with your MongoDB URI
+    echo.
+    echo 2. Test the executable:
     echo    dist\CleanSheet.exe
     echo.
-    echo 2. Verify all operations work correctly:
+    echo 3. Verify all operations work correctly:
     echo    - File import/export
     echo    - All 51 operations
     echo    - Preset management
     echo    - AI Assistant (if API key configured)
     echo    - Data Quality Analyzer
     echo.
-    echo 3. Test auto-update notification:
-    echo    - Create a fake newer version in GitHub releases
-    echo    - Start application and check for update prompt
+    echo 4. Package for distribution:
+    echo    - dist\CleanSheet.exe (main executable)
+    echo    - dist\.env.example (configuration template)
+    echo    - dist\SETUP.md (setup instructions)
+    echo    - dist\USER_GUIDE.md (user manual)
     echo.
-    echo 4. Create GitHub release:
+    echo 5. Create GitHub release:
     echo    - Tag: v2.1.0
-    echo    - Upload: dist\CleanSheet.exe
-    echo    - See create_release.md for details
+    echo    - Upload all files from dist\
+    echo    - See CREATE_RELEASE.md for details
     echo.
-    echo 5. Distribute to users!
+    echo 6. Distribute to users with SETUP.md instructions!
     echo.
 ) else (
     echo.
