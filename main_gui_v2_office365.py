@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Universal Excel Tool V2.1+ - Office 365 Redesign
+Clean Sheet - Professional Data Cleaning Made Simple
+Version 2.1+ - Office 365 Redesign
+
 Major UI overhaul to make data preview the primary focus
 
 Changes from original:
@@ -10,6 +12,8 @@ Changes from original:
 - Office 365 color scheme and spacing
 - Card-style operation queue
 - Ribbon-style navigation tabs
+- Auto-update system with GitHub releases
+- Professional branding and configuration management
 """
 
 import tkinter as tk
@@ -19,9 +23,15 @@ from pathlib import Path
 import sys
 import os
 import logging
+import threading
 
 # Add to path
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Version and configuration imports
+from version import __version__, __app_name__, __app_tagline__, GITHUB_REPO, __release_date__, COPYRIGHT
+from config_manager import ConfigManager, FirstRunConfigDialog
+from utils.auto_updater import AutoUpdater, UpdateNotificationDialog, UpdateProgressDialog
 
 # Import existing components
 from operations.registry import registry
@@ -43,17 +53,23 @@ from excel_ribbon import ExcelRibbon, FormulaBar, ExcelStatusBar
 from datetime import datetime
 
 
-class UniversalExcelToolV2Office365:
-    """Office 365-style application with data-first layout"""
+class CleanSheetApp:
+    """Clean Sheet - Professional Data Cleaning Made Simple
 
-    def __init__(self, root, session_token=None, user_email=None):
+    Office 365-style application with data-first layout and auto-update capabilities
+    """
+
+    def __init__(self, root, session_token=None, user_email=None, config_manager=None):
         self.root = root
+
+        # Configuration manager
+        self.config_manager = config_manager
 
         # Set title with user info if authenticated
         if user_email:
-            self.root.title(f"🔷 Universal Excel Tool - {user_email}")
+            self.root.title(f"{__app_name__} v{__version__} - {user_email}")
         else:
-            self.root.title("🔷 Universal Excel Tool - Professional Edition")
+            self.root.title(f"{__app_name__} v{__version__} - {__app_tagline__}")
 
         self.root.geometry("1600x900")
         self.root.minsize(1200, 800)
@@ -77,7 +93,13 @@ class UniversalExcelToolV2Office365:
 
         # AI Assistant
         self.ai_assistant = None
-        self.api_key = tk.StringVar(value=os.environ.get('ANTHROPIC_API_KEY', ''))
+        # Get API key from config manager if available, otherwise from environment
+        api_key = ''
+        if self.config_manager:
+            api_key = self.config_manager.get_api_key()
+        if not api_key:
+            api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+        self.api_key = tk.StringVar(value=api_key)
 
         # Managers
         self.preset_manager = PresetManager()
@@ -85,6 +107,9 @@ class UniversalExcelToolV2Office365:
 
         # Data Quality Integration
         self.dq_integration = DataQualityIntegration(self)
+
+        # Auto-updater
+        self.updater = AutoUpdater(__version__, GITHUB_REPO)
 
         # UI state
         self.operations_visible = False
@@ -95,6 +120,11 @@ class UniversalExcelToolV2Office365:
         AccessibleTheme.apply_theme(self.root)
         self.setup_office365_theme()
         self.create_widgets()
+
+        # Check for updates on startup (if 24 hours passed)
+        if self.config_manager and self.config_manager.should_check_updates():
+            if self.updater.should_check_for_updates():
+                self.check_for_updates_background()
 
     def setup_office365_theme(self):
         """Apply Office 365 light color scheme"""
@@ -176,11 +206,19 @@ class UniversalExcelToolV2Office365:
 
         ttk.Label(
             title_frame,
-            text="🔷 Universal Excel Tool",
+            text=f"🔷 {__app_name__}",
             font=('Segoe UI', 11, 'bold'),
             foreground='#0078D4',
             background='#F3F2F1'
         ).pack(side='left')
+
+        ttk.Label(
+            title_frame,
+            text=f"  v{__version__}",
+            font=('Segoe UI', 8),
+            foreground='#666666',
+            background='#F3F2F1'
+        ).pack(side='left', pady=(2, 0))
 
         # Right side - Mode selector, user info, logout (NO THEME TOGGLE)
         right_container = ttk.Frame(header, style='Header.TFrame')
@@ -2045,6 +2083,197 @@ class UniversalExcelToolV2Office365:
         """Analyze data quality and suggest cleaning operations"""
         self.dq_integration.analyze_data()
 
+    # ==================== AUTO-UPDATE METHODS ====================
+
+    def check_for_updates_background(self):
+        """Check for updates in background thread"""
+        def callback(update_info):
+            if update_info.get('update_available'):
+                # Check if this version was skipped
+                if self.config_manager:
+                    skipped_version = self.config_manager.get_skipped_version()
+                    if skipped_version == update_info['new_version']:
+                        return  # Don't show notification for skipped version
+
+                # Show update notification on UI thread
+                self.root.after(0, lambda: self.show_update_notification(update_info))
+
+        self.updater.check_for_updates_async(callback)
+
+    def show_update_notification(self, update_info):
+        """Show update available dialog"""
+        dialog = UpdateNotificationDialog(self.root, update_info)
+        result = dialog.show()
+
+        if result == "update":
+            self.download_and_install_update(update_info)
+        elif result == "skip":
+            # Record skipped version
+            if self.config_manager:
+                self.config_manager.set_skipped_version(update_info['new_version'])
+
+    def download_and_install_update(self, update_info):
+        """Download and install update with progress dialog"""
+        # Create progress dialog
+        progress_dialog = UpdateProgressDialog(self.root)
+
+        def download_thread():
+            try:
+                new_exe = self.updater.download_update(
+                    update_info['download_url'],
+                    progress_dialog.update_progress
+                )
+
+                if new_exe:
+                    # Close progress dialog
+                    self.root.after(0, progress_dialog.close)
+
+                    # Ask to restart
+                    def ask_restart():
+                        if messagebox.askyesno(
+                            "Update Ready",
+                            "Update downloaded successfully!\n\n"
+                            "Clean Sheet will now restart to complete the installation.",
+                            parent=self.root
+                        ):
+                            self.updater.install_update(new_exe)
+                            sys.exit(0)
+
+                    self.root.after(0, ask_restart)
+                else:
+                    self.root.after(0, progress_dialog.close)
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Update Failed",
+                        "Failed to download update. Please try again later.",
+                        parent=self.root
+                    ))
+
+            except Exception as e:
+                self.root.after(0, progress_dialog.close)
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Update Failed",
+                    f"Error downloading update:\n{str(e)}",
+                    parent=self.root
+                ))
+
+        threading.Thread(target=download_thread, daemon=True).start()
+
+    def check_for_updates_manual(self):
+        """Manually check for updates (from Help menu)"""
+        try:
+            update_info = self.updater.check_for_updates()
+
+            if update_info.get('update_available'):
+                self.show_update_notification(update_info)
+            else:
+                messagebox.showinfo(
+                    "No Updates Available",
+                    f"You're running the latest version of Clean Sheet (v{__version__}).",
+                    parent=self.root
+                )
+        except Exception as e:
+            messagebox.showerror(
+                "Update Check Failed",
+                f"Failed to check for updates:\n{str(e)}",
+                parent=self.root
+            )
+
+    def show_about_dialog(self):
+        """Show About dialog with version info"""
+        about_window = tk.Toplevel(self.root)
+        about_window.title("About Clean Sheet")
+        about_window.geometry("500x400")
+        about_window.resizable(False, False)
+        about_window.transient(self.root)
+        about_window.grab_set()
+
+        # Center window
+        about_window.update_idletasks()
+        x = (about_window.winfo_screenwidth() // 2) - (500 // 2)
+        y = (about_window.winfo_screenheight() // 2) - (400 // 2)
+        about_window.geometry(f"+{x}+{y}")
+
+        # Header
+        header_frame = tk.Frame(about_window, bg="#0078D4", height=100)
+        header_frame.pack(fill=tk.X)
+        header_frame.pack_propagate(False)
+
+        tk.Label(
+            header_frame,
+            text=f"🔷 {__app_name__}",
+            font=("Segoe UI", 18, "bold"),
+            bg="#0078D4",
+            fg="white"
+        ).pack(pady=15)
+
+        tk.Label(
+            header_frame,
+            text=__app_tagline__,
+            font=("Segoe UI", 11),
+            bg="#0078D4",
+            fg="white"
+        ).pack()
+
+        # Content
+        content_frame = tk.Frame(about_window, padx=30, pady=30)
+        content_frame.pack(fill=tk.BOTH, expand=True)
+
+        info_text = f"""
+Version: {__version__}
+Release Date: {__release_date__}
+
+{COPYRIGHT}
+
+Clean Sheet is a professional data cleaning tool for Excel and CSV files.
+Transform, clean, and standardize your data with 51+ built-in operations.
+
+Features:
+• 51+ Data cleaning operations
+• Smart Data Quality Analyzer
+• AI-Powered Assistant
+• Preset workflow management
+• Automatic updates
+• Professional Office 365 UI
+
+Repository: github.com/{GITHUB_REPO}
+        """
+
+        tk.Label(
+            content_frame,
+            text=info_text.strip(),
+            font=("Segoe UI", 10),
+            justify=tk.LEFT,
+            wraplength=440
+        ).pack(pady=(0, 20))
+
+        # Buttons
+        button_frame = tk.Frame(content_frame)
+        button_frame.pack()
+
+        tk.Button(
+            button_frame,
+            text="Check for Updates",
+            command=lambda: [about_window.destroy(), self.check_for_updates_manual()],
+            bg="#0078D4",
+            fg="white",
+            font=("Segoe UI", 10, "bold"),
+            padx=20,
+            pady=8,
+            cursor="hand2"
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        tk.Button(
+            button_frame,
+            text="Close",
+            command=about_window.destroy,
+            font=("Segoe UI", 10),
+            padx=20,
+            pady=8,
+            cursor="hand2"
+        ).pack(side=tk.LEFT)
+
+    # ==================== END AUTO-UPDATE METHODS ====================
+
     def handle_logout(self):
         """Handle user logout"""
         # Confirm logout
@@ -2085,13 +2314,42 @@ class UniversalExcelToolV2Office365:
 
 
 def main():
-    """Main entry point with authentication"""
+    """Main entry point with authentication and configuration"""
 
     # Setup logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
+
+    logging.info(f"Starting {__app_name__} v{__version__}")
+
+    # Initialize configuration manager
+    config_manager = ConfigManager()
+
+    # Check if this is first run (no configuration)
+    if not config_manager.is_configured():
+        logging.info("First run detected - showing configuration dialog")
+
+        # Create temporary root for first-run dialog
+        temp_root = tk.Tk()
+        temp_root.withdraw()  # Hide the root window
+
+        # Show first-run configuration dialog
+        dialog = FirstRunConfigDialog(temp_root)
+        success, mongodb_uri, api_key = dialog.show()
+
+        if success:
+            config_manager.set_mongodb_uri(mongodb_uri)
+            if api_key:
+                config_manager.set_api_key(api_key)
+            logging.info("Configuration completed successfully")
+        else:
+            logging.info("Configuration cancelled - exiting")
+            temp_root.destroy()
+            return
+
+        temp_root.destroy()
 
     # Storage for authentication data
     auth_data = {'token': None, 'email': None}
@@ -2124,10 +2382,11 @@ def main():
         # Authentication successful - start main application
         logging.info(f"Starting main application for user: {email}")
         root = tk.Tk()
-        app = UniversalExcelToolV2Office365(
+        app = CleanSheetApp(
             root,
             session_token=token,
-            user_email=email
+            user_email=email,
+            config_manager=config_manager
         )
         root.mainloop()
 
@@ -2135,7 +2394,7 @@ def main():
         logging.error(f"Application error: {e}", exc_info=True)
         messagebox.showerror(
             "Application Error",
-            f"Failed to start application:\n\n{str(e)}\n\n"
+            f"Failed to start {__app_name__}:\n\n{str(e)}\n\n"
             "Please check your MongoDB configuration and try again."
         )
 
