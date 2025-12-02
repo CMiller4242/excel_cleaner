@@ -2332,30 +2332,63 @@ def main():
     # Initialize configuration manager
     config_manager = ConfigManager()
 
-    # Check if this is first run (no configuration)
+    # TEMPORARY BYPASS: Dialog visibility issue in frozen .exe
+    # TODO v2.1.1: Fix FirstRunConfigDialog and re-enable
+    # For now: Use .env file fallback for configuration
     if not config_manager.is_configured():
-        logging.info("First run detected - showing configuration dialog")
+        logging.info("Configuration not found - attempting .env fallback")
 
-        # Create temporary root for first-run dialog
-        temp_root = tk.Tk()
-        temp_root.withdraw()  # Hide the root window
-        temp_root.update()  # Process pending events to ensure window is ready
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
 
-        # Show first-run configuration dialog
-        dialog = FirstRunConfigDialog(temp_root)
-        success, mongodb_uri, api_key = dialog.show()
+            mongodb_uri = os.getenv('MONGODB_URI', '')
+            api_key = os.getenv('ANTHROPIC_API_KEY', '')
 
-        if success:
-            config_manager.set_mongodb_uri(mongodb_uri)
+            if mongodb_uri:
+                config_manager.set_mongodb_uri(mongodb_uri)
+                logging.info("✓ MongoDB URI loaded from .env file")
+
             if api_key:
                 config_manager.set_api_key(api_key)
-            logging.info("Configuration completed successfully")
-        else:
-            logging.info("Configuration cancelled - exiting")
-            temp_root.destroy()
-            return
+                logging.info("✓ API key loaded from .env file")
 
-        temp_root.destroy()
+            # Mark configuration as complete
+            if not config_manager.config.has_section('App'):
+                config_manager.config.add_section('App')
+            config_manager.config.set('App', 'first_run_complete', 'true')
+            config_manager.save_config()
+
+            # Warn if no MongoDB URI found
+            if not mongodb_uri:
+                logging.warning("No MongoDB URI found in .env or config.ini")
+                root = tk.Tk()
+                root.withdraw()
+                messagebox.showwarning(
+                    "Configuration Required",
+                    f"{__app_name__} requires MongoDB configuration.\n\n"
+                    "Please create a .env file with:\n"
+                    "MONGODB_URI=your_mongodb_connection_string\n\n"
+                    "Or create config.ini in:\n"
+                    f"{config_manager.get_config_path()}\n\n"
+                    "The application will now exit.\n"
+                    "See documentation for setup instructions."
+                )
+                root.destroy()
+                return
+
+        except Exception as e:
+            logging.error(f"Configuration error: {e}")
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(
+                "Configuration Error",
+                f"Failed to load configuration:\n{str(e)}\n\n"
+                "Please check your .env file or config.ini\n"
+                "See documentation for help."
+            )
+            root.destroy()
+            return
 
     # Storage for authentication data
     auth_data = {'token': None, 'email': None}
