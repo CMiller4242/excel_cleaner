@@ -3,6 +3,9 @@ Data Operations
 VLOOKUP, merge, join, sort, filter, deduplicate
 """
 import pandas as pd
+import numpy as np
+import tkinter as tk
+from tkinter import ttk, messagebox
 from typing import Dict
 from .base import BaseOperation, OperationMetadata, Parameter
 from .registry import registry
@@ -1148,6 +1151,731 @@ class AnalyzeTitleRanksOperation(BaseOperation):
         return df
 
 
+class FilterByValueOperation(BaseOperation):
+    """Filter rows based on numeric value comparison"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='data_filter_by_value',
+            name='Filter Rows by Value',
+            category='Data',
+            description='Keep or remove rows based on numeric comparison',
+            parameters=[
+                Parameter(
+                    name='column',
+                    type='column',
+                    description='Column to evaluate',
+                    required=True
+                ),
+                Parameter(
+                    name='operator',
+                    type='choice',
+                    description='Comparison operator',
+                    required=True,
+                    choices=['>', '>=', '<', '<=', '=', '!=']
+                ),
+                Parameter(
+                    name='value',
+                    type='number',
+                    description='Threshold value',
+                    required=True
+                ),
+                Parameter(
+                    name='action',
+                    type='choice',
+                    description='Action to take',
+                    required=True,
+                    choices=['keep', 'remove']
+                )
+            ],
+            excel_equivalent='AutoFilter > Number Filters',
+            examples=[
+                'Keep only orders over $1000',
+                'Remove rows where quantity < 10',
+                'Filter employees with salary >= 50000'
+            ],
+            tags=['filter', 'numeric', 'comparison', 'threshold']
+        )
+
+    def show_dialog(self, parent=None, initial_params=None):
+        """Show configuration dialog with custom UI"""
+
+        # Get DataFrame
+        if hasattr(parent, 'df'):
+            df = parent.df
+        elif hasattr(parent, 'data'):
+            df = parent.data
+        else:
+            messagebox.showerror("Error", "No data available")
+            return None
+
+        if df is None or df.empty:
+            messagebox.showerror("Error", "No data to process")
+            return None
+
+        # Create dialog
+        dialog = tk.Toplevel()
+        dialog.title("Filter Rows by Value")
+        dialog.geometry("600x500")
+        if isinstance(parent, (tk.Tk, tk.Toplevel)):
+            dialog.transient(parent)
+        dialog.grab_set()
+
+        # Header
+        header = tk.Frame(dialog, bg="#0078D4", height=80)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+
+        tk.Label(
+            header,
+            text="Filter Rows by Value",
+            font=("Segoe UI", 14, "bold"),
+            bg="#0078D4",
+            fg="white"
+        ).pack(pady=10)
+
+        tk.Label(
+            header,
+            text="Keep or remove rows based on numeric comparison",
+            font=("Segoe UI", 10),
+            bg="#0078D4",
+            fg="white"
+        ).pack()
+
+        # Content
+        content = tk.Frame(dialog, bg="white")
+        content.pack(fill=tk.BOTH, expand=True, padx=30, pady=20)
+
+        # Column selector
+        tk.Label(
+            content,
+            text="Select column with numeric values:",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(0, 5))
+
+        column_var = tk.StringVar()
+        column_combo = ttk.Combobox(
+            content,
+            textvariable=column_var,
+            values=list(df.columns),
+            state="readonly",
+            font=("Segoe UI", 10),
+            width=40
+        )
+        column_combo.pack(fill=tk.X, pady=(0, 15))
+
+        if initial_params and 'column' in initial_params:
+            column_combo.set(initial_params['column'])
+
+        # Operator selector
+        tk.Label(
+            content,
+            text="Comparison operator:",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(10, 5))
+
+        operator_frame = tk.Frame(content, bg="white")
+        operator_frame.pack(fill=tk.X, pady=(0, 15))
+
+        operators = [
+            (">", "Greater than"),
+            (">=", "Greater than or equal"),
+            ("<", "Less than"),
+            ("<=", "Less than or equal"),
+            ("=", "Equal to"),
+            ("!=", "Not equal to")
+        ]
+
+        operator_var = tk.StringVar(value=initial_params.get('operator', '>') if initial_params else '>')
+
+        for i, (op, label) in enumerate(operators):
+            tk.Radiobutton(
+                operator_frame,
+                text=f"{op}  ({label})",
+                variable=operator_var,
+                value=op,
+                font=("Segoe UI", 9),
+                bg="white"
+            ).grid(row=i//2, column=i%2, sticky=tk.W, padx=(0, 20), pady=2)
+
+        # Value entry
+        tk.Label(
+            content,
+            text="Threshold value:",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(10, 5))
+
+        value_var = tk.StringVar(value=str(initial_params.get('value', '1000')) if initial_params else '1000')
+        value_entry = tk.Entry(
+            content,
+            textvariable=value_var,
+            font=("Segoe UI", 10),
+            width=20
+        )
+        value_entry.pack(anchor=tk.W, pady=(0, 5))
+
+        tk.Label(
+            content,
+            text="Enter numeric value (e.g., 1000, 500.50)",
+            font=("Segoe UI", 8),
+            bg="white",
+            fg="#666"
+        ).pack(anchor=tk.W, pady=(0, 15))
+
+        # Action selector
+        tk.Label(
+            content,
+            text="Action:",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(10, 5))
+
+        action_var = tk.StringVar(value=initial_params.get('action', 'keep') if initial_params else 'keep')
+
+        action_frame = tk.Frame(content, bg="white")
+        action_frame.pack(fill=tk.X, pady=(0, 10))
+
+        tk.Radiobutton(
+            action_frame,
+            text="Keep matching rows (remove others)",
+            variable=action_var,
+            value="keep",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(anchor=tk.W, pady=2)
+
+        tk.Radiobutton(
+            action_frame,
+            text="Remove matching rows (keep others)",
+            variable=action_var,
+            value="remove",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(anchor=tk.W, pady=2)
+
+        # Example display
+        example_frame = tk.Frame(content, bg="#F0F0F0", relief=tk.RIDGE, borderwidth=1)
+        example_frame.pack(fill=tk.X, pady=(15, 0))
+
+        example_label = tk.Label(
+            example_frame,
+            text="Example: Column > 1000 → Keep rows where column value is greater than 1000",
+            font=("Segoe UI", 9),
+            bg="#F0F0F0",
+            fg="#333",
+            wraplength=500,
+            justify=tk.LEFT
+        )
+        example_label.pack(padx=10, pady=10)
+
+        def update_example(*args):
+            col = column_var.get() or "Column"
+            op = operator_var.get()
+            val = value_var.get() or "0"
+            act = action_var.get()
+
+            action_text = "Keep" if act == "keep" else "Remove"
+            example_label.config(
+                text=f"Example: {col} {op} {val} → {action_text} rows where {col} is {op} {val}"
+            )
+
+        column_var.trace('w', update_example)
+        operator_var.trace('w', update_example)
+        value_var.trace('w', update_example)
+        action_var.trace('w', update_example)
+
+        # Buttons
+        button_frame = tk.Frame(dialog, bg="white")
+        button_frame.pack(fill=tk.X, padx=30, pady=(0, 20))
+
+        result = {}
+
+        def on_save():
+            column = column_var.get()
+            operator = operator_var.get()
+            value_str = value_var.get()
+            action = action_var.get()
+
+            if not column:
+                messagebox.showwarning("Missing Column", "Please select a column")
+                return
+
+            if not value_str:
+                messagebox.showwarning("Missing Value", "Please enter a threshold value")
+                return
+
+            # Validate numeric value
+            try:
+                value = float(value_str)
+            except ValueError:
+                messagebox.showerror("Invalid Value", f"'{value_str}' is not a valid number")
+                return
+
+            result['column'] = column
+            result['operator'] = operator
+            result['value'] = value
+            result['action'] = action
+
+            dialog.destroy()
+
+        tk.Button(
+            button_frame,
+            text="✓ Add to Workflow",
+            command=on_save,
+            font=("Segoe UI", 10, "bold"),
+            bg="#107C10",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=30,
+            pady=10
+        ).pack(side=tk.RIGHT, padx=(10, 0))
+
+        tk.Button(
+            button_frame,
+            text="Cancel",
+            command=dialog.destroy,
+            font=("Segoe UI", 10),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=30,
+            pady=10
+        ).pack(side=tk.RIGHT)
+
+        dialog.wait_window()
+        return result if result else None
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        """Execute the filter operation"""
+        column = params['column']
+        operator = params['operator']
+        threshold = params['value']
+        action = params['action']
+
+        if column not in df.columns:
+            raise ValueError(f"Column '{column}' not found in data")
+
+        # Convert column to numeric, handling errors
+        df_work = df.copy()
+        df_work[column] = pd.to_numeric(df_work[column], errors='coerce')
+
+        # Create filter mask
+        if operator == '>':
+            mask = df_work[column] > threshold
+        elif operator == '>=':
+            mask = df_work[column] >= threshold
+        elif operator == '<':
+            mask = df_work[column] < threshold
+        elif operator == '<=':
+            mask = df_work[column] <= threshold
+        elif operator == '=':
+            mask = df_work[column] == threshold
+        elif operator == '!=':
+            mask = df_work[column] != threshold
+        else:
+            raise ValueError(f"Unknown operator: {operator}")
+
+        # Apply action
+        if action == 'keep':
+            # Keep rows that match
+            result_df = df[mask].copy()
+        else:
+            # Remove rows that match (keep rows that don't match)
+            result_df = df[~mask].copy()
+
+        return result_df
+
+
+class KeepBestByValueOperation(BaseOperation):
+    """Keep best record per email based on highest value"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='data_keep_best_by_value',
+            name='Keep Best Contact by Value',
+            category='Data',
+            description='For each email, keep only the row with highest value',
+            parameters=[
+                Parameter(
+                    name='email_column',
+                    type='column',
+                    description='Column containing email addresses',
+                    required=True
+                ),
+                Parameter(
+                    name='value_column',
+                    type='column',
+                    description='Column with numeric values to compare',
+                    required=True
+                ),
+                Parameter(
+                    name='keep_blank_emails',
+                    type='boolean',
+                    description='Keep rows with blank/empty emails',
+                    required=False,
+                    default=True
+                ),
+                Parameter(
+                    name='tie_breaker',
+                    type='choice',
+                    description='When values are equal, keep',
+                    required=False,
+                    choices=['first', 'last'],
+                    default='first'
+                )
+            ],
+            excel_equivalent='Remove Duplicates + Sort',
+            examples=[
+                'Keep highest order per customer email',
+                'Deduplicate contacts keeping highest revenue',
+                'Keep best transaction per email address'
+            ],
+            tags=['deduplicate', 'email', 'best', 'highest', 'group']
+        )
+
+    def show_dialog(self, parent=None, initial_params=None):
+        """Show configuration dialog with custom UI"""
+
+        # Get DataFrame
+        if hasattr(parent, 'df'):
+            df = parent.df
+        elif hasattr(parent, 'data'):
+            df = parent.data
+        else:
+            messagebox.showerror("Error", "No data available")
+            return None
+
+        if df is None or df.empty:
+            messagebox.showerror("Error", "No data to process")
+            return None
+
+        # Create dialog
+        dialog = tk.Toplevel()
+        dialog.title("Keep Best Contact by Value")
+        dialog.geometry("600x550")
+        if isinstance(parent, (tk.Tk, tk.Toplevel)):
+            dialog.transient(parent)
+        dialog.grab_set()
+
+        # Header
+        header = tk.Frame(dialog, bg="#0078D4", height=80)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+
+        tk.Label(
+            header,
+            text="Keep Best Contact by Value",
+            font=("Segoe UI", 14, "bold"),
+            bg="#0078D4",
+            fg="white"
+        ).pack(pady=10)
+
+        tk.Label(
+            header,
+            text="For each email, keep only the row with highest value",
+            font=("Segoe UI", 10),
+            bg="#0078D4",
+            fg="white"
+        ).pack()
+
+        # Content
+        content = tk.Frame(dialog, bg="white")
+        content.pack(fill=tk.BOTH, expand=True, padx=30, pady=20)
+
+        # Email column selector
+        tk.Label(
+            content,
+            text="Email column:",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(0, 5))
+
+        email_var = tk.StringVar()
+        email_combo = ttk.Combobox(
+            content,
+            textvariable=email_var,
+            values=list(df.columns),
+            state="readonly",
+            font=("Segoe UI", 10),
+            width=40
+        )
+        email_combo.pack(fill=tk.X, pady=(0, 5))
+
+        if initial_params and 'email_column' in initial_params:
+            email_combo.set(initial_params['email_column'])
+
+        tk.Label(
+            content,
+            text="Column containing email addresses",
+            font=("Segoe UI", 8),
+            bg="white",
+            fg="#666"
+        ).pack(anchor=tk.W, pady=(0, 15))
+
+        # Value column selector
+        tk.Label(
+            content,
+            text="Value column:",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(10, 5))
+
+        value_var = tk.StringVar()
+        value_combo = ttk.Combobox(
+            content,
+            textvariable=value_var,
+            values=list(df.columns),
+            state="readonly",
+            font=("Segoe UI", 10),
+            width=40
+        )
+        value_combo.pack(fill=tk.X, pady=(0, 5))
+
+        if initial_params and 'value_column' in initial_params:
+            value_combo.set(initial_params['value_column'])
+
+        tk.Label(
+            content,
+            text="Column with numeric values to compare (e.g., order amount, revenue)",
+            font=("Segoe UI", 8),
+            bg="white",
+            fg="#666"
+        ).pack(anchor=tk.W, pady=(0, 15))
+
+        # Blank email handling
+        tk.Label(
+            content,
+            text="Blank Email Handling:",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(10, 5))
+
+        keep_blank_var = tk.BooleanVar(
+            value=initial_params.get('keep_blank_emails', True) if initial_params else True
+        )
+
+        tk.Checkbutton(
+            content,
+            text="Keep rows with blank or empty email addresses",
+            variable=keep_blank_var,
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(0, 5))
+
+        tk.Label(
+            content,
+            text="If unchecked, rows with blank emails will be removed",
+            font=("Segoe UI", 8),
+            bg="white",
+            fg="#666"
+        ).pack(anchor=tk.W, pady=(0, 15))
+
+        # Tie breaker
+        tk.Label(
+            content,
+            text="Tie Breaker:",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(10, 5))
+
+        tk.Label(
+            content,
+            text="When multiple rows have the same highest value:",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(0, 5))
+
+        tie_var = tk.StringVar(
+            value=initial_params.get('tie_breaker', 'first') if initial_params else 'first'
+        )
+
+        tie_frame = tk.Frame(content, bg="white")
+        tie_frame.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Radiobutton(
+            tie_frame,
+            text="Keep first occurrence",
+            variable=tie_var,
+            value="first",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(anchor=tk.W, pady=2)
+
+        tk.Radiobutton(
+            tie_frame,
+            text="Keep last occurrence",
+            variable=tie_var,
+            value="last",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(anchor=tk.W, pady=2)
+
+        # Example display
+        example_frame = tk.Frame(content, bg="#F0F0F0", relief=tk.RIDGE, borderwidth=1)
+        example_frame.pack(fill=tk.X, pady=(15, 0))
+
+        example_label = tk.Label(
+            example_frame,
+            text="Select columns to see example",
+            font=("Segoe UI", 9),
+            bg="#F0F0F0",
+            fg="#333",
+            wraplength=500,
+            justify=tk.LEFT
+        )
+        example_label.pack(padx=10, pady=10)
+
+        def update_example(*args):
+            email_col = email_var.get() or "Email"
+            value_col = value_var.get() or "Amount"
+            blank = "kept" if keep_blank_var.get() else "removed"
+            tie = tie_var.get()
+
+            example_text = (
+                f"Example: Group rows by '{email_col}', keep row with highest '{value_col}' "
+                f"for each email. Blank emails are {blank}. "
+                f"Ties are broken by keeping {tie} occurrence."
+            )
+            example_label.config(text=example_text)
+
+        email_var.trace('w', update_example)
+        value_var.trace('w', update_example)
+        keep_blank_var.trace('w', update_example)
+        tie_var.trace('w', update_example)
+
+        # Buttons
+        button_frame = tk.Frame(dialog, bg="white")
+        button_frame.pack(fill=tk.X, padx=30, pady=(0, 20))
+
+        result = {}
+
+        def on_save():
+            email_col = email_var.get()
+            value_col = value_var.get()
+
+            if not email_col:
+                messagebox.showwarning("Missing Email Column", "Please select an email column")
+                return
+
+            if not value_col:
+                messagebox.showwarning("Missing Value Column", "Please select a value column")
+                return
+
+            if email_col == value_col:
+                messagebox.showerror("Invalid Selection", "Email and value columns must be different")
+                return
+
+            result['email_column'] = email_col
+            result['value_column'] = value_col
+            result['keep_blank_emails'] = keep_blank_var.get()
+            result['tie_breaker'] = tie_var.get()
+
+            dialog.destroy()
+
+        tk.Button(
+            button_frame,
+            text="✓ Add to Workflow",
+            command=on_save,
+            font=("Segoe UI", 10, "bold"),
+            bg="#107C10",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=30,
+            pady=10
+        ).pack(side=tk.RIGHT, padx=(10, 0))
+
+        tk.Button(
+            button_frame,
+            text="Cancel",
+            command=dialog.destroy,
+            font=("Segoe UI", 10),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=30,
+            pady=10
+        ).pack(side=tk.RIGHT)
+
+        dialog.wait_window()
+        return result if result else None
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        """Execute the keep best by value operation"""
+        email_column = params['email_column']
+        value_column = params['value_column']
+        keep_blank_emails = params.get('keep_blank_emails', True)
+        tie_breaker = params.get('tie_breaker', 'first')
+
+        if email_column not in df.columns:
+            raise ValueError(f"Email column '{email_column}' not found in data")
+
+        if value_column not in df.columns:
+            raise ValueError(f"Value column '{value_column}' not found in data")
+
+        # Work with a copy
+        df_work = df.copy()
+
+        # Convert value column to numeric
+        df_work['_numeric_value'] = pd.to_numeric(df_work[value_column], errors='coerce')
+
+        # Identify blank emails (None, NaN, empty string, or whitespace only)
+        df_work['_is_blank_email'] = (
+            df_work[email_column].isna() |
+            (df_work[email_column].astype(str).str.strip() == '') |
+            (df_work[email_column].astype(str).str.lower() == 'nan')
+        )
+
+        # Separate blank and non-blank emails
+        blank_df = df_work[df_work['_is_blank_email']].copy()
+        non_blank_df = df_work[~df_work['_is_blank_email']].copy()
+
+        # Process non-blank emails: keep only the row with highest value per email
+        if not non_blank_df.empty:
+            # Sort by value (descending) and apply tie breaker
+            if tie_breaker == 'first':
+                # Sort descending, first occurrence wins ties
+                non_blank_df = non_blank_df.sort_values(
+                    by='_numeric_value',
+                    ascending=False,
+                    na_position='last'
+                )
+                # Keep first occurrence per email (highest value)
+                non_blank_df = non_blank_df.drop_duplicates(
+                    subset=[email_column],
+                    keep='first'
+                )
+            else:  # last
+                # Sort descending, last occurrence wins ties
+                non_blank_df = non_blank_df.sort_values(
+                    by='_numeric_value',
+                    ascending=False,
+                    na_position='last'
+                )
+                # Keep last occurrence per email (highest value)
+                non_blank_df = non_blank_df.drop_duplicates(
+                    subset=[email_column],
+                    keep='last'
+                )
+
+        # Combine results based on blank email preference
+        if keep_blank_emails and not blank_df.empty:
+            result_df = pd.concat([non_blank_df, blank_df], ignore_index=True)
+        else:
+            result_df = non_blank_df.copy()
+
+        # Remove temporary columns
+        result_df = result_df.drop(columns=['_numeric_value', '_is_blank_email'])
+
+        # Restore original index order (sort by original index)
+        result_df = result_df.sort_index()
+        result_df = result_df.reset_index(drop=True)
+
+        return result_df
+
+
 # Register all operations
 registry.register(VLookupOperation())
 registry.register(RemoveDuplicatesOperation())
@@ -1157,3 +1885,5 @@ registry.register(ReorderColumnsOperation())
 registry.register(SetHeaderRowOperation())
 registry.register(KeepBestContactPerLocationOperation())
 registry.register(AnalyzeTitleRanksOperation())
+registry.register(FilterByValueOperation())
+registry.register(KeepBestByValueOperation())
