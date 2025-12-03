@@ -188,6 +188,14 @@ class ExcelRibbon(ttk.Frame):
         export_group.pack(side='left', fill='y', padx=2)
         export_group.add_button("Save", self.app.save_results, "💾", row=0, column=0)
 
+        # Batch Operations group (only show in batch mode)
+        if hasattr(self.app, 'processing_mode') and self.app.processing_mode.get() == "batch":
+            batch_group = RibbonGroup(self.content_area, "Batch")
+            batch_group.pack(side='left', fill='y', padx=2)
+            batch_group.add_button("Load\nFiles", self.app.load_multiple_files, "📁📁", row=0, column=0)
+            batch_group.add_button("Process\nBatch", self.app.process_batch_files, "⚙️", row=0, column=1)
+            batch_group.add_button("Combine\nFiles", self.app.combine_files_dialog, "🔗", row=1, column=0)
+
         clean_group = RibbonGroup(self.content_area, "Clean")
         clean_group.pack(side='left', fill='y', padx=2)
         clean_group.add_button("Remove\nBlanks", lambda: None, "🧹", row=0, column=0)

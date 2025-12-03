@@ -12,13 +12,14 @@ Version 2.1.0
 3. [Login & Authentication](#login--authentication)
 4. [Main Interface](#main-interface)
 5. [Working with Data](#working-with-data)
-6. [Operations](#operations)
-7. [Presets](#presets)
-8. [Data Quality Analyzer](#data-quality-analyzer)
-9. [AI Assistant](#ai-assistant)
-10. [Auto-Updates](#auto-updates)
-11. [Troubleshooting](#troubleshooting)
-12. [FAQ](#faq)
+6. [Multi-File Handling](#multi-file-handling) ⭐ NEW in 2.1.0
+7. [Operations](#operations)
+8. [Presets](#presets)
+9. [Data Quality Analyzer](#data-quality-analyzer)
+10. [AI Assistant](#ai-assistant)
+11. [Auto-Updates](#auto-updates)
+12. [Troubleshooting](#troubleshooting)
+13. [FAQ](#faq)
 
 ---
 
@@ -186,6 +187,155 @@ Toggle between **Simple** and **Advanced** mode:
    - **TXT (.txt):** Results only (tab-delimited)
 3. Choose location and filename
 4. Click **Save**
+
+---
+
+## Multi-File Handling
+
+Clean Sheet 2.1.0 introduces comprehensive batch processing capabilities for handling multiple files at once.
+
+### Processing Modes
+
+Clean Sheet operates in two modes:
+
+1. **Single File Mode** (default): Process one file at a time
+2. **Batch Mode**: Process multiple files simultaneously
+
+**To switch modes:**
+- Use the **"Files"** dropdown in the top-right header
+- Select **"single"** or **"batch"**
+
+### Batch Processing
+
+Process multiple files with the same operation queue.
+
+**How it works:**
+
+1. **Switch to Batch Mode**
+   - Set **Files: batch** in header
+
+2. **Load Multiple Files**
+   - Go to **Data** tab in ribbon
+   - Click **"Load Files"** in Batch group
+   - Select multiple files (Ctrl+Click or Shift+Click)
+
+3. **Add Operations**
+   - Build your workflow queue normally
+   - All operations will be applied to each file
+
+4. **Process Batch**
+   - Click **"Process Batch"** in Data tab
+   - Confirm the operation
+   - Progress is displayed for each file
+
+5. **Export Results**
+   - Choose export format (.xlsx, .csv, .txt)
+   - Choose export method:
+     - **ZIP Archive:** All files in one .zip
+     - **Individual Files:** Separate folder with all files
+   - Optionally include removed rows
+
+**Example Use Cases:**
+- Clean 50 contact lists with same operations
+- Apply standard formatting to monthly reports
+- Process weekly data exports consistently
+
+### File Combining
+
+Merge multiple files into a single output.
+
+**How to combine files:**
+
+1. **Load Files in Batch Mode**
+   - Switch to Batch mode
+   - Load multiple files
+
+2. **Click "Combine Files"**
+   - Opens combine options dialog
+
+3. **Choose Column Strategy:**
+   - **All columns:** Include all columns from all files (blanks where missing)
+   - **Common columns only:** Only columns present in all files
+   - **First file's columns:** Use first file as template
+
+4. **Optional: Group by Column**
+   - Select a column to group data by (e.g., "Department", "Keycode")
+   - Creates separate files for each unique value
+   - Example: Group by "Region" creates files for "Region_East", "Region_West", etc.
+
+5. **Export Combined Data**
+   - Single combined file, or
+   - Multiple grouped files
+
+**Column Mismatch Handling:**
+- Clean Sheet automatically detects column differences
+- Shows detailed mismatch report
+- Offers strategies to resolve conflicts
+- Proceeds with your chosen strategy
+
+**Example Workflows:**
+
+**Workflow 1: Combine Monthly Reports**
+```
+1. Load: January.xlsx, February.xlsx, March.xlsx
+2. Strategy: All columns
+3. Group by: (No grouping)
+4. Result: Q1_Combined.xlsx
+```
+
+**Workflow 2: Merge and Split by Region**
+```
+1. Load: ContactList1.xlsx, ContactList2.xlsx, ContactList3.xlsx
+2. Strategy: Common columns only
+3. Group by: State
+4. Result: State_CA.xlsx, State_NY.xlsx, State_TX.xlsx...
+```
+
+### Multi-File Export Options
+
+After processing or combining files, you have flexible export options:
+
+**Export Formats:**
+- Excel (.xlsx)
+- CSV (.csv)
+- Text (.txt) - quoted, comma-delimited
+
+**Delivery Options:**
+
+1. **ZIP Archive**
+   - All files packaged in one .zip
+   - Easy to share via email
+   - Preserves folder structure
+   - Optionally includes removed rows files
+
+2. **Individual Files to Folder**
+   - Select destination folder
+   - Each file saved separately
+   - Naming: `OriginalName_processed.xlsx`
+   - Removed rows: `OriginalName_removed.xlsx`
+
+3. **Single Combined File**
+   - All data merged into one file
+   - Ideal for master lists
+   - Preserves all column data
+
+**Tips:**
+- Use ZIP for sending results to colleagues
+- Use folder export for archiving
+- Use combined file for analysis
+
+### Performance Considerations
+
+**Recommended Limits:**
+- **Batch Processing:** Up to 100 files at once
+- **File Combining:** Up to 50 files with <10,000 rows each
+- **Large Files:** Process individually or in smaller batches
+
+**Best Practices:**
+- Test your workflow on 2-3 files first
+- Save presets for repeated batch operations
+- Close other applications for large batches
+- Monitor progress status bar
 
 ---
 

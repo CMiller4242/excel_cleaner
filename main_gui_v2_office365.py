@@ -46,6 +46,8 @@ from auth.auth_manager import AuthManager
 from config import Config
 from ai_assistant.claude_assistant import ClaudeAssistant
 from utils.export_helper import ExportHelper
+from batch_processor import BatchProcessor
+from file_combiner import FileCombiner
 from enhanced_preview import EnhancedDataPreview
 from smart_column_selector import ColumnSelector, MultiColumnSelector
 from analysis.data_quality_integration import DataQualityIntegration
@@ -81,12 +83,17 @@ class CleanSheetApp:
         if session_token:
             self.auth_manager = AuthManager()
 
-        # Data
+        # Data - Single File Mode
         self.df = None
         self.result_df = None
         self.removed_df = None
         self.current_file = None
         self.operation_queue = []
+
+        # Data - Multi-File Mode
+        self.loaded_files = []  # List of {'name': str, 'path': str, 'df': DataFrame}
+        self.processing_mode = tk.StringVar(value="single")  # "single" or "batch"
+        self.selected_files = []  # Track which files are selected for processing
 
         # Mode: simple or advanced
         self.mode = tk.StringVar(value="simple")
@@ -104,6 +111,8 @@ class CleanSheetApp:
         # Managers
         self.preset_manager = PresetManager()
         self.executor = OperationExecutor(progress_callback=self.on_progress)
+        self.batch_processor = BatchProcessor(progress_callback=self.on_batch_progress)
+        self.file_combiner = FileCombiner()
 
         # Data Quality Integration
         self.dq_integration = DataQualityIntegration(self)
@@ -115,6 +124,8 @@ class CleanSheetApp:
         self.operations_visible = False
         self.operations_sidebar = None
         self.queue_collapsed = False
+        self.file_panel_visible = False
+        self.file_management_panel = None
 
         # Apply theme and create UI
         AccessibleTheme.apply_theme(self.root)
@@ -220,11 +231,27 @@ class CleanSheetApp:
             background='#F3F2F1'
         ).pack(side='left', pady=(2, 0))
 
-        # Right side - Mode selector, user info, logout (NO THEME TOGGLE)
+        # Right side - Processing mode, mode selector, user info, logout
         right_container = ttk.Frame(header, style='Header.TFrame')
         right_container.pack(side='right', padx=15, pady=8)
 
-        # Mode selector
+        # Processing mode selector (Single/Batch)
+        proc_mode_frame = ttk.Frame(right_container, style='Header.TFrame')
+        proc_mode_frame.pack(side='left', padx=(0, 15))
+
+        ttk.Label(proc_mode_frame, text="Files:",
+                 font=('Segoe UI', 9),
+                 foreground='#666666',
+                 background='#F3F2F1').pack(side='left', padx=(0, 5))
+
+        proc_mode_menu = ttk.Combobox(proc_mode_frame, textvariable=self.processing_mode,
+                                      values=["single", "batch"],
+                                      state='readonly', width=8,
+                                      font=('Segoe UI', 9))
+        proc_mode_menu.pack(side='left')
+        proc_mode_menu.bind('<<ComboboxSelected>>', lambda e: self.on_processing_mode_change())
+
+        # Mode selector (Simple/Advanced)
         mode_frame = ttk.Frame(right_container, style='Header.TFrame')
         mode_frame.pack(side='left', padx=(0, 15))
 
@@ -712,6 +739,23 @@ class CleanSheetApp:
             self.excel_status_bar.update_mode(mode)
         self.load_operations()
 
+    def on_processing_mode_change(self):
+        """Handle processing mode toggle (single/batch)"""
+        mode = self.processing_mode.get()
+        self.status_var.set(f"Switched to {mode.title()} file mode")
+
+        if mode == "batch":
+            # Show file management panel
+            self.show_file_management_panel()
+        else:
+            # Hide file management panel
+            self.hide_file_management_panel()
+
+        # Refresh ribbon to show/hide batch operations
+        if hasattr(self, 'excel_ribbon'):
+            current_tab = self.excel_ribbon.active_tab.get()
+            self.excel_ribbon.switch_tab(current_tab)
+
     def on_search(self, *args):
         """Filter operations by search"""
         if not hasattr(self, 'ops_tree') or self.ops_tree is None:
@@ -736,6 +780,344 @@ class CleanSheetApp:
         """Progress callback for operations"""
         self.status_var.set(f"Processing: {message} ({current}/{total})")
         self.root.update_idletasks()
+
+    def on_batch_progress(self, current, total, filename, status):
+        """Progress callback for batch processing"""
+        if status == 'processing':
+            self.status_var.set(f"Processing file {current}/{total}: {filename}")
+        elif status == 'complete':
+            self.status_var.set(f"Completed {current}/{total}: {filename}")
+        elif status == 'error':
+            self.status_var.set(f"Error processing {current}/{total}: {filename}")
+        self.root.update_idletasks()
+
+    # ==================== MULTI-FILE MANAGEMENT ====================
+
+    def show_file_management_panel(self):
+        """Show file management panel for batch mode"""
+        if self.file_panel_visible:
+            return
+
+        # Create horizontal paned window if it doesn't exist
+        if not hasattr(self, 'horizontal_paned'):
+            # This should be called from create_widgets, but for now we skip UI restructuring
+            pass
+
+        self.file_panel_visible = True
+        self.status_var.set("Batch mode enabled - Load multiple files")
+
+    def hide_file_management_panel(self):
+        """Hide file management panel for single file mode"""
+        if not self.file_panel_visible:
+            return
+
+        self.file_panel_visible = False
+        self.status_var.set("Single file mode enabled")
+
+    def load_multiple_files(self):
+        """Load multiple files for batch processing"""
+        filenames = filedialog.askopenfilenames(
+            title="Select Multiple Data Files",
+            filetypes=[
+                ("Excel files", "*.xlsx *.xls"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if not filenames:
+            return
+
+        self.status_var.set(f"Loading {len(filenames)} files...")
+
+        loaded_count = 0
+        for filename in filenames:
+            try:
+                # Detect if file has header
+                if filename.endswith('.csv'):
+                    df_test = pd.read_csv(filename, nrows=5)
+                else:
+                    df_test = pd.read_excel(filename, nrows=5)
+
+                # Smart header detection
+                has_header = self._detect_header(df_test)
+
+                # Load full file
+                if filename.endswith('.csv'):
+                    df = pd.read_csv(filename, header=0 if has_header else None)
+                else:
+                    df = pd.read_excel(filename, header=0 if has_header else None)
+
+                # Add to loaded files
+                file_obj = {
+                    'name': Path(filename).name,
+                    'path': filename,
+                    'df': df
+                }
+                self.loaded_files.append(file_obj)
+                loaded_count += 1
+
+            except Exception as e:
+                logging.error(f"Failed to load {filename}: {e}")
+                messagebox.showerror("Load Error", f"Failed to load {Path(filename).name}:\n{str(e)}")
+
+        if loaded_count > 0:
+            self.status_var.set(f"Loaded {loaded_count} files successfully")
+            self.update_file_list_display()
+        else:
+            self.status_var.set("No files loaded")
+
+    def _detect_header(self, df_sample):
+        """Smart header detection"""
+        if len(df_sample) < 2:
+            return True
+
+        first_row = df_sample.iloc[0]
+        numeric_count = sum(pd.api.types.is_numeric_dtype(type(val)) for val in first_row)
+        return numeric_count < len(first_row) * 0.7
+
+    def update_file_list_display(self):
+        """Update the file list display in UI"""
+        # This would update a listbox or tree view with loaded files
+        # For now, just update status
+        pass
+
+    def remove_selected_files(self):
+        """Remove selected files from loaded files list"""
+        # Implementation depends on UI widget used
+        pass
+
+    def process_batch_files(self):
+        """Process all loaded files with current operation queue"""
+        if not self.loaded_files:
+            messagebox.showwarning("No Files", "Please load files first")
+            return
+
+        if not self.operation_queue:
+            messagebox.showwarning("No Operations", "Please add operations to the workflow queue first")
+            return
+
+        # Confirm processing
+        file_count = len(self.loaded_files)
+        op_count = len(self.operation_queue)
+        msg = f"Process {file_count} files with {op_count} operations?\n\nThis may take several minutes."
+
+        if not messagebox.askyesno("Confirm Batch Processing", msg):
+            return
+
+        # Process batch
+        self.status_var.set(f"Starting batch processing of {file_count} files...")
+
+        try:
+            results = self.batch_processor.process_batch(
+                files=self.loaded_files,
+                operation_queue=self.operation_queue,
+                executor=self.executor
+            )
+
+            # Show results summary
+            summary = results['summary']
+            success_msg = f"Batch Processing Complete!\n\n"
+            success_msg += f"Total files: {summary['total_files']}\n"
+            success_msg += f"Successful: {summary['successful']}\n"
+            success_msg += f"Failed: {summary['failed']}\n"
+            success_msg += f"Total rows processed: {summary['total_original_rows']} → {summary['total_final_rows']}"
+
+            messagebox.showinfo("Batch Processing Complete", success_msg)
+
+            # Show export dialog
+            if results['successful']:
+                self.show_batch_export_dialog(results['successful'])
+
+        except Exception as e:
+            logging.error(f"Batch processing failed: {e}")
+            messagebox.showerror("Batch Processing Error", f"Batch processing failed:\n{str(e)}")
+
+    def combine_files_dialog(self):
+        """Show dialog for combining files"""
+        if not self.loaded_files:
+            messagebox.showwarning("No Files", "Please load files first")
+            return
+
+        # Check column compatibility
+        is_compatible, mismatch_info = self.file_combiner.check_column_compatibility(self.loaded_files)
+
+        if not is_compatible:
+            # Show column mismatch dialog
+            report = self.file_combiner.generate_column_mismatch_report()
+            result = messagebox.askyesnocancel(
+                "Column Mismatch",
+                report + "\n\nProceed with combining?",
+                icon='warning'
+            )
+            if not result:
+                return
+
+        # Show combine options dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Combine Files Options")
+        dialog.geometry("500x400")
+        dialog.transient(self.root)
+
+        # Options
+        ttk.Label(dialog, text="Combine Files", font=('Segoe UI', 14, 'bold')).pack(pady=10)
+
+        # Column strategy
+        ttk.Label(dialog, text="Column Strategy:").pack(pady=5)
+        strategy_var = tk.StringVar(value="all")
+        ttk.Radiobutton(dialog, text="All columns (fill missing with blanks)",
+                       variable=strategy_var, value="all").pack()
+        ttk.Radiobutton(dialog, text="Common columns only",
+                       variable=strategy_var, value="common").pack()
+        ttk.Radiobutton(dialog, text="Use first file's columns",
+                       variable=strategy_var, value="first").pack()
+
+        # Group by column option
+        ttk.Label(dialog, text="\nGroup by column (optional):").pack(pady=5)
+        group_var = tk.StringVar(value="")
+        groupable_cols = self.file_combiner.get_groupable_columns(self.loaded_files)
+        group_combo = ttk.Combobox(dialog, textvariable=group_var,
+                                   values=["(No grouping)"] + groupable_cols,
+                                   state='readonly')
+        group_combo.pack()
+        group_combo.set("(No grouping)")
+
+        def do_combine():
+            strategy = strategy_var.get()
+            group_col = group_var.get() if group_var.get() != "(No grouping)" else None
+
+            try:
+                if group_col:
+                    # Group and combine
+                    groups = self.file_combiner.combine_and_group_by_column(
+                        self.loaded_files, group_col, strategy
+                    )
+                    messagebox.showinfo("Success", f"Created {len(groups)} grouped files")
+                    self.show_grouped_export_dialog(groups)
+                else:
+                    # Simple combine
+                    combined_df = self.file_combiner.combine_files_simple(
+                        self.loaded_files, strategy
+                    )
+                    messagebox.showinfo("Success", f"Combined into {len(combined_df)} rows × {len(combined_df.columns)} columns")
+                    self.show_combined_export_dialog(combined_df)
+
+                dialog.destroy()
+
+            except Exception as e:
+                messagebox.showerror("Combine Error", f"Failed to combine files:\n{str(e)}")
+
+        ttk.Button(dialog, text="Combine Files", command=do_combine).pack(pady=20)
+        ttk.Button(dialog, text="Cancel", command=dialog.destroy).pack()
+
+    def show_batch_export_dialog(self, results):
+        """Show export dialog for batch processing results"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Export Batch Results")
+        dialog.geometry("500x350")
+        dialog.transient(self.root)
+
+        ttk.Label(dialog, text="Export Batch Results", font=('Segoe UI', 14, 'bold')).pack(pady=10)
+        ttk.Label(dialog, text=f"{len(results)} files processed successfully").pack()
+
+        # Export format
+        ttk.Label(dialog, text="\nExport Format:").pack(pady=5)
+        format_var = tk.StringVar(value="xlsx")
+        ttk.Radiobutton(dialog, text="Excel (.xlsx)", variable=format_var, value="xlsx").pack()
+        ttk.Radiobutton(dialog, text="CSV (.csv)", variable=format_var, value="csv").pack()
+        ttk.Radiobutton(dialog, text="Text (.txt)", variable=format_var, value="txt").pack()
+
+        # Include removed rows
+        include_removed_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(dialog, text="Include removed rows files",
+                       variable=include_removed_var).pack(pady=5)
+
+        # Export options
+        ttk.Label(dialog, text="\nExport Option:").pack(pady=5)
+        export_option_var = tk.StringVar(value="zip")
+        ttk.Radiobutton(dialog, text="ZIP Archive", variable=export_option_var, value="zip").pack()
+        ttk.Radiobutton(dialog, text="Individual files to folder",
+                       variable=export_option_var, value="folder").pack()
+
+        def do_export():
+            file_format = format_var.get()
+            include_removed = include_removed_var.get()
+            export_option = export_option_var.get()
+
+            try:
+                if export_option == "zip":
+                    # Export as ZIP
+                    output_path = filedialog.asksaveasfilename(
+                        title="Save ZIP Archive",
+                        defaultextension=".zip",
+                        filetypes=[("ZIP files", "*.zip")]
+                    )
+                    if output_path:
+                        success = ExportHelper.export_batch_as_zip(
+                            results, output_path, file_format, include_removed
+                        )
+                        if success:
+                            messagebox.showinfo("Success", f"Exported to {output_path}")
+                            dialog.destroy()
+                else:
+                    # Export to folder
+                    output_dir = filedialog.askdirectory(title="Select Output Folder")
+                    if output_dir:
+                        count = ExportHelper.export_batch_individual(
+                            results, output_dir, file_format, include_removed
+                        )
+                        messagebox.showinfo("Success", f"Exported {count} files to {output_dir}")
+                        dialog.destroy()
+
+            except Exception as e:
+                messagebox.showerror("Export Error", f"Export failed:\n{str(e)}")
+
+        ttk.Button(dialog, text="Export", command=do_export).pack(pady=20)
+        ttk.Button(dialog, text="Cancel", command=dialog.destroy).pack()
+
+    def show_combined_export_dialog(self, combined_df):
+        """Show export dialog for combined DataFrame"""
+        output_path = filedialog.asksaveasfilename(
+            title="Save Combined File",
+            defaultextension=".xlsx",
+            filetypes=[
+                ("Excel files", "*.xlsx"),
+                ("CSV files", "*.csv"),
+                ("Text files", "*.txt")
+            ]
+        )
+
+        if output_path:
+            ext = Path(output_path).suffix.lower()
+            format_map = {'.xlsx': 'xlsx', '.csv': 'csv', '.txt': 'txt'}
+            file_format = format_map.get(ext, 'xlsx')
+
+            success = ExportHelper.export_combined_file(combined_df, output_path, file_format)
+            if success:
+                messagebox.showinfo("Success", f"Combined file saved to {output_path}")
+
+    def show_grouped_export_dialog(self, groups):
+        """Show export dialog for grouped files"""
+        output_dir = filedialog.askdirectory(title="Select Output Folder for Grouped Files")
+
+        if output_dir:
+            # Ask for format
+            format_var = tk.StringVar(value="xlsx")
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Export Format")
+            dialog.geometry("300x150")
+
+            ttk.Label(dialog, text="Export Format:").pack(pady=10)
+            ttk.Radiobutton(dialog, text="Excel (.xlsx)", variable=format_var, value="xlsx").pack()
+            ttk.Radiobutton(dialog, text="CSV (.csv)", variable=format_var, value="csv").pack()
+
+            def do_export():
+                count = ExportHelper.export_grouped_files(groups, output_dir, format_var.get())
+                messagebox.showinfo("Success", f"Exported {count} grouped files")
+                dialog.destroy()
+
+            ttk.Button(dialog, text="Export", command=do_export).pack(pady=10)
+            dialog.mainloop()
 
 
 # ==================== MAIN ====================
