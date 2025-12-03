@@ -502,13 +502,8 @@ class FileDetailPanel(tk.Frame):
             messagebox.showwarning("No File", "Please select a file first")
             return
 
-        # For now, delegate to app's operation sidebar but pass file context
-        # In the future, this could show a custom operation selector dialog
-        if self.app and hasattr(self.app, 'toggle_operations_sidebar'):
-            self.app.toggle_operations_sidebar()
-            # Store current file context for operations to use
-            if hasattr(self.app, 'batch_mode_current_file'):
-                self.app.batch_mode_current_file = self.current_file
+        # Show operation selector dialog
+        self._show_operation_selector()
 
     def _on_run_workflow(self):
         if self.app and self.current_file and hasattr(self.app, 'run_workflow_for_file'):
@@ -534,9 +529,31 @@ class FileDetailPanel(tk.Frame):
 
     def _edit_operation(self, file_obj, op_index):
         """Edit an operation's parameters"""
-        # TODO: Open operation edit dialog
         from tkinter import messagebox
-        messagebox.showinfo("Edit Operation", "Operation editing coming soon!\n\nFor now, delete and re-add the operation.")
+        from operations.registry import get_registry
+
+        operation_config = file_obj['operations'][op_index]
+        operation_id = operation_config.get('name')  # In batch mode, 'name' stores the operation name
+
+        # Get operation from registry
+        registry = get_registry()
+        operation = None
+
+        # Search for operation by name
+        for op in registry.list_all():
+            if op.metadata.name == operation_id or op.metadata.id == operation_id:
+                operation = op
+                break
+
+        if not operation:
+            messagebox.showerror("Operation Not Found", f"Could not find operation '{operation_id}'")
+            return
+
+        # Get current parameters
+        current_params = operation_config.get('parameters', operation_config.get('params', {}))
+
+        # Show the appropriate dialog with current parameters
+        self._configure_operation(file_obj, operation, edit_mode=True, edit_index=op_index, current_params=current_params)
 
     def _delete_operation(self, file_obj, op_index):
         """Delete an operation from workflow"""
@@ -551,3 +568,782 @@ class FileDetailPanel(tk.Frame):
         operation = file_obj['operations'][op_index]
         operation['enabled'] = not operation.get('enabled', True)
         self._update_workflow(file_obj)
+
+    # ==================== OPERATION CONFIGURATION ====================
+
+    def _show_operation_selector(self):
+        """Show dialog to select an operation to add"""
+        from tkinter import messagebox
+        from operations.registry import get_registry
+
+        registry = get_registry()
+        operations = registry.list_all()
+
+        if not operations:
+            messagebox.showwarning("No Operations", "No operations available")
+            return
+
+        # Create operation selector dialog
+        dialog = tk.Toplevel(self)
+        dialog.title("Select Operation")
+        dialog.geometry("700x600")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+
+        main_frame = tk.Frame(dialog, bg="white")
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Title
+        tk.Label(
+            main_frame,
+            text="Select an Operation",
+            font=('Segoe UI', 14, 'bold'),
+            bg="white"
+        ).pack(pady=(0, 10))
+
+        # Search box
+        search_frame = tk.Frame(main_frame, bg="white")
+        search_frame.pack(fill=tk.X, pady=(0, 10))
+
+        tk.Label(
+            search_frame,
+            text="Search:",
+            font=('Segoe UI', 10),
+            bg="white"
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        search_var = tk.StringVar()
+        search_entry = tk.Entry(
+            search_frame,
+            textvariable=search_var,
+            font=('Segoe UI', 10)
+        )
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Category filter
+        category_frame = tk.Frame(main_frame, bg="white")
+        category_frame.pack(fill=tk.X, pady=(0, 10))
+
+        tk.Label(
+            category_frame,
+            text="Category:",
+            font=('Segoe UI', 10),
+            bg="white"
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        categories = ['All'] + sorted(set(op.metadata.category for op in operations))
+        category_var = tk.StringVar(value='All')
+        category_combo = ttk.Combobox(
+            category_frame,
+            textvariable=category_var,
+            values=categories,
+            state='readonly',
+            font=('Segoe UI', 10)
+        )
+        category_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Operations list (scrollable)
+        list_frame = tk.Frame(main_frame, bg="white")
+        list_frame.pack(fill=tk.BOTH, expand=True)
+
+        scrollbar = tk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        canvas = tk.Canvas(
+            list_frame,
+            bg="white",
+            highlightthickness=0,
+            yscrollcommand=scrollbar.set
+        )
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=canvas.yview)
+
+        ops_container = tk.Frame(canvas, bg="white")
+        canvas_window = canvas.create_window(0, 0, window=ops_container, anchor="nw")
+
+        def update_operations_list(*args):
+            """Filter and display operations based on search and category"""
+            # Clear existing
+            for widget in ops_container.winfo_children():
+                widget.destroy()
+
+            search_text = search_var.get().lower()
+            category_filter = category_var.get()
+
+            filtered_ops = []
+            for op in operations:
+                # Filter by category
+                if category_filter != 'All' and op.metadata.category != category_filter:
+                    continue
+
+                # Filter by search
+                if search_text:
+                    if (search_text not in op.metadata.name.lower() and
+                        search_text not in op.metadata.description.lower()):
+                        continue
+
+                filtered_ops.append(op)
+
+            # Sort by name
+            filtered_ops.sort(key=lambda x: x.metadata.name)
+
+            # Display operations
+            for op in filtered_ops:
+                self._create_operation_button(ops_container, op, dialog)
+
+            # Update scroll region
+            ops_container.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox('all'))
+
+        # Bind filters
+        search_var.trace('w', update_operations_list)
+        category_var.trace('w', update_operations_list)
+
+        # Initial population
+        update_operations_list()
+
+        # Configure canvas resize
+        def on_frame_configure(event):
+            canvas.configure(scrollregion=canvas.bbox('all'))
+
+        def on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+
+        ops_container.bind('<Configure>', on_frame_configure)
+        canvas.bind('<Configure>', on_canvas_configure)
+
+        # Cancel button
+        tk.Button(
+            main_frame,
+            text="Cancel",
+            command=dialog.destroy,
+            font=('Segoe UI', 10),
+            bg="#E1E1E1",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=20,
+            pady=8
+        ).pack(pady=(10, 0))
+
+    def _create_operation_button(self, parent, operation, dialog):
+        """Create a clickable operation card"""
+        card = tk.Frame(
+            parent,
+            bg="#F8F8F8",
+            relief=tk.RAISED,
+            borderwidth=1
+        )
+        card.pack(fill=tk.X, pady=5)
+
+        # Make entire card clickable
+        def on_click(event=None):
+            dialog.destroy()
+            self._configure_operation(self.current_file, operation)
+
+        card.bind('<Button-1>', on_click)
+
+        # Operation info
+        info_frame = tk.Frame(card, bg="#F8F8F8")
+        info_frame.pack(fill=tk.X, padx=10, pady=10)
+        info_frame.bind('<Button-1>', on_click)
+
+        name_label = tk.Label(
+            info_frame,
+            text=operation.metadata.name,
+            font=('Segoe UI', 11, 'bold'),
+            bg="#F8F8F8",
+            anchor=tk.W,
+            cursor="hand2"
+        )
+        name_label.pack(fill=tk.X)
+        name_label.bind('<Button-1>', on_click)
+
+        category_label = tk.Label(
+            info_frame,
+            text=f"[{operation.metadata.category}]",
+            font=('Segoe UI', 9),
+            bg="#F8F8F8",
+            fg="#666",
+            anchor=tk.W,
+            cursor="hand2"
+        )
+        category_label.pack(fill=tk.X)
+        category_label.bind('<Button-1>', on_click)
+
+        desc_label = tk.Label(
+            info_frame,
+            text=operation.metadata.description,
+            font=('Segoe UI', 9),
+            bg="#F8F8F8",
+            fg="#333",
+            anchor=tk.W,
+            wraplength=620,
+            justify=tk.LEFT,
+            cursor="hand2"
+        )
+        desc_label.pack(fill=tk.X, pady=(5, 0))
+        desc_label.bind('<Button-1>', on_click)
+
+    def _configure_operation(self, file_obj, operation, edit_mode=False, edit_index=None, current_params=None):
+        """Configure operation parameters and add/update in workflow"""
+        from tkinter import messagebox
+
+        # Validate file has data
+        if file_obj.get('df') is None or file_obj['df'].empty:
+            messagebox.showwarning("No Data", f"File '{file_obj['name']}' has no data to process.")
+            return
+
+        # Get columns with Excel-style letters
+        columns = self._get_columns_with_letters(file_obj['df'])
+
+        # Determine dialog type based on parameters
+        needs_single_column = any(p.type == 'column' for p in operation.metadata.parameters)
+        needs_multi_column = any(p.type == 'column_list' for p in operation.metadata.parameters)
+
+        if needs_single_column and not needs_multi_column:
+            self._show_single_column_dialog(file_obj, operation, columns, edit_mode, edit_index, current_params)
+        elif needs_multi_column:
+            self._show_multi_column_dialog(file_obj, operation, columns, edit_mode, edit_index, current_params)
+        else:
+            self._show_standard_parameter_dialog(file_obj, operation, edit_mode, edit_index, current_params)
+
+    def _get_columns_with_letters(self, df):
+        """Get column list with Excel-style letters"""
+        def excel_column_letter(n):
+            """Convert column number to Excel letter (1 -> A, 26 -> Z, 27 -> AA)"""
+            result = ""
+            while n > 0:
+                n -= 1
+                result = chr(65 + (n % 26)) + result
+                n //= 26
+            return result
+
+        columns = []
+        for i, col in enumerate(df.columns, 1):
+            letter = excel_column_letter(i)
+            columns.append(f"{letter}: {col}")
+        return columns
+
+    def _show_single_column_dialog(self, file_obj, operation, columns, edit_mode=False, edit_index=None, current_params=None):
+        """Show dialog for operations with single column parameter"""
+        from smart_column_selector import ColumnSelector
+
+        dialog = tk.Toplevel(self)
+        dialog.title(f"{'Edit' if edit_mode else 'Add'}: {operation.metadata.name}")
+        dialog.geometry("600x500")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+
+        main_frame = tk.Frame(dialog, bg="white", padx=20, pady=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Title and description
+        tk.Label(
+            main_frame,
+            text=operation.metadata.name,
+            font=('Segoe UI', 14, 'bold'),
+            bg="white"
+        ).pack(pady=(0, 10))
+
+        tk.Label(
+            main_frame,
+            text=operation.metadata.description,
+            wraplength=550,
+            font=('Segoe UI', 11),
+            bg="white"
+        ).pack(pady=(0, 5))
+
+        tk.Label(
+            main_frame,
+            text=f"Excel equivalent: {operation.metadata.excel_equivalent}",
+            font=('Segoe UI', 10),
+            fg="gray",
+            bg="white"
+        ).pack(pady=(0, 20))
+
+        param_widgets = {}
+
+        # Process each parameter
+        for param in operation.metadata.parameters:
+            param_frame = tk.Frame(main_frame, bg="white")
+            param_frame.pack(fill=tk.X, pady=10)
+
+            label_text = param.description
+            if param.required:
+                label_text += " *"
+
+            # Get current value if in edit mode
+            current_value = current_params.get(param.name) if current_params else None
+
+            if param.type == 'column':
+                # Use ColumnSelector
+                selector = ColumnSelector(param_frame, columns, label_text)
+                selector.pack(fill=tk.X)
+                # Pre-fill if editing
+                if current_value:
+                    selector.set_value(current_value)
+                param_widgets[param.name] = selector
+
+            elif param.type == 'text':
+                tk.Label(param_frame, text=label_text, font=('Segoe UI', 11, 'bold'), bg="white").pack(anchor=tk.W)
+                widget = tk.Entry(param_frame, font=('Segoe UI', 12))
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.insert(0, str(value_to_set))
+                widget.pack(fill=tk.X, pady=2)
+                param_widgets[param.name] = widget
+
+            elif param.type == 'number':
+                tk.Label(param_frame, text=label_text, font=('Segoe UI', 11, 'bold'), bg="white").pack(anchor=tk.W)
+                widget = tk.Entry(param_frame, font=('Segoe UI', 12))
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.insert(0, str(value_to_set))
+                widget.pack(fill=tk.X, pady=2)
+                param_widgets[param.name] = widget
+
+            elif param.type == 'boolean':
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else (param.default if param.default else False)
+                var = tk.BooleanVar(value=value_to_set)
+                widget = tk.Checkbutton(param_frame, text=label_text, variable=var, bg="white")
+                widget.pack(anchor=tk.W, pady=2)
+                param_widgets[param.name] = var
+
+            elif param.type == 'choice':
+                tk.Label(param_frame, text=label_text, font=('Segoe UI', 11, 'bold'), bg="white").pack(anchor=tk.W)
+                widget = ttk.Combobox(param_frame, values=param.choices,
+                                     font=('Segoe UI', 12), state='readonly')
+                # Pre-fill from current_params or use default
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.set(value_to_set)
+                elif param.choices:
+                    widget.set(param.choices[0])
+                widget.pack(fill=tk.X, pady=2)
+                param_widgets[param.name] = widget
+
+        def on_submit():
+            params = {}
+            for param in operation.metadata.parameters:
+                widget = param_widgets.get(param.name)
+                if widget:
+                    if isinstance(widget, tk.BooleanVar):
+                        params[param.name] = widget.get()
+                    elif isinstance(widget, ColumnSelector):
+                        params[param.name] = widget.get_value()
+                    elif isinstance(widget, (tk.Entry, ttk.Combobox)):
+                        value = widget.get()
+                        if param.type == 'number':
+                            try:
+                                value = float(value)
+                            except:
+                                value = 0
+                        params[param.name] = value
+
+            if edit_mode:
+                # Update existing operation
+                file_obj['operations'][edit_index] = {
+                    'name': operation.metadata.name,
+                    'type': operation.metadata.category,
+                    'parameters': params,
+                    'enabled': file_obj['operations'][edit_index].get('enabled', True)
+                }
+            else:
+                # Add new operation
+                operation_config = {
+                    'name': operation.metadata.name,
+                    'type': operation.metadata.category,
+                    'parameters': params,
+                    'enabled': True
+                }
+
+                if 'operations' not in file_obj:
+                    file_obj['operations'] = []
+
+                file_obj['operations'].append(operation_config)
+
+            self._update_workflow(file_obj)
+            dialog.destroy()
+
+        # Buttons
+        btn_frame = tk.Frame(main_frame, bg="white")
+        btn_frame.pack(fill=tk.X, pady=(20, 0))
+
+        tk.Button(
+            btn_frame,
+            text="Cancel",
+            command=dialog.destroy,
+            font=('Segoe UI', 10),
+            bg="#E1E1E1",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=20,
+            pady=8
+        ).pack(side=tk.LEFT, padx=5)
+
+        button_text = "✓ Update" if edit_mode else "✓ Add to Workflow"
+        tk.Button(
+            btn_frame,
+            text=button_text,
+            command=on_submit,
+            font=('Segoe UI', 10, 'bold'),
+            bg="#0078D4",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=20,
+            pady=8,
+            activebackground="#005A9E",
+            activeforeground="white"
+        ).pack(side=tk.RIGHT, padx=5)
+
+    def _show_multi_column_dialog(self, file_obj, operation, columns, edit_mode=False, edit_index=None, current_params=None):
+        """Show dialog for operations with multi-column parameter"""
+        from smart_column_selector import MultiColumnSelector
+
+        dialog = tk.Toplevel(self)
+        dialog.title(f"{'Edit' if edit_mode else 'Add'}: {operation.metadata.name}")
+        dialog.geometry("600x600")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+
+        main_frame = tk.Frame(dialog, bg="white", padx=20, pady=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Title and description
+        tk.Label(
+            main_frame,
+            text=operation.metadata.name,
+            font=('Segoe UI', 14, 'bold'),
+            bg="white"
+        ).pack(pady=(0, 10))
+
+        tk.Label(
+            main_frame,
+            text=operation.metadata.description,
+            wraplength=550,
+            font=('Segoe UI', 11),
+            bg="white"
+        ).pack(pady=(0, 5))
+
+        tk.Label(
+            main_frame,
+            text=f"Excel equivalent: {operation.metadata.excel_equivalent}",
+            font=('Segoe UI', 10),
+            fg="gray",
+            bg="white"
+        ).pack(pady=(0, 20))
+
+        param_widgets = {}
+
+        # Process each parameter
+        for param in operation.metadata.parameters:
+            param_frame = tk.Frame(main_frame, bg="white")
+            param_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+
+            label_text = param.description
+            if param.required:
+                label_text += " *"
+
+            # Get current value if in edit mode
+            current_value = current_params.get(param.name) if current_params else None
+
+            if param.type == 'column_list':
+                # Use MultiColumnSelector
+                selector = MultiColumnSelector(param_frame, columns, label_text, max_height=200)
+                selector.pack(fill=tk.BOTH, expand=True)
+                # Pre-fill if editing
+                if current_value and isinstance(current_value, list):
+                    for col_value in current_value:
+                        # Find matching column and select it
+                        for col in columns:
+                            if col_value in col or col.endswith(col_value):
+                                if col in selector.selected_vars:
+                                    selector.selected_vars[col].set(True)
+                                    if col not in selector.selection_order:
+                                        selector.selection_order.append(col)
+                                break
+                param_widgets[param.name] = selector
+
+            elif param.type == 'text':
+                tk.Label(param_frame, text=label_text, font=('Segoe UI', 11, 'bold'), bg="white").pack(anchor=tk.W)
+                widget = tk.Entry(param_frame, font=('Segoe UI', 12))
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.insert(0, str(value_to_set))
+                widget.pack(fill=tk.X, pady=2)
+                param_widgets[param.name] = widget
+
+            elif param.type == 'number':
+                tk.Label(param_frame, text=label_text, font=('Segoe UI', 11, 'bold'), bg="white").pack(anchor=tk.W)
+                widget = tk.Entry(param_frame, font=('Segoe UI', 12))
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.insert(0, str(value_to_set))
+                widget.pack(fill=tk.X, pady=2)
+                param_widgets[param.name] = widget
+
+            elif param.type == 'boolean':
+                value_to_set = current_value if current_value is not None else (param.default if param.default else False)
+                var = tk.BooleanVar(value=value_to_set)
+                widget = tk.Checkbutton(param_frame, text=label_text, variable=var, bg="white")
+                widget.pack(anchor=tk.W, pady=2)
+                param_widgets[param.name] = var
+
+            elif param.type == 'choice':
+                tk.Label(param_frame, text=label_text, font=('Segoe UI', 11, 'bold'), bg="white").pack(anchor=tk.W)
+                widget = ttk.Combobox(param_frame, values=param.choices,
+                                     font=('Segoe UI', 12), state='readonly')
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.set(value_to_set)
+                elif param.choices:
+                    widget.set(param.choices[0])
+                widget.pack(fill=tk.X, pady=2)
+                param_widgets[param.name] = widget
+
+        def on_submit():
+            params = {}
+            for param in operation.metadata.parameters:
+                widget = param_widgets.get(param.name)
+                if widget:
+                    if isinstance(widget, tk.BooleanVar):
+                        params[param.name] = widget.get()
+                    elif isinstance(widget, MultiColumnSelector):
+                        # Get selected columns (cleaned of Excel letters)
+                        selected = []
+                        for col in widget.selection_order:
+                            if ':' in col:
+                                selected.append(col.split(':', 1)[1].strip())
+                            else:
+                                selected.append(col)
+                        params[param.name] = selected
+                    elif isinstance(widget, (tk.Entry, ttk.Combobox)):
+                        value = widget.get()
+                        if param.type == 'number':
+                            try:
+                                value = float(value)
+                            except:
+                                value = 0
+                        params[param.name] = value
+
+            if edit_mode:
+                # Update existing operation
+                file_obj['operations'][edit_index] = {
+                    'name': operation.metadata.name,
+                    'type': operation.metadata.category,
+                    'parameters': params,
+                    'enabled': file_obj['operations'][edit_index].get('enabled', True)
+                }
+            else:
+                # Add new operation
+                operation_config = {
+                    'name': operation.metadata.name,
+                    'type': operation.metadata.category,
+                    'parameters': params,
+                    'enabled': True
+                }
+
+                if 'operations' not in file_obj:
+                    file_obj['operations'] = []
+
+                file_obj['operations'].append(operation_config)
+
+            self._update_workflow(file_obj)
+            dialog.destroy()
+
+        # Buttons
+        btn_frame = tk.Frame(main_frame, bg="white")
+        btn_frame.pack(fill=tk.X, pady=(20, 0))
+
+        tk.Button(
+            btn_frame,
+            text="Cancel",
+            command=dialog.destroy,
+            font=('Segoe UI', 10),
+            bg="#E1E1E1",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=20,
+            pady=8
+        ).pack(side=tk.LEFT, padx=5)
+
+        button_text = "✓ Update" if edit_mode else "✓ Add to Workflow"
+        tk.Button(
+            btn_frame,
+            text=button_text,
+            command=on_submit,
+            font=('Segoe UI', 10, 'bold'),
+            bg="#0078D4",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=20,
+            pady=8,
+            activebackground="#005A9E",
+            activeforeground="white"
+        ).pack(side=tk.RIGHT, padx=5)
+
+    def _show_standard_parameter_dialog(self, file_obj, operation, edit_mode=False, edit_index=None, current_params=None):
+        """Show dialog for operations without column parameters"""
+        from tkinter import messagebox
+
+        dialog = tk.Toplevel(self)
+        dialog.title(f"{'Edit' if edit_mode else 'Add'}: {operation.metadata.name}")
+        dialog.geometry("600x400")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+
+        main_frame = tk.Frame(dialog, bg="white", padx=20, pady=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Title and description
+        tk.Label(
+            main_frame,
+            text=operation.metadata.name,
+            font=('Segoe UI', 14, 'bold'),
+            bg="white"
+        ).pack(pady=(0, 10))
+
+        tk.Label(
+            main_frame,
+            text=operation.metadata.description,
+            wraplength=550,
+            font=('Segoe UI', 11),
+            bg="white"
+        ).pack(pady=(0, 5))
+
+        tk.Label(
+            main_frame,
+            text=f"Excel equivalent: {operation.metadata.excel_equivalent}",
+            font=('Segoe UI', 10),
+            fg="gray",
+            bg="white"
+        ).pack(pady=(0, 20))
+
+        param_widgets = {}
+
+        # Process each parameter
+        for param in operation.metadata.parameters:
+            param_frame = tk.Frame(main_frame, bg="white")
+            param_frame.pack(fill=tk.X, pady=10)
+
+            label_text = param.description
+            if param.required:
+                label_text += " *"
+
+            # Get current value if in edit mode
+            current_value = current_params.get(param.name) if current_params else None
+
+            if param.type == 'text':
+                tk.Label(param_frame, text=label_text, font=('Segoe UI', 11, 'bold'), bg="white").pack(anchor=tk.W)
+                widget = tk.Entry(param_frame, font=('Segoe UI', 12))
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.insert(0, str(value_to_set))
+                widget.pack(fill=tk.X, pady=2)
+                param_widgets[param.name] = widget
+
+            elif param.type == 'number':
+                tk.Label(param_frame, text=label_text, font=('Segoe UI', 11, 'bold'), bg="white").pack(anchor=tk.W)
+                widget = tk.Entry(param_frame, font=('Segoe UI', 12))
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.insert(0, str(value_to_set))
+                widget.pack(fill=tk.X, pady=2)
+                param_widgets[param.name] = widget
+
+            elif param.type == 'boolean':
+                value_to_set = current_value if current_value is not None else (param.default if param.default else False)
+                var = tk.BooleanVar(value=value_to_set)
+                widget = tk.Checkbutton(param_frame, text=label_text, variable=var, bg="white")
+                widget.pack(anchor=tk.W, pady=2)
+                param_widgets[param.name] = var
+
+            elif param.type == 'choice':
+                tk.Label(param_frame, text=label_text, font=('Segoe UI', 11, 'bold'), bg="white").pack(anchor=tk.W)
+                widget = ttk.Combobox(param_frame, values=param.choices,
+                                     font=('Segoe UI', 12), state='readonly')
+                value_to_set = current_value if current_value is not None else param.default
+                if value_to_set:
+                    widget.set(value_to_set)
+                elif param.choices:
+                    widget.set(param.choices[0])
+                widget.pack(fill=tk.X, pady=2)
+                param_widgets[param.name] = widget
+
+        def on_submit():
+            params = {}
+            for param in operation.metadata.parameters:
+                widget = param_widgets.get(param.name)
+                if widget:
+                    if isinstance(widget, tk.BooleanVar):
+                        params[param.name] = widget.get()
+                    elif isinstance(widget, (tk.Entry, ttk.Combobox)):
+                        value = widget.get()
+                        if param.type == 'number':
+                            try:
+                                value = float(value)
+                            except:
+                                value = 0
+                        params[param.name] = value
+
+            if edit_mode:
+                # Update existing operation
+                file_obj['operations'][edit_index] = {
+                    'name': operation.metadata.name,
+                    'type': operation.metadata.category,
+                    'parameters': params,
+                    'enabled': file_obj['operations'][edit_index].get('enabled', True)
+                }
+            else:
+                # Add new operation
+                operation_config = {
+                    'name': operation.metadata.name,
+                    'type': operation.metadata.category,
+                    'parameters': params,
+                    'enabled': True
+                }
+
+                if 'operations' not in file_obj:
+                    file_obj['operations'] = []
+
+                file_obj['operations'].append(operation_config)
+
+            self._update_workflow(file_obj)
+            dialog.destroy()
+
+        # Buttons
+        btn_frame = tk.Frame(main_frame, bg="white")
+        btn_frame.pack(fill=tk.X, pady=(20, 0))
+
+        tk.Button(
+            btn_frame,
+            text="Cancel",
+            command=dialog.destroy,
+            font=('Segoe UI', 10),
+            bg="#E1E1E1",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=20,
+            pady=8
+        ).pack(side=tk.LEFT, padx=5)
+
+        button_text = "✓ Update" if edit_mode else "✓ Add to Workflow"
+        tk.Button(
+            btn_frame,
+            text=button_text,
+            command=on_submit,
+            font=('Segoe UI', 10, 'bold'),
+            bg="#0078D4",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=20,
+            pady=8,
+            activebackground="#005A9E",
+            activeforeground="white"
+        ).pack(side=tk.RIGHT, padx=5)
