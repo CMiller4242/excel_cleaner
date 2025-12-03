@@ -99,8 +99,10 @@ class SimpleBatchExecutor:
         # Import the working executor (SAME AS SINGLE FILE MODE)
         from engine.executor import OperationExecutor
         from engine.validator import Validator
+        from operations.registry import get_registry
 
         executor = OperationExecutor()
+        registry = get_registry()
 
         # Convert operation configs to queue format
         operation_queue = []
@@ -109,10 +111,23 @@ class SimpleBatchExecutor:
             if not op_config.get('enabled', True):
                 continue
 
+            # Get operation name (stored in batch mode)
+            op_name = op_config.get('name')
+
+            # Find operation in registry by name to get the ID
+            operation = None
+            for op in registry.list_all():
+                if op.metadata.name == op_name or op.metadata.id == op_name:
+                    operation = op
+                    break
+
+            if not operation:
+                raise ValueError(f"Operation '{op_name}' not found in registry")
+
             # Convert to queue format (operation_id, name, parameters)
             queue_item = {
-                'operation_id': op_config.get('name'),  # Use name as ID for now
-                'name': op_config.get('name'),
+                'operation_id': operation.metadata.id,  # Use the actual operation ID
+                'name': operation.metadata.name,
                 'parameters': op_config.get('parameters', {}),
                 'enabled': True
             }
