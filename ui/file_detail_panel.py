@@ -328,19 +328,35 @@ class FileDetailPanel(tk.Frame):
         self.operations_count_label.config(text=f"({len(operations)} operations)")
 
         if not operations:
-            self.no_ops_label = tk.Label(
+            tk.Label(
                 self.operations_frame,
-                text="No operations in workflow",
+                text="No operations in workflow\nAdd operations or apply a preset",
                 font=('Segoe UI', 10),
                 bg="white",
-                fg="#999"
-            )
-            self.no_ops_label.pack(pady=20)
+                fg="#999",
+                justify=tk.CENTER
+            ).pack(pady=20)
         else:
-            for idx, op in enumerate(operations, 1):
-                self._create_operation_card(op, idx)
+            # Show preset name if applied
+            preset_name = file_obj.get('preset_name')
+            if preset_name:
+                preset_label = tk.Label(
+                    self.operations_frame,
+                    text=f"📋 Preset: {preset_name}",
+                    font=('Segoe UI', 9, 'italic'),
+                    bg="#E6F2FF",
+                    fg="#0078D4",
+                    anchor=tk.W,
+                    padx=10,
+                    pady=5
+                )
+                preset_label.pack(fill=tk.X, pady=(0, 10))
 
-    def _create_operation_card(self, operation, index):
+            # Display each operation
+            for idx, op in enumerate(operations, 1):
+                self._create_operation_card(op, idx, file_obj)
+
+    def _create_operation_card(self, operation, index, file_obj):
         """Create UI card for an operation"""
         card = tk.Frame(
             self.operations_frame,
@@ -354,16 +370,29 @@ class FileDetailPanel(tk.Frame):
         header = tk.Frame(card, bg="#E1E1E1")
         header.pack(fill=tk.X)
 
-        # Get operation name
+        # Get operation name and status
         op_name = operation.get('name', operation.get('operation', 'Unknown Operation'))
+        enabled = operation.get('enabled', True)
+        status_icon = "✓" if enabled else "○"
 
         tk.Label(
             header,
-            text=f"{index}. ✓ {op_name}",
+            text=f"{index}. {status_icon} {op_name}",
             font=('Segoe UI', 10, 'bold'),
             bg="#E1E1E1",
-            fg="#333"
+            fg="#333" if enabled else "#999"
         ).pack(side=tk.LEFT, padx=10, pady=5)
+
+        # Operation type/category
+        op_type = operation.get('type', operation.get('category', ''))
+        if op_type:
+            tk.Label(
+                header,
+                text=f"[{op_type}]",
+                font=('Segoe UI', 8),
+                bg="#E1E1E1",
+                fg="#666"
+            ).pack(side=tk.LEFT, padx=5)
 
         # Operation parameters
         params = operation.get('params', operation.get('parameters', {}))
@@ -371,7 +400,7 @@ class FileDetailPanel(tk.Frame):
             params_frame = tk.Frame(card, bg="#F3F3F3")
             params_frame.pack(fill=tk.X, padx=10, pady=5)
 
-            for key, value in params.items():
+            for key, value in list(params.items())[:3]:
                 # Format value nicely
                 if isinstance(value, list):
                     if len(value) > 3:
@@ -385,29 +414,63 @@ class FileDetailPanel(tk.Frame):
 
                 tk.Label(
                     params_frame,
-                    text=f"  {key}: {value_str}",
+                    text=f"  • {key}: {value_str}",
                     font=('Segoe UI', 9),
                     bg="#F3F3F3",
                     fg="#666",
                     anchor=tk.W
                 ).pack(fill=tk.X)
 
+            if len(params) > 3:
+                tk.Label(
+                    params_frame,
+                    text=f"  ... and {len(params) - 3} more parameters",
+                    font=('Segoe UI', 8, 'italic'),
+                    bg="#F3F3F3",
+                    fg="#999"
+                ).pack(fill=tk.X)
+
         # Action buttons
         btn_frame = tk.Frame(card, bg="#F3F3F3")
         btn_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        for text in ["Edit", "Delete", "Disable"]:
-            tk.Button(
-                btn_frame,
-                text=text,
-                font=('Segoe UI', 8),
-                relief=tk.FLAT,
-                cursor="hand2",
-                padx=10,
-                bg="#E1E1E1",
-                activebackground="#CCC",
-                command=lambda t=text, o=operation: self._on_operation_action(t, o)
-            ).pack(side=tk.LEFT, padx=(0, 5))
+        tk.Button(
+            btn_frame,
+            text="Edit",
+            command=lambda: self._edit_operation(file_obj, index - 1),
+            font=('Segoe UI', 8),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=10,
+            bg="#E1E1E1",
+            activebackground="#CCC"
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        tk.Button(
+            btn_frame,
+            text="Delete",
+            command=lambda: self._delete_operation(file_obj, index - 1),
+            font=('Segoe UI', 8),
+            relief=tk.FLAT,
+            cursor="hand2",
+            fg="red",
+            padx=10,
+            bg="#E1E1E1",
+            activebackground="#CCC"
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        toggle_text = "Disable" if enabled else "Enable"
+        tk.Button(
+            btn_frame,
+            text=toggle_text,
+            command=lambda: self._toggle_operation(file_obj, index - 1),
+            font=('Segoe UI', 8),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=10,
+            bg="#E1E1E1",
+            activebackground="#CCC"
+        ).pack(side=tk.LEFT)
 
     def switch_tab(self, tab):
         """Switch between Original and Results tabs"""
@@ -432,8 +495,20 @@ class FileDetailPanel(tk.Frame):
 
     # Event handlers
     def _on_add_operation(self):
+        """Open dialog to add an operation with file context"""
+        from tkinter import messagebox
+
+        if not self.current_file:
+            messagebox.showwarning("No File", "Please select a file first")
+            return
+
+        # For now, delegate to app's operation sidebar but pass file context
+        # In the future, this could show a custom operation selector dialog
         if self.app and hasattr(self.app, 'toggle_operations_sidebar'):
             self.app.toggle_operations_sidebar()
+            # Store current file context for operations to use
+            if hasattr(self.app, 'batch_mode_current_file'):
+                self.app.batch_mode_current_file = self.current_file
 
     def _on_run_workflow(self):
         if self.app and self.current_file and hasattr(self.app, 'run_workflow_for_file'):
@@ -444,14 +519,35 @@ class FileDetailPanel(tk.Frame):
             self.app.copy_workflow_to_selected(self.current_file['name'] if self.current_file else None)
 
     def _on_apply_preset(self):
-        if self.app and hasattr(self.app, 'apply_preset_to_selected_files'):
-            self.app.apply_preset_to_selected_files(None)
+        """Apply preset to selected files via file list panel"""
+        if self.app and hasattr(self.app, 'file_list_panel'):
+            self.app.file_list_panel.apply_preset_to_selected()
 
     def _on_clear_workflow(self):
-        if self.current_file:
-            self.current_file['operations'] = []
-            self._update_workflow(self.current_file)
+        from tkinter import messagebox
 
-    def _on_operation_action(self, action, operation):
-        # Handle Edit, Delete, Disable actions
-        print(f"{action} operation: {operation.get('name', 'Unknown')}")
+        if self.current_file:
+            if messagebox.askyesno("Confirm Clear", "Remove all operations from this workflow?"):
+                self.current_file['operations'] = []
+                self.current_file.pop('preset_name', None)  # Remove preset name if any
+                self._update_workflow(self.current_file)
+
+    def _edit_operation(self, file_obj, op_index):
+        """Edit an operation's parameters"""
+        # TODO: Open operation edit dialog
+        from tkinter import messagebox
+        messagebox.showinfo("Edit Operation", "Operation editing coming soon!\n\nFor now, delete and re-add the operation.")
+
+    def _delete_operation(self, file_obj, op_index):
+        """Delete an operation from workflow"""
+        from tkinter import messagebox
+
+        if messagebox.askyesno("Confirm Delete", "Remove this operation from workflow?"):
+            file_obj['operations'].pop(op_index)
+            self._update_workflow(file_obj)
+
+    def _toggle_operation(self, file_obj, op_index):
+        """Enable/disable an operation"""
+        operation = file_obj['operations'][op_index]
+        operation['enabled'] = not operation.get('enabled', True)
+        self._update_workflow(file_obj)
