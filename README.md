@@ -41,6 +41,11 @@ python main_gui_v2_office365.py
 - 🔐 **Enhanced Authentication** - Secure user management with MongoDB
 - 📊 **Improved Data Quality Analyzer** - Smart issue detection and fixes
 - 🤖 **AI-Powered Assistant** - Context-aware data cleaning suggestions
+- 📁 **Multi-File Handling** - Batch process and combine multiple files
+  - Process up to 100 files with same operations
+  - Combine files with smart column matching
+  - Group by column values
+  - Export as ZIP, folder, or single file
 
 ### Core Capabilities
 
