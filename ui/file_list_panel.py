@@ -4,8 +4,10 @@ Left pane showing list of loaded files with selection
 """
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from pathlib import Path
+import json
+import os
 
 
 class FileListPanel(tk.Frame):
@@ -400,6 +402,109 @@ class FileListPanel(tk.Frame):
         file_names = [f['name'] for f in self.files]
         self.copy_from_combo['values'] = file_names
 
+    def _find_preset_file(self, preset_name):
+        """Find preset file by name"""
+        preset_dirs = [
+            'presets/system',
+            'presets/user',
+            os.path.join(os.path.expanduser('~'), '.config', 'CleanSheet', 'presets')
+        ]
+
+        for preset_dir in preset_dirs:
+            if not os.path.exists(preset_dir):
+                continue
+
+            for file in os.listdir(preset_dir):
+                if file.endswith('.json'):
+                    file_path = os.path.join(preset_dir, file)
+                    try:
+                        with open(file_path, 'r') as f:
+                            data = json.load(f)
+                            if data.get('name') == preset_name:
+                                return file_path
+                    except Exception:
+                        continue
+
+        return None
+
+    def populate_preset_dropdown(self):
+        """Load available presets into dropdown"""
+        presets = []
+
+        preset_dirs = [
+            'presets/system',
+            'presets/user',
+            os.path.join(os.path.expanduser('~'), '.config', 'CleanSheet', 'presets')
+        ]
+
+        for preset_dir in preset_dirs:
+            if not os.path.exists(preset_dir):
+                continue
+
+            for file in os.listdir(preset_dir):
+                if file.endswith('.json'):
+                    file_path = os.path.join(preset_dir, file)
+                    try:
+                        with open(file_path, 'r') as f:
+                            data = json.load(f)
+                            preset_name = data.get('name', file.replace('.json', ''))
+                            if preset_name not in presets:
+                                presets.append(preset_name)
+                    except Exception:
+                        continue
+
+        self.preset_combo['values'] = sorted(presets)
+
+    def apply_preset_to_selected(self, preset_name=None):
+        """Apply selected preset to all checked files"""
+        if not preset_name:
+            preset_name = self.preset_combo.get()
+
+        if not preset_name:
+            messagebox.showwarning("No Preset", "Please select a preset first")
+            return
+
+        selected_files = self.get_selected_files()
+
+        if not selected_files:
+            messagebox.showwarning("No Files", "Please select files to apply preset to")
+            return
+
+        # Load preset operations
+        preset_path = self._find_preset_file(preset_name)
+        if not preset_path:
+            messagebox.showerror("Error", f"Preset '{preset_name}' not found")
+            return
+
+        try:
+            with open(preset_path, 'r') as f:
+                preset_data = json.load(f)
+
+            operations = preset_data.get('operations', [])
+
+            if not operations:
+                messagebox.showwarning("Empty Preset", "This preset has no operations")
+                return
+
+            # Apply to each selected file
+            for file_obj in selected_files:
+                # CRITICAL: Store operations in file object
+                file_obj['operations'] = operations.copy()
+                file_obj['preset_name'] = preset_name
+
+            messagebox.showinfo(
+                "Success",
+                f"Applied preset '{preset_name}' to {len(selected_files)} file(s)"
+            )
+
+            # If a file is currently selected, refresh its detail view
+            if self.selected_file and self.selected_file in selected_files:
+                if self.app and hasattr(self.app, '_on_file_selected'):
+                    self.app._on_file_selected(self.selected_file)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to apply preset:\n{str(e)}")
+
     def _on_frame_configure(self, event):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
@@ -421,10 +526,8 @@ class FileListPanel(tk.Frame):
         pass  # Could add visual feedback for selection
 
     def _on_apply_preset_to_selected(self, event=None):
-        if self.app and hasattr(self.app, 'apply_preset_to_selected_files'):
-            preset_name = self.preset_combo.get()
-            if preset_name:
-                self.app.apply_preset_to_selected_files(preset_name)
+        # Call the new direct method instead of delegating to app
+        self.apply_preset_to_selected()
 
     def _on_copy_workflow(self):
         if self.app and hasattr(self.app, 'copy_workflow_to_selected'):

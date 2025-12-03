@@ -857,10 +857,9 @@ class CleanSheetApp:
         )
         self.file_detail_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Update presets in file list panel
-        if hasattr(self, 'preset_manager'):
-            preset_names = self.preset_manager.list_presets()
-            self.file_list_panel.preset_combo['values'] = preset_names
+        # Populate presets in file list panel
+        if hasattr(self.file_list_panel, 'populate_preset_dropdown'):
+            self.file_list_panel.populate_preset_dropdown()
 
     def _on_file_selected(self, file_obj):
         """Handle file selection in left pane"""
