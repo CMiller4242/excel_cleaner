@@ -17,7 +17,6 @@ class FileDetailPanel(tk.Frame):
 
         self.app = app_ref
         self.current_file = None
-        self.current_tab = "original"
 
         self._create_widgets()
 
@@ -82,6 +81,7 @@ class FileDetailPanel(tk.Frame):
         self._create_workflow_section()
 
     def _create_data_preview(self):
+        """Create data preview section using tksheet (same as single file mode)"""
         preview_frame = tk.LabelFrame(
             self.content_frame,
             text="📊 DATA PREVIEW",
@@ -91,50 +91,11 @@ class FileDetailPanel(tk.Frame):
         )
         preview_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
 
-        # Tab control
-        tab_frame = tk.Frame(preview_frame, bg="white")
-        tab_frame.pack(fill=tk.X, padx=10, pady=10)
+        # Use the same EnhancedDataPreview component from single file mode
+        from enhanced_preview import EnhancedDataPreview
 
-        self.original_tab_btn = tk.Button(
-            tab_frame,
-            text="Original",
-            command=lambda: self.switch_tab("original"),
-            font=('Segoe UI', 10),
-            relief=tk.FLAT,
-            bg="#0078D4",
-            fg="white",
-            cursor="hand2",
-            padx=20,
-            activebackground="#005A9E",
-            activeforeground="white"
-        )
-        self.original_tab_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.results_tab_btn = tk.Button(
-            tab_frame,
-            text="Results",
-            command=lambda: self.switch_tab("results"),
-            font=('Segoe UI', 10),
-            relief=tk.FLAT,
-            bg="#E1E1E1",
-            fg="#333",
-            cursor="hand2",
-            padx=20,
-            activebackground="#CCC"
-        )
-        self.results_tab_btn.pack(side=tk.LEFT)
-
-        # Data grid placeholder
-        self.data_grid_frame = tk.Frame(preview_frame, bg="white", height=300)
-        self.data_grid_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-
-        tk.Label(
-            self.data_grid_frame,
-            text="Select a file to view data preview",
-            font=('Segoe UI', 10),
-            bg="white",
-            fg="#999"
-        ).pack(pady=50)
+        self.data_preview = EnhancedDataPreview(preview_frame)
+        self.data_preview.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
     def _create_workflow_section(self):
         workflow_frame = tk.LabelFrame(
@@ -255,66 +216,17 @@ class FileDetailPanel(tk.Frame):
         self._update_workflow(file_obj)
 
     def _update_data_preview(self, file_obj):
-        """Update data grid with file data"""
-        # Clear existing
-        for widget in self.data_grid_frame.winfo_children():
-            widget.destroy()
+        """Update data grid with file data using tksheet"""
+        if not hasattr(self, 'data_preview'):
+            return
 
-        # Get the appropriate DataFrame
-        if self.current_tab == "results" and 'result_df' in file_obj and file_obj['result_df'] is not None:
-            df = file_obj['result_df']
-        else:
-            df = file_obj['df']
+        # Load original data into preview
+        if file_obj.get('df') is not None and not file_obj['df'].empty:
+            self.data_preview.load_dataframe(file_obj['df'], is_result=False)
 
-        # Create simple preview (first 10 rows)
-        preview_text = self._format_dataframe_preview(df)
-
-        text_widget = tk.Text(
-            self.data_grid_frame,
-            font=('Courier New', 9),
-            bg="white",
-            wrap=tk.NONE,
-            height=15
-        )
-        text_widget.pack(fill=tk.BOTH, expand=True)
-
-        # Add scrollbars
-        h_scroll = tk.Scrollbar(self.data_grid_frame, orient=tk.HORIZONTAL, command=text_widget.xview)
-        h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
-        text_widget.config(xscrollcommand=h_scroll.set)
-
-        text_widget.insert('1.0', preview_text)
-        text_widget.config(state=tk.DISABLED)
-
-    def _format_dataframe_preview(self, df, max_rows=10):
-        """Format DataFrame as text preview"""
-        if df is None or len(df) == 0:
-            return "No data available"
-
-        # Get column headers
-        headers = list(df.columns)
-        col_widths = [max(len(str(h)), 10) for h in headers]
-
-        # Adjust column widths based on data
-        for i, col in enumerate(df.columns):
-            max_width = max(df[col].head(max_rows).astype(str).str.len().max(), col_widths[i])
-            col_widths[i] = min(max_width, 30)  # Cap at 30 chars
-
-        # Format header
-        header_line = " | ".join(str(h).ljust(w) for h, w in zip(headers, col_widths))
-        separator = "-" * len(header_line)
-
-        lines = [header_line, separator]
-
-        # Format data rows
-        for idx, row in df.head(max_rows).iterrows():
-            row_line = " | ".join(str(row[col])[:w].ljust(w) for col, w in zip(df.columns, col_widths))
-            lines.append(row_line)
-
-        if len(df) > max_rows:
-            lines.append(f"\n... ({len(df) - max_rows} more rows)")
-
-        return "\n".join(lines)
+        # If file has been processed, show results
+        if 'result_df' in file_obj and file_obj['result_df'] is not None and not file_obj['result_df'].empty:
+            self.data_preview.load_dataframe(file_obj['result_df'], is_result=True)
 
     def _update_workflow(self, file_obj):
         """Update workflow operations list"""
@@ -471,21 +383,6 @@ class FileDetailPanel(tk.Frame):
             bg="#E1E1E1",
             activebackground="#CCC"
         ).pack(side=tk.LEFT)
-
-    def switch_tab(self, tab):
-        """Switch between Original and Results tabs"""
-        self.current_tab = tab
-
-        if tab == "original":
-            self.original_tab_btn.config(bg="#0078D4", fg="white")
-            self.results_tab_btn.config(bg="#E1E1E1", fg="#333")
-        else:
-            self.original_tab_btn.config(bg="#E1E1E1", fg="#333")
-            self.results_tab_btn.config(bg="#0078D4", fg="white")
-
-        # Refresh data preview
-        if self.current_file:
-            self._update_data_preview(self.current_file)
 
     def _on_frame_configure(self, event):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
@@ -793,14 +690,58 @@ class FileDetailPanel(tk.Frame):
             messagebox.showwarning("No Data", f"File '{file_obj['name']}' has no data to process.")
             return
 
+        # Check if operation has a custom show_dialog() method
+        if hasattr(operation, 'show_dialog') and callable(operation.show_dialog):
+            # Create DataContext wrapper to pass DataFrame to operation's custom dialog
+            class DataContext:
+                """Temporary container to pass DataFrame to operation dialogs"""
+                def __init__(self, df, app=None):
+                    self.df = df
+                    self.data = df
+                    self.app = app
+
+            context = DataContext(file_obj['df'], app=self.app)
+
+            try:
+                # Call operation's custom show_dialog with context and initial params
+                result = operation.show_dialog(parent=context, initial_params=current_params)
+
+                if result:
+                    # Add or update operation in workflow
+                    operation_config = {
+                        'name': operation.metadata.name,
+                        'type': operation.metadata.category,
+                        'parameters': result,
+                        'enabled': True
+                    }
+
+                    if edit_mode:
+                        # Update existing operation
+                        operation_config['enabled'] = file_obj['operations'][edit_index].get('enabled', True)
+                        file_obj['operations'][edit_index] = operation_config
+                    else:
+                        # Add new operation
+                        if 'operations' not in file_obj:
+                            file_obj['operations'] = []
+                        file_obj['operations'].append(operation_config)
+
+                    self._update_workflow(file_obj)
+
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to configure operation:\n{str(e)}")
+            return
+
         # Get columns with Excel-style letters
         columns = self._get_columns_with_letters(file_obj['df'])
 
         # Determine dialog type based on parameters
+        needs_column_rename = any(p.type == 'column_rename_list' for p in operation.metadata.parameters)
         needs_single_column = any(p.type == 'column' for p in operation.metadata.parameters)
         needs_multi_column = any(p.type == 'column_list' for p in operation.metadata.parameters)
 
-        if needs_single_column and not needs_multi_column:
+        if needs_column_rename:
+            self._show_column_rename_dialog(file_obj, operation, columns, edit_mode, edit_index, current_params)
+        elif needs_single_column and not needs_multi_column:
             self._show_single_column_dialog(file_obj, operation, columns, edit_mode, edit_index, current_params)
         elif needs_multi_column:
             self._show_multi_column_dialog(file_obj, operation, columns, edit_mode, edit_index, current_params)
@@ -1335,6 +1276,307 @@ class FileDetailPanel(tk.Frame):
         button_text = "✓ Update" if edit_mode else "✓ Add to Workflow"
         tk.Button(
             btn_frame,
+            text=button_text,
+            command=on_submit,
+            font=('Segoe UI', 10, 'bold'),
+            bg="#0078D4",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=20,
+            pady=8,
+            activebackground="#005A9E",
+            activeforeground="white"
+        ).pack(side=tk.RIGHT, padx=5)
+
+    def _show_column_rename_dialog(self, file_obj, operation, columns, edit_mode=False, edit_index=None, current_params=None):
+        """Show dialog for renaming multiple columns"""
+        from tkinter import messagebox
+
+        # Strip Excel letters from columns to get actual column names
+        actual_columns = []
+        for col in columns:
+            if ':' in col:
+                actual_columns.append(col.split(':', 1)[1].strip())
+            else:
+                actual_columns.append(col)
+
+        dialog = tk.Toplevel(self)
+        dialog.title(f"{'Edit' if edit_mode else 'Add'}: {operation.metadata.name}")
+        dialog.geometry("750x600")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+
+        main_frame = tk.Frame(dialog, bg="white", padx=20, pady=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Title and description
+        tk.Label(
+            main_frame,
+            text=operation.metadata.name,
+            font=('Segoe UI', 14, 'bold'),
+            bg="white"
+        ).pack(pady=(0, 10))
+
+        tk.Label(
+            main_frame,
+            text=operation.metadata.description,
+            wraplength=700,
+            font=('Segoe UI', 11),
+            bg="white"
+        ).pack(pady=(0, 5))
+
+        tk.Label(
+            main_frame,
+            text=f"Excel equivalent: {operation.metadata.excel_equivalent}",
+            font=('Segoe UI', 10),
+            fg="gray",
+            bg="white"
+        ).pack(pady=(0, 20))
+
+        # Instructions
+        tk.Label(
+            main_frame,
+            text="Select columns to rename and enter new names:",
+            font=('Segoe UI', 10),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(0, 10))
+
+        # Scrollable frame for column mappings
+        canvas_frame = tk.Frame(main_frame, bg="white")
+        canvas_frame.pack(fill=tk.BOTH, expand=True)
+
+        canvas = tk.Canvas(canvas_frame, bg="white", highlightthickness=0)
+        scrollbar = tk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg="white")
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Store mapping rows
+        mapping_rows = []
+
+        def create_mapping_row(old_name=None, new_name=""):
+            """Create a row for column mapping"""
+            row_frame = tk.Frame(scrollable_frame, bg="white")
+            row_frame.pack(fill=tk.X, pady=5)
+
+            # Old column name (dropdown)
+            tk.Label(
+                row_frame,
+                text="Old:",
+                font=('Segoe UI', 9),
+                bg="white",
+                width=5
+            ).pack(side=tk.LEFT, padx=(0, 5))
+
+            old_var = tk.StringVar(value=old_name if old_name else "")
+            old_combo = ttk.Combobox(
+                row_frame,
+                textvariable=old_var,
+                values=actual_columns,
+                state="readonly",
+                width=28,
+                font=('Segoe UI', 9)
+            )
+            old_combo.pack(side=tk.LEFT, padx=(0, 15))
+
+            # Arrow
+            tk.Label(
+                row_frame,
+                text="→",
+                font=('Segoe UI', 12),
+                bg="white"
+            ).pack(side=tk.LEFT, padx=(0, 15))
+
+            # New column name (text entry)
+            tk.Label(
+                row_frame,
+                text="New:",
+                font=('Segoe UI', 9),
+                bg="white",
+                width=5
+            ).pack(side=tk.LEFT, padx=(0, 5))
+
+            new_var = tk.StringVar(value=new_name)
+            new_entry = tk.Entry(
+                row_frame,
+                textvariable=new_var,
+                width=30,
+                font=('Segoe UI', 9)
+            )
+            new_entry.pack(side=tk.LEFT, padx=(0, 10))
+
+            # Remove button
+            remove_btn = tk.Button(
+                row_frame,
+                text="✕",
+                command=lambda: remove_row(row_frame),
+                font=('Segoe UI', 10, 'bold'),
+                fg="red",
+                bg="white",
+                relief=tk.FLAT,
+                cursor="hand2",
+                width=3
+            )
+            remove_btn.pack(side=tk.LEFT)
+
+            mapping_rows.append({
+                'frame': row_frame,
+                'old_var': old_var,
+                'new_var': new_var
+            })
+
+            return row_frame
+
+        def remove_row(row_frame):
+            """Remove a mapping row"""
+            for i, row in enumerate(mapping_rows):
+                if row['frame'] == row_frame:
+                    row_frame.destroy()
+                    mapping_rows.pop(i)
+                    break
+
+        def add_row():
+            """Add a new mapping row"""
+            create_mapping_row()
+            canvas.update_idletasks()
+            canvas.yview_moveto(1.0)  # Scroll to bottom
+
+        # Load initial mappings if editing
+        if current_params and 'column_mappings' in current_params:
+            for mapping in current_params['column_mappings']:
+                create_mapping_row(
+                    old_name=mapping.get('old_name', ''),
+                    new_name=mapping.get('new_name', '')
+                )
+        else:
+            # Create 3 empty rows by default
+            for _ in range(3):
+                create_mapping_row()
+
+        # Add/Remove buttons
+        btn_frame = tk.Frame(main_frame, bg="white")
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+
+        tk.Button(
+            btn_frame,
+            text="+ Add Row",
+            command=add_row,
+            font=('Segoe UI', 9),
+            bg="#0078D4",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=5
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        tk.Label(
+            btn_frame,
+            text=f"Available columns: {len(actual_columns)}",
+            font=('Segoe UI', 9),
+            bg="white",
+            fg="#666"
+        ).pack(side=tk.LEFT)
+
+        def on_submit():
+            """Validate and save mappings"""
+            mappings = []
+
+            for row in mapping_rows:
+                old_name = row['old_var'].get()
+                new_name = row['new_var'].get().strip()
+
+                # Skip empty rows
+                if not old_name or not new_name:
+                    continue
+
+                # Check for duplicates
+                if old_name == new_name:
+                    messagebox.showwarning(
+                        "Invalid Mapping",
+                        f"Column '{old_name}' has the same old and new name.\n\n"
+                        "Please change the new name or remove this row."
+                    )
+                    return
+
+                mappings.append({
+                    'old_name': old_name,
+                    'new_name': new_name
+                })
+
+            if not mappings:
+                messagebox.showwarning(
+                    "No Mappings",
+                    "Please add at least one column mapping before saving."
+                )
+                return
+
+            # Check for duplicate new names
+            new_names = [m['new_name'] for m in mappings]
+            if len(new_names) != len(set(new_names)):
+                messagebox.showwarning(
+                    "Duplicate Names",
+                    "Cannot use the same new name for multiple columns.\n\n"
+                    "Please ensure all new names are unique."
+                )
+                return
+
+            params = {'column_mappings': mappings}
+
+            if edit_mode:
+                # Update existing operation
+                file_obj['operations'][edit_index] = {
+                    'name': operation.metadata.name,
+                    'type': operation.metadata.category,
+                    'parameters': params,
+                    'enabled': file_obj['operations'][edit_index].get('enabled', True)
+                }
+            else:
+                # Add new operation
+                operation_config = {
+                    'name': operation.metadata.name,
+                    'type': operation.metadata.category,
+                    'parameters': params,
+                    'enabled': True
+                }
+
+                if 'operations' not in file_obj:
+                    file_obj['operations'] = []
+
+                file_obj['operations'].append(operation_config)
+
+            self._update_workflow(file_obj)
+            dialog.destroy()
+
+        # Dialog buttons
+        button_frame = tk.Frame(main_frame, bg="white")
+        button_frame.pack(fill=tk.X, pady=(20, 0))
+
+        tk.Button(
+            button_frame,
+            text="Cancel",
+            command=dialog.destroy,
+            font=('Segoe UI', 10),
+            bg="#E1E1E1",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=20,
+            pady=8
+        ).pack(side=tk.LEFT, padx=5)
+
+        button_text = "✓ Update" if edit_mode else "✓ Add to Workflow"
+        tk.Button(
+            button_frame,
             text=button_text,
             command=on_submit,
             font=('Segoe UI', 10, 'bold'),
