@@ -798,11 +798,16 @@ class CleanSheetApp:
         if self.file_panel_visible:
             return
 
-        # Create horizontal paned window if it doesn't exist
-        if not hasattr(self, 'horizontal_paned'):
-            # This should be called from create_widgets, but for now we skip UI restructuring
-            pass
+        # Hide single-file UI
+        if hasattr(self, 'main_paned'):
+            self.main_paned.pack_forget()
 
+        # Create split pane if it doesn't exist
+        if not hasattr(self, 'split_pane_container'):
+            self._create_split_pane()
+
+        # Show split pane
+        self.split_pane_container.pack(fill='both', expand=True, padx=10, pady=5)
         self.file_panel_visible = True
         self.status_var.set("Batch mode enabled - Load multiple files")
 
@@ -811,8 +816,56 @@ class CleanSheetApp:
         if not self.file_panel_visible:
             return
 
+        # Hide split pane
+        if hasattr(self, 'split_pane_container'):
+            self.split_pane_container.pack_forget()
+
+        # Show single-file UI
+        if hasattr(self, 'main_paned'):
+            self.main_paned.pack(fill='both', expand=True, padx=10, pady=5)
+
         self.file_panel_visible = False
         self.status_var.set("Single file mode enabled")
+
+    def _create_split_pane(self):
+        """Create the split pane layout for batch mode"""
+        from ui.file_list_panel import FileListPanel
+        from ui.file_detail_panel import FileDetailPanel
+
+        self.split_pane_container = tk.Frame(self.root, bg="white")
+
+        # Left pane (file list)
+        self.file_list_panel = FileListPanel(
+            self.split_pane_container,
+            app_ref=self
+        )
+        self.file_list_panel.pack(side=tk.LEFT, fill=tk.Y)
+
+        # Resizable divider
+        divider = tk.Frame(
+            self.split_pane_container,
+            bg="#CCC",
+            width=2,
+            cursor="sb_h_double_arrow"
+        )
+        divider.pack(side=tk.LEFT, fill=tk.Y)
+
+        # Right pane (file detail)
+        self.file_detail_panel = FileDetailPanel(
+            self.split_pane_container,
+            app_ref=self
+        )
+        self.file_detail_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Update presets in file list panel
+        if hasattr(self, 'preset_manager'):
+            preset_names = self.preset_manager.list_presets()
+            self.file_list_panel.preset_combo['values'] = preset_names
+
+    def _on_file_selected(self, file_obj):
+        """Handle file selection in left pane"""
+        if hasattr(self, 'file_detail_panel'):
+            self.file_detail_panel.show_file(file_obj)
 
     def load_multiple_files(self):
         """Load multiple files for batch processing"""
@@ -852,9 +905,17 @@ class CleanSheetApp:
                 file_obj = {
                     'name': Path(filename).name,
                     'path': filename,
-                    'df': df
+                    'df': df,
+                    'operations': [],  # Empty operations list
+                    'result_df': None,
+                    'removed_df': None
                 }
                 self.loaded_files.append(file_obj)
+
+                # Add to file list panel if in batch mode
+                if hasattr(self, 'file_list_panel') and self.file_list_panel:
+                    self.file_list_panel.add_file(file_obj)
+
                 loaded_count += 1
 
             except Exception as e:
@@ -863,7 +924,6 @@ class CleanSheetApp:
 
         if loaded_count > 0:
             self.status_var.set(f"Loaded {loaded_count} files successfully")
-            self.update_file_list_display()
         else:
             self.status_var.set("No files loaded")
 
@@ -1118,6 +1178,146 @@ class CleanSheetApp:
 
             ttk.Button(dialog, text="Export", command=do_export).pack(pady=10)
             dialog.mainloop()
+
+    # ==================== SPLIT PANE HELPER METHODS ====================
+
+    def copy_workflow_to_selected(self, source_file_name):
+        """Copy workflow from source file to selected files"""
+        if not hasattr(self, 'file_list_panel'):
+            return
+
+        # Find source file
+        source_file = None
+        for f in self.loaded_files:
+            if f['name'] == source_file_name:
+                source_file = f
+                break
+
+        if not source_file:
+            messagebox.showwarning("No Source", "Source file not found")
+            return
+
+        # Get selected files
+        selected_files = self.file_list_panel.get_selected_files()
+        if not selected_files:
+            messagebox.showwarning("No Selection", "Please select files to copy workflow to")
+            return
+
+        # Copy operations
+        source_ops = source_file.get('operations', [])
+        copied_count = 0
+
+        for file_obj in selected_files:
+            if file_obj != source_file:
+                file_obj['operations'] = [op.copy() if hasattr(op, 'copy') else dict(op) for op in source_ops]
+                copied_count += 1
+
+        messagebox.showinfo("Success", f"Copied workflow to {copied_count} files")
+
+        # Refresh display if current file is affected
+        if hasattr(self, 'file_detail_panel') and self.file_detail_panel.current_file in selected_files:
+            self.file_detail_panel.show_file(self.file_detail_panel.current_file)
+
+    def apply_preset_to_selected_files(self, preset_name):
+        """Apply a preset to selected files"""
+        if not preset_name:
+            return
+
+        if not hasattr(self, 'file_list_panel'):
+            return
+
+        # Get selected files
+        selected_files = self.file_list_panel.get_selected_files()
+        if not selected_files:
+            messagebox.showwarning("No Selection", "Please select files to apply preset to")
+            return
+
+        # Load preset
+        preset = self.preset_manager.load_preset(preset_name)
+        if not preset:
+            messagebox.showerror("Error", f"Preset '{preset_name}' not found")
+            return
+
+        # Apply to each selected file
+        applied_count = 0
+        for file_obj in selected_files:
+            file_obj['operations'] = preset.operations.copy()
+            applied_count += 1
+
+        messagebox.showinfo("Success", f"Applied preset '{preset_name}' to {applied_count} files")
+
+        # Refresh display
+        if hasattr(self, 'file_detail_panel') and self.file_detail_panel.current_file in selected_files:
+            self.file_detail_panel.show_file(self.file_detail_panel.current_file)
+
+    def run_workflow_for_file(self, file_obj):
+        """Run workflow for a single file"""
+        if not file_obj or not file_obj.get('operations'):
+            messagebox.showwarning("No Workflow", "No operations to run")
+            return
+
+        try:
+            self.status_var.set(f"Processing {file_obj['name']}...")
+
+            # Execute operations
+            result = self.executor.execute(file_obj['df'], file_obj['operations'])
+
+            # Store results
+            file_obj['result_df'] = result['result']
+            file_obj['removed_df'] = result.get('removed', None)
+
+            self.status_var.set(f"Processed {file_obj['name']} successfully")
+            messagebox.showinfo("Success", f"Processed {file_obj['name']}\n\n"
+                              f"Original rows: {len(file_obj['df'])}\n"
+                              f"Result rows: {len(result['result'])}")
+
+            # Refresh display
+            if hasattr(self, 'file_detail_panel'):
+                self.file_detail_panel.show_file(file_obj)
+
+        except Exception as e:
+            logging.error(f"Failed to process {file_obj['name']}: {e}")
+            messagebox.showerror("Processing Error", f"Failed to process {file_obj['name']}:\n{str(e)}")
+
+    def export_batch_results(self, export_type):
+        """Export batch processing results"""
+        if not self.loaded_files:
+            messagebox.showwarning("No Files", "No files loaded")
+            return
+
+        # Get files with results
+        results = [f for f in self.loaded_files if f.get('result_df') is not None]
+
+        if not results:
+            messagebox.showwarning("No Results", "No processed results to export.\n\nPlease process files first.")
+            return
+
+        if export_type == "zip":
+            # Export as ZIP
+            output_path = filedialog.asksaveasfilename(
+                title="Save ZIP Archive",
+                defaultextension=".zip",
+                filetypes=[("ZIP files", "*.zip")]
+            )
+            if output_path:
+                success = ExportHelper.export_batch_as_zip(results, output_path, 'xlsx', False)
+                if success:
+                    messagebox.showinfo("Success", f"Exported {len(results)} files to ZIP archive")
+
+        elif export_type == "individual":
+            # Export to folder
+            output_dir = filedialog.askdirectory(title="Select Output Folder")
+            if output_dir:
+                count = ExportHelper.export_batch_individual(results, output_dir, 'xlsx', False)
+                messagebox.showinfo("Success", f"Exported {count} files to {output_dir}")
+
+        elif export_type == "combined":
+            # Combine and export
+            try:
+                combined_df = self.file_combiner.combine_files_simple(results, 'all')
+                self.show_combined_export_dialog(combined_df)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to combine files:\n{str(e)}")
 
 
 # ==================== MAIN ====================
