@@ -947,50 +947,105 @@ class CleanSheetApp:
         pass
 
     def process_batch_files(self):
-        """Process all loaded files with current operation queue"""
+        """Process all selected files using SimpleBatchExecutor"""
         if not self.loaded_files:
             messagebox.showwarning("No Files", "Please load files first")
             return
 
-        if not self.operation_queue:
-            messagebox.showwarning("No Operations", "Please add operations to the workflow queue first")
+        # Get selected files
+        if hasattr(self, 'file_list_panel'):
+            selected_files = self.file_list_panel.get_selected_files()
+        else:
+            selected_files = self.loaded_files
+
+        if not selected_files:
+            messagebox.showwarning(
+                "No Files Selected",
+                "Please select at least one file to process"
+            )
             return
 
-        # Confirm processing
-        file_count = len(self.loaded_files)
-        op_count = len(self.operation_queue)
-        msg = f"Process {file_count} files with {op_count} operations?\n\nThis may take several minutes."
+        # Check if files have operations
+        files_with_ops = [f for f in selected_files if f.get('operations')]
+        files_without_ops = [f['name'] for f in selected_files if not f.get('operations')]
 
-        if not messagebox.askyesno("Confirm Batch Processing", msg):
+        if not files_with_ops:
+            messagebox.showwarning(
+                "No Operations",
+                "None of the selected files have operations in their workflows.\n\n"
+                "Please add operations to at least one file before processing."
+            )
             return
 
-        # Process batch
-        self.status_var.set(f"Starting batch processing of {file_count} files...")
+        if files_without_ops:
+            msg = (f"{len(files_without_ops)} file(s) have no operations and will be skipped:\n\n" +
+                   "\n".join(files_without_ops[:5]) +
+                   ("\n..." if len(files_without_ops) > 5 else "") +
+                   f"\n\nProcess {len(files_with_ops)} file(s) with operations?")
+            if not messagebox.askyesno("Files Without Operations", msg):
+                return
+        else:
+            # All files have operations
+            if not messagebox.askyesno(
+                "Confirm Processing",
+                f"Process {len(selected_files)} file(s)?\n\n"
+                "Each file will be processed with its own workflow."
+            ):
+                return
+
+        # Use SimpleBatchExecutor
+        from batch_executor import SimpleBatchExecutor
+
+        executor = SimpleBatchExecutor(self)
 
         try:
-            results = self.batch_processor.process_batch(
-                files=self.loaded_files,
-                operation_queue=self.operation_queue,
-                executor=self.executor
-            )
+            # Only process files with operations
+            results = executor.execute_batch(files_with_ops)
 
-            # Show results summary
-            summary = results['summary']
-            success_msg = f"Batch Processing Complete!\n\n"
-            success_msg += f"Total files: {summary['total_files']}\n"
-            success_msg += f"Successful: {summary['successful']}\n"
-            success_msg += f"Failed: {summary['failed']}\n"
-            success_msg += f"Total rows processed: {summary['total_original_rows']} → {summary['total_final_rows']}"
+            # Show summary
+            success_count = sum(1 for r in results if r['status'] == 'success')
+            error_count = len(results) - success_count
 
-            messagebox.showinfo("Batch Processing Complete", success_msg)
+            if error_count == 0:
+                total_rows_before = sum(r['rows_before'] for r in results)
+                total_rows_after = sum(r['rows_after'] for r in results)
+                total_removed = sum(r.get('rows_removed', 0) for r in results)
 
-            # Show export dialog
-            if results['successful']:
-                self.show_batch_export_dialog(results['successful'])
+                success_msg = (
+                    f"✅ Successfully processed {success_count} file(s)!\n\n"
+                    f"Total rows:\n"
+                    f"  • Input: {total_rows_before:,}\n"
+                    f"  • Output: {total_rows_after:,}\n"
+                    f"  • Removed: {total_removed:,}"
+                )
+                messagebox.showinfo("Success", success_msg)
+            else:
+                error_files = [r['file'] for r in results if r['status'] == 'error']
+                error_details = "\n".join(
+                    f"  • {r['file']}: {r['error'][:50]}..." if len(r['error']) > 50 else f"  • {r['file']}: {r['error']}"
+                    for r in results if r['status'] == 'error'
+                )
+
+                messagebox.showwarning(
+                    "Partial Success",
+                    f"Processed: {success_count} file(s)\n"
+                    f"Errors: {error_count} file(s)\n\n"
+                    f"Failed files:\n{error_details[:300]}" +
+                    ("..." if len(error_details) > 300 else "")
+                )
+
+            # Refresh UI to show results
+            if hasattr(self, 'file_detail_panel') and self.file_detail_panel.current_file:
+                # Refresh the current file's display to show results
+                self.file_detail_panel.show_file(self.file_detail_panel.current_file)
 
         except Exception as e:
+            import logging
             logging.error(f"Batch processing failed: {e}")
-            messagebox.showerror("Batch Processing Error", f"Batch processing failed:\n{str(e)}")
+            messagebox.showerror(
+                "Batch Processing Failed",
+                f"Error during batch processing:\n{str(e)}"
+            )
 
     def combine_files_dialog(self):
         """Show dialog for combining files"""
