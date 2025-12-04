@@ -887,7 +887,7 @@ class CleanSheetApp:
             try:
                 # Detect if file has header
                 if filename.endswith('.csv'):
-                    df_test = pd.read_csv(filename, nrows=5)
+                    df_test = self._load_csv_with_encoding_detection(filename, nrows=5)
                 else:
                     df_test = pd.read_excel(filename, nrows=5)
 
@@ -896,7 +896,7 @@ class CleanSheetApp:
 
                 # Load full file
                 if filename.endswith('.csv'):
-                    df = pd.read_csv(filename, header=0 if has_header else None)
+                    df = self._load_csv_with_encoding_detection(filename, header=0 if has_header else None)
                 else:
                     df = pd.read_excel(filename, header=0 if has_header else None)
 
@@ -934,6 +934,85 @@ class CleanSheetApp:
         first_row = df_sample.iloc[0]
         numeric_count = sum(pd.api.types.is_numeric_dtype(type(val)) for val in first_row)
         return numeric_count < len(first_row) * 0.7
+
+    def _load_csv_with_encoding_detection(self, file_path, **kwargs):
+        """
+        Load CSV with automatic encoding detection
+
+        Tries multiple encodings in order of likelihood:
+        1. UTF-8 (standard)
+        2. UTF-8-SIG (with BOM)
+        3. Windows-1252 (Excel default on Windows)
+        4. Latin-1 (ISO-8859-1)
+        5. CP1252 (another Windows encoding)
+
+        Args:
+            file_path: Path to the CSV file
+            **kwargs: Additional arguments to pass to pd.read_csv (e.g., nrows, header)
+
+        Returns:
+            pandas.DataFrame: Loaded data
+
+        Raises:
+            Exception: If all encoding attempts fail
+        """
+        encodings = [
+            'utf-8',
+            'utf-8-sig',
+            'windows-1252',
+            'latin-1',
+            'cp1252',
+            'iso-8859-1'
+        ]
+
+        last_error = None
+
+        for encoding in encodings:
+            try:
+                df = pd.read_csv(file_path, encoding=encoding, **kwargs)
+
+                # Success! Log which encoding worked (for debugging)
+                logging.info(f"Successfully loaded {Path(file_path).name} with encoding: {encoding}")
+
+                return df
+
+            except (UnicodeDecodeError, UnicodeError) as e:
+                last_error = e
+                continue
+
+            except Exception as e:
+                # Other errors (not encoding-related) - don't continue trying
+                raise e
+
+        # If all encodings failed, try using chardet library for detection
+        try:
+            import chardet
+
+            # Read file in binary mode to detect encoding
+            with open(file_path, 'rb') as f:
+                raw_data = f.read()
+                result = chardet.detect(raw_data)
+                detected_encoding = result['encoding']
+                confidence = result['confidence']
+
+            logging.info(f"Detected encoding: {detected_encoding} (confidence: {confidence:.2%})")
+
+            if detected_encoding and confidence > 0.7:
+                df = pd.read_csv(file_path, encoding=detected_encoding, **kwargs)
+                return df
+
+        except ImportError:
+            # chardet not installed, skip this method
+            logging.debug("chardet not installed, skipping advanced encoding detection")
+
+        except Exception as e:
+            logging.error(f"Encoding detection failed: {str(e)}")
+
+        # If everything failed, raise the original error
+        raise Exception(
+            f"Could not determine file encoding. Tried: {', '.join(encodings)}\n"
+            f"Original error: {str(last_error)}"
+        )
 
     def update_file_list_display(self):
         """Update the file list display in UI"""
@@ -2195,7 +2274,7 @@ class CleanSheetApp:
         try:
             # Initial load to detect headers
             if filename.endswith('.csv'):
-                df_test = pd.read_csv(filename, nrows=5)
+                df_test = self._load_csv_with_encoding_detection(filename, nrows=5)
             else:
                 df_test = pd.read_excel(filename, nrows=5)
 
@@ -2230,7 +2309,7 @@ class CleanSheetApp:
 
             # Load file with correct header row
             if filename.endswith('.csv'):
-                self.df = pd.read_csv(filename, header=header_row)
+                self.df = self._load_csv_with_encoding_detection(filename, header=header_row)
             else:
                 self.df = pd.read_excel(filename, header=header_row)
 
