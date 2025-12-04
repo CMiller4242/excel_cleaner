@@ -180,6 +180,21 @@ class FileListPanel(tk.Frame):
             activeforeground="white"
         ).pack(fill=tk.X)
 
+        # Rename Files button
+        tk.Button(
+            self,
+            text="🏷️ Rename Files",
+            command=self._show_rename_dialog,
+            font=('Segoe UI', 10, 'bold'),
+            bg="#0078D4",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            height=2,
+            activebackground="#005A9E",
+            activeforeground="white"
+        ).pack(fill=tk.X, padx=10, pady=(10, 5))
+
         # Process All button
         tk.Button(
             self,
@@ -193,7 +208,7 @@ class FileListPanel(tk.Frame):
             height=2,
             activebackground="#0B5A0C",
             activeforeground="white"
-        ).pack(fill=tk.X, padx=10, pady=10)
+        ).pack(fill=tk.X, padx=10, pady=(5, 10))
 
         # Export dropdown
         export_btn = tk.Menubutton(
@@ -946,3 +961,363 @@ class FileListPanel(tk.Frame):
 
         except Exception as e:
             messagebox.showerror("Export Failed", f"Error exporting combined file:\n{str(e)}")
+
+    def _show_rename_dialog(self):
+        """Show batch rename dialog"""
+
+        selected_files = self.get_selected_files()
+
+        if not selected_files:
+            messagebox.showwarning(
+                "No Files Selected",
+                "Please select files to rename"
+            )
+            return
+
+        # Create dialog
+        dialog = tk.Toplevel(self.winfo_toplevel())
+        dialog.title("Batch Rename Files")
+        dialog.geometry("800x600")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+
+        # Header
+        header = tk.Frame(dialog, bg="#0078D4", height=70)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+
+        tk.Label(
+            header,
+            text="Batch Rename Files",
+            font=("Segoe UI", 14, "bold"),
+            bg="#0078D4",
+            fg="white"
+        ).pack(pady=10)
+
+        tk.Label(
+            header,
+            text=f"Renaming {len(selected_files)} file(s)",
+            font=("Segoe UI", 10),
+            bg="#0078D4",
+            fg="white"
+        ).pack()
+
+        # Content
+        content = tk.Frame(dialog, bg="white")
+        content.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Rename pattern options
+        pattern_frame = tk.LabelFrame(
+            content,
+            text="Rename Pattern",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        )
+        pattern_frame.pack(fill=tk.X, pady=(0, 15))
+
+        pattern_var = tk.StringVar(value="custom")
+
+        # Pattern: Custom name
+        custom_frame = tk.Frame(pattern_frame, bg="white")
+        custom_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        tk.Radiobutton(
+            custom_frame,
+            text="Custom name with numbering:",
+            variable=pattern_var,
+            value="custom",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(side=tk.LEFT)
+
+        custom_name_var = tk.StringVar(value="File")
+        custom_entry = tk.Entry(
+            custom_frame,
+            textvariable=custom_name_var,
+            font=("Segoe UI", 9),
+            width=30
+        )
+        custom_entry.pack(side=tk.LEFT, padx=(10, 5))
+
+        tk.Label(
+            custom_frame,
+            text="→ File_001, File_002, ...",
+            font=("Segoe UI", 8),
+            bg="white",
+            fg="#666"
+        ).pack(side=tk.LEFT)
+
+        # Pattern: Prefix
+        prefix_frame = tk.Frame(pattern_frame, bg="white")
+        prefix_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        tk.Radiobutton(
+            prefix_frame,
+            text="Add prefix:",
+            variable=pattern_var,
+            value="prefix",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(side=tk.LEFT)
+
+        prefix_var = tk.StringVar(value="")
+        prefix_entry = tk.Entry(
+            prefix_frame,
+            textvariable=prefix_var,
+            font=("Segoe UI", 9),
+            width=30
+        )
+        prefix_entry.pack(side=tk.LEFT, padx=(10, 5))
+
+        tk.Label(
+            prefix_frame,
+            text="→ prefix_originalname",
+            font=("Segoe UI", 8),
+            bg="white",
+            fg="#666"
+        ).pack(side=tk.LEFT)
+
+        # Pattern: Suffix
+        suffix_frame = tk.Frame(pattern_frame, bg="white")
+        suffix_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        tk.Radiobutton(
+            suffix_frame,
+            text="Add suffix:",
+            variable=pattern_var,
+            value="suffix",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(side=tk.LEFT)
+
+        suffix_var = tk.StringVar(value="")
+        suffix_entry = tk.Entry(
+            suffix_frame,
+            textvariable=suffix_var,
+            font=("Segoe UI", 9),
+            width=30
+        )
+        suffix_entry.pack(side=tk.LEFT, padx=(10, 5))
+
+        tk.Label(
+            suffix_frame,
+            text="→ originalname_suffix",
+            font=("Segoe UI", 8),
+            bg="white",
+            fg="#666"
+        ).pack(side=tk.LEFT)
+
+        # Pattern: Replace text
+        replace_frame = tk.Frame(pattern_frame, bg="white")
+        replace_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        tk.Radiobutton(
+            replace_frame,
+            text="Find and replace:",
+            variable=pattern_var,
+            value="replace",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(side=tk.LEFT)
+
+        find_var = tk.StringVar(value="")
+        replace_var = tk.StringVar(value="")
+
+        tk.Label(replace_frame, text="Find:", font=("Segoe UI", 8), bg="white").pack(side=tk.LEFT, padx=(10, 2))
+        tk.Entry(replace_frame, textvariable=find_var, font=("Segoe UI", 9), width=15).pack(side=tk.LEFT, padx=(0, 5))
+
+        tk.Label(replace_frame, text="Replace:", font=("Segoe UI", 8), bg="white").pack(side=tk.LEFT, padx=(10, 2))
+        tk.Entry(replace_frame, textvariable=replace_var, font=("Segoe UI", 9), width=15).pack(side=tk.LEFT)
+
+        # Numbering options
+        numbering_frame = tk.LabelFrame(
+            content,
+            text="Numbering Options (for Custom name)",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        )
+        numbering_frame.pack(fill=tk.X, pady=(0, 15))
+
+        num_options_frame = tk.Frame(numbering_frame, bg="white")
+        num_options_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        tk.Label(num_options_frame, text="Start at:", font=("Segoe UI", 9), bg="white").pack(side=tk.LEFT, padx=(0, 5))
+        start_num_var = tk.StringVar(value="1")
+        tk.Entry(num_options_frame, textvariable=start_num_var, font=("Segoe UI", 9), width=10).pack(side=tk.LEFT, padx=(0, 15))
+
+        tk.Label(num_options_frame, text="Digits:", font=("Segoe UI", 9), bg="white").pack(side=tk.LEFT, padx=(0, 5))
+        digits_var = tk.StringVar(value="3")
+        tk.Spinbox(num_options_frame, from_=1, to=5, textvariable=digits_var, font=("Segoe UI", 9), width=5).pack(side=tk.LEFT)
+
+        # Preview
+        preview_frame = tk.LabelFrame(
+            content,
+            text="Preview",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        )
+        preview_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        # Preview table
+        preview_canvas = tk.Canvas(preview_frame, bg="white", highlightthickness=0)
+        preview_scrollbar = tk.Scrollbar(preview_frame, orient="vertical", command=preview_canvas.yview)
+        preview_table = tk.Frame(preview_canvas, bg="white")
+
+        preview_canvas.configure(yscrollcommand=preview_scrollbar.set)
+        preview_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        preview_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        canvas_window = preview_canvas.create_window((0, 0), window=preview_table, anchor="nw")
+
+        def update_preview(*args):
+            """Update the preview based on current settings"""
+            # Clear existing preview
+            for widget in preview_table.winfo_children():
+                widget.destroy()
+
+            # Headers
+            tk.Label(preview_table, text="Original Name", font=("Segoe UI", 9, "bold"), bg="#E1E1E1", padx=10, pady=5, width=35, anchor=tk.W).grid(row=0, column=0, sticky="ew")
+            tk.Label(preview_table, text="→", font=("Segoe UI", 9, "bold"), bg="#E1E1E1", padx=5, pady=5).grid(row=0, column=1)
+            tk.Label(preview_table, text="New Name", font=("Segoe UI", 9, "bold"), bg="#E1E1E1", padx=10, pady=5, width=35, anchor=tk.W).grid(row=0, column=2, sticky="ew")
+
+            pattern = pattern_var.get()
+
+            for idx, file_obj in enumerate(selected_files):
+                original_name = file_obj['name']
+                base_name = os.path.splitext(original_name)[0]
+                extension = os.path.splitext(original_name)[1]
+
+                # Generate new name based on pattern
+                if pattern == "custom":
+                    custom_name = custom_name_var.get() or "File"
+                    try:
+                        start_num = int(start_num_var.get() or 1)
+                    except ValueError:
+                        start_num = 1
+                    try:
+                        digits = int(digits_var.get() or 3)
+                    except ValueError:
+                        digits = 3
+                    num = str(start_num + idx).zfill(digits)
+                    new_name = f"{custom_name}_{num}{extension}"
+
+                elif pattern == "prefix":
+                    prefix = prefix_var.get()
+                    new_name = f"{prefix}{original_name}" if prefix else original_name
+
+                elif pattern == "suffix":
+                    suffix = suffix_var.get()
+                    new_name = f"{base_name}{suffix}{extension}" if suffix else original_name
+
+                elif pattern == "replace":
+                    find_text = find_var.get()
+                    replace_text = replace_var.get()
+                    if find_text:
+                        new_name = original_name.replace(find_text, replace_text)
+                    else:
+                        new_name = original_name
+
+                else:
+                    new_name = original_name
+
+                # Display in table
+                row = idx + 1
+                tk.Label(preview_table, text=original_name, font=("Segoe UI", 9), bg="white", padx=10, pady=3, anchor=tk.W).grid(row=row, column=0, sticky="ew")
+                tk.Label(preview_table, text="→", font=("Segoe UI", 9), bg="white", padx=5, pady=3).grid(row=row, column=1)
+                tk.Label(preview_table, text=new_name, font=("Segoe UI", 9), bg="white", fg="#0078D4", padx=10, pady=3, anchor=tk.W).grid(row=row, column=2, sticky="ew")
+
+            preview_table.update_idletasks()
+            preview_canvas.configure(scrollregion=preview_canvas.bbox("all"))
+
+        # Bind updates
+        pattern_var.trace('w', update_preview)
+        custom_name_var.trace('w', update_preview)
+        prefix_var.trace('w', update_preview)
+        suffix_var.trace('w', update_preview)
+        find_var.trace('w', update_preview)
+        replace_var.trace('w', update_preview)
+        start_num_var.trace('w', update_preview)
+        digits_var.trace('w', update_preview)
+
+        # Initial preview
+        update_preview()
+
+        # Buttons
+        button_frame = tk.Frame(dialog, bg="white")
+        button_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
+
+        def apply_rename():
+            """Apply the rename to all selected files"""
+            pattern = pattern_var.get()
+
+            for idx, file_obj in enumerate(selected_files):
+                original_name = file_obj['name']
+                base_name = os.path.splitext(original_name)[0]
+                extension = os.path.splitext(original_name)[1]
+
+                # Generate new name
+                if pattern == "custom":
+                    custom_name = custom_name_var.get() or "File"
+                    try:
+                        start_num = int(start_num_var.get() or 1)
+                    except ValueError:
+                        start_num = 1
+                    try:
+                        digits = int(digits_var.get() or 3)
+                    except ValueError:
+                        digits = 3
+                    num = str(start_num + idx).zfill(digits)
+                    new_name = f"{custom_name}_{num}{extension}"
+
+                elif pattern == "prefix":
+                    prefix = prefix_var.get()
+                    new_name = f"{prefix}{original_name}" if prefix else original_name
+
+                elif pattern == "suffix":
+                    suffix = suffix_var.get()
+                    new_name = f"{base_name}{suffix}{extension}" if suffix else original_name
+
+                elif pattern == "replace":
+                    find_text = find_var.get()
+                    replace_text = replace_var.get()
+                    if find_text:
+                        new_name = original_name.replace(find_text, replace_text)
+                    else:
+                        new_name = original_name
+
+                else:
+                    new_name = original_name
+
+                # Update file object
+                file_obj['name'] = new_name
+
+                # Update UI
+                if 'name_label' in file_obj:
+                    file_obj['name_label'].config(text=new_name)
+
+            dialog.destroy()
+            messagebox.showinfo("Success", f"Renamed {len(selected_files)} file(s)")
+
+        tk.Button(
+            button_frame,
+            text="Apply Rename",
+            command=apply_rename,
+            font=("Segoe UI", 10, "bold"),
+            bg="#107C10",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=30,
+            pady=10
+        ).pack(side=tk.RIGHT, padx=(10, 0))
+
+        tk.Button(
+            button_frame,
+            text="Cancel",
+            command=dialog.destroy,
+            font=("Segoe UI", 10),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=30,
+            pady=10
+        ).pack(side=tk.RIGHT)
