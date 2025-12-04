@@ -539,6 +539,407 @@ class FileListPanel(tk.Frame):
         if self.app and hasattr(self.app, 'process_batch_files'):
             self.app.process_batch_files()
 
-    def _on_export(self, export_type):
-        if self.app and hasattr(self.app, 'export_batch_results'):
-            self.app.export_batch_results(export_type)
+    def _on_export(self, export_type=None):
+        """Show export dialog and export processed files"""
+
+        selected_files = self.get_selected_files()
+
+        if not selected_files:
+            messagebox.showwarning(
+                "No Files Selected",
+                "Please select files to export"
+            )
+            return
+
+        # Check if files have been processed
+        unprocessed = [f['name'] for f in selected_files if 'result_df' not in f]
+
+        if unprocessed:
+            if not messagebox.askyesno(
+                "Unprocessed Files",
+                f"{len(unprocessed)} file(s) haven't been processed yet:\n" +
+                "\n".join(unprocessed[:3]) +
+                ("\n..." if len(unprocessed) > 3 else "") +
+                "\n\nExport original data for these files?"
+            ):
+                return
+
+        # Show export options dialog
+        self._show_export_dialog(selected_files, export_type)
+
+    def _show_export_dialog(self, selected_files, default_type=None):
+        """Show comprehensive export options dialog"""
+
+        dialog = tk.Toplevel(self.winfo_toplevel())
+        dialog.title("Export Files")
+        dialog.geometry("600x550")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+
+        # Header
+        header = tk.Frame(dialog, bg="#0078D4", height=70)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+
+        tk.Label(
+            header,
+            text="Export Files",
+            font=("Segoe UI", 14, "bold"),
+            bg="#0078D4",
+            fg="white"
+        ).pack(pady=10)
+
+        tk.Label(
+            header,
+            text=f"Exporting {len(selected_files)} file(s)",
+            font=("Segoe UI", 10),
+            bg="#0078D4",
+            fg="white"
+        ).pack()
+
+        # Content
+        content = tk.Frame(dialog, bg="white")
+        content.pack(fill=tk.BOTH, expand=True, padx=30, pady=20)
+
+        # File format selection
+        tk.Label(
+            content,
+            text="1. Select file format:",
+            font=("Segoe UI", 11, "bold"),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(0, 10))
+
+        format_var = tk.StringVar(value="txt")
+
+        format_frame = tk.Frame(content, bg="white")
+        format_frame.pack(fill=tk.X, pady=(0, 20))
+
+        tk.Radiobutton(
+            format_frame,
+            text="TXT (Tab-delimited) - For external programs",
+            variable=format_var,
+            value="txt",
+            font=("Segoe UI", 10),
+            bg="white"
+        ).pack(anchor=tk.W, pady=3)
+
+        tk.Radiobutton(
+            format_frame,
+            text="XLSX (Excel) - Preserves formatting",
+            variable=format_var,
+            value="xlsx",
+            font=("Segoe UI", 10),
+            bg="white"
+        ).pack(anchor=tk.W, pady=3)
+
+        tk.Radiobutton(
+            format_frame,
+            text="CSV (Comma-separated) - Universal format",
+            variable=format_var,
+            value="csv",
+            font=("Segoe UI", 10),
+            bg="white"
+        ).pack(anchor=tk.W, pady=3)
+
+        # Export method selection
+        tk.Label(
+            content,
+            text="2. Select export method:",
+            font=("Segoe UI", 11, "bold"),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(10, 10))
+
+        method_var = tk.StringVar(value=default_type if default_type else "individual")
+
+        method_frame = tk.Frame(content, bg="white")
+        method_frame.pack(fill=tk.X, pady=(0, 20))
+
+        tk.Radiobutton(
+            method_frame,
+            text="Individual files - Save each file separately",
+            variable=method_var,
+            value="individual",
+            font=("Segoe UI", 10),
+            bg="white"
+        ).pack(anchor=tk.W, pady=3)
+
+        tk.Radiobutton(
+            method_frame,
+            text="ZIP archive - All files in one .zip",
+            variable=method_var,
+            value="zip",
+            font=("Segoe UI", 10),
+            bg="white"
+        ).pack(anchor=tk.W, pady=3)
+
+        tk.Radiobutton(
+            method_frame,
+            text="Combined file - Merge all into one file",
+            variable=method_var,
+            value="combined",
+            font=("Segoe UI", 10),
+            bg="white"
+        ).pack(anchor=tk.W, pady=3)
+
+        # File naming options
+        tk.Label(
+            content,
+            text="3. File naming:",
+            font=("Segoe UI", 11, "bold"),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(10, 10))
+
+        naming_var = tk.StringVar(value="original")
+
+        naming_frame = tk.Frame(content, bg="white")
+        naming_frame.pack(fill=tk.X, pady=(0, 10))
+
+        tk.Radiobutton(
+            naming_frame,
+            text="Keep original filenames",
+            variable=naming_var,
+            value="original",
+            font=("Segoe UI", 10),
+            bg="white"
+        ).pack(anchor=tk.W, pady=3)
+
+        tk.Radiobutton(
+            naming_frame,
+            text="Add timestamp (filename_2025-12-04)",
+            variable=naming_var,
+            value="timestamp",
+            font=("Segoe UI", 10),
+            bg="white"
+        ).pack(anchor=tk.W, pady=3)
+
+        # Summary
+        summary_frame = tk.Frame(content, bg="#F0F0F0", relief=tk.RIDGE, borderwidth=1)
+        summary_frame.pack(fill=tk.X, pady=(15, 0))
+
+        summary_label = tk.Label(
+            summary_frame,
+            text=f"Ready to export {len(selected_files)} file(s) as TXT (individual files)",
+            font=("Segoe UI", 9),
+            bg="#F0F0F0",
+            fg="#333",
+            wraplength=500
+        )
+        summary_label.pack(padx=10, pady=10)
+
+        def update_summary(*args):
+            fmt = format_var.get().upper()
+            method = method_var.get()
+            method_text = {
+                'individual': 'individual files',
+                'zip': 'ZIP archive',
+                'combined': 'single combined file'
+            }[method]
+
+            summary_label.config(
+                text=f"Ready to export {len(selected_files)} file(s) as {fmt} ({method_text})"
+            )
+
+        format_var.trace('w', update_summary)
+        method_var.trace('w', update_summary)
+
+        # Buttons
+        button_frame = tk.Frame(dialog, bg="white")
+        button_frame.pack(fill=tk.X, padx=30, pady=(0, 20))
+
+        def on_export():
+            """Execute the export"""
+            file_format = format_var.get()
+            export_method = method_var.get()
+            naming_style = naming_var.get()
+
+            dialog.destroy()
+
+            # Execute export based on method
+            if export_method == "individual":
+                self._export_individual_files(selected_files, file_format, naming_style)
+            elif export_method == "zip":
+                self._export_as_zip(selected_files, file_format, naming_style)
+            else:
+                self._export_combined_file(selected_files, file_format, naming_style)
+
+        tk.Button(
+            button_frame,
+            text="Export",
+            command=on_export,
+            font=("Segoe UI", 10, "bold"),
+            bg="#0078D4",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=30,
+            pady=10
+        ).pack(side=tk.RIGHT, padx=(10, 0))
+
+        tk.Button(
+            button_frame,
+            text="Cancel",
+            command=dialog.destroy,
+            font=("Segoe UI", 10),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=30,
+            pady=10
+        ).pack(side=tk.RIGHT)
+
+    def _export_individual_files(self, files, file_format, naming_style):
+        """Export each file separately to a chosen folder"""
+        from tkinter import filedialog
+        from datetime import datetime
+
+        # Ask for output folder
+        output_dir = filedialog.askdirectory(title="Select Output Folder")
+
+        if not output_dir:
+            return
+
+        try:
+            exported_count = 0
+
+            for file_obj in files:
+                # Get DataFrame (processed or original)
+                df = file_obj.get('result_df', file_obj['df'])
+
+                # Generate filename
+                base_name = os.path.splitext(file_obj['name'])[0]
+
+                if naming_style == 'timestamp':
+                    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+                    filename = f"{base_name}_{timestamp}.{file_format}"
+                else:
+                    filename = f"{base_name}.{file_format}"
+
+                output_path = os.path.join(output_dir, filename)
+
+                # Export based on format
+                if file_format == 'txt':
+                    df.to_csv(output_path, sep='\t', index=False)
+                elif file_format == 'xlsx':
+                    df.to_excel(output_path, index=False)
+                else:  # csv
+                    df.to_csv(output_path, index=False)
+
+                exported_count += 1
+
+            messagebox.showinfo(
+                "Export Complete",
+                f"Successfully exported {exported_count} file(s) to:\n{output_dir}"
+            )
+
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Error during export:\n{str(e)}")
+
+    def _export_as_zip(self, files, file_format, naming_style):
+        """Export all files as a ZIP archive"""
+        from tkinter import filedialog
+        from datetime import datetime
+        import zipfile
+        import io
+
+        # Ask for ZIP save location
+        default_name = f"CleanSheet_Export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+
+        zip_path = filedialog.asksaveasfilename(
+            title="Save ZIP Archive",
+            defaultextension=".zip",
+            initialfile=default_name,
+            filetypes=[("ZIP files", "*.zip")]
+        )
+
+        if not zip_path:
+            return
+
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for file_obj in files:
+                    # Get DataFrame
+                    df = file_obj.get('result_df', file_obj['df'])
+
+                    # Generate filename
+                    base_name = os.path.splitext(file_obj['name'])[0]
+
+                    if naming_style == 'timestamp':
+                        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+                        filename = f"{base_name}_{timestamp}.{file_format}"
+                    else:
+                        filename = f"{base_name}.{file_format}"
+
+                    # Export to bytes
+                    buffer = io.BytesIO()
+
+                    if file_format == 'txt':
+                        content = df.to_csv(sep='\t', index=False)
+                        buffer.write(content.encode('utf-8'))
+                    elif file_format == 'xlsx':
+                        df.to_excel(buffer, index=False, engine='openpyxl')
+                    else:  # csv
+                        content = df.to_csv(index=False)
+                        buffer.write(content.encode('utf-8'))
+
+                    # Add to ZIP
+                    zipf.writestr(filename, buffer.getvalue())
+
+            messagebox.showinfo(
+                "Export Complete",
+                f"Successfully exported {len(files)} file(s) to ZIP:\n{zip_path}"
+            )
+
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Error creating ZIP:\n{str(e)}")
+
+    def _export_combined_file(self, files, file_format, naming_style):
+        """Combine all files into one and export"""
+        from tkinter import filedialog
+        from datetime import datetime
+        import pandas as pd
+
+        # Ask for save location
+        default_name = f"Combined_Export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{file_format}"
+
+        filetypes = {
+            'txt': [("Text files", "*.txt")],
+            'xlsx': [("Excel files", "*.xlsx")],
+            'csv': [("CSV files", "*.csv")]
+        }
+
+        save_path = filedialog.asksaveasfilename(
+            title="Save Combined File",
+            defaultextension=f".{file_format}",
+            initialfile=default_name,
+            filetypes=filetypes[file_format]
+        )
+
+        if not save_path:
+            return
+
+        try:
+            # Combine all dataframes
+            dfs = []
+            for file_obj in files:
+                df = file_obj.get('result_df', file_obj['df']).copy()
+                # Add source filename column
+                df.insert(0, 'Source_File', file_obj['name'])
+                dfs.append(df)
+
+            combined_df = pd.concat(dfs, ignore_index=True)
+
+            # Export
+            if file_format == 'txt':
+                combined_df.to_csv(save_path, sep='\t', index=False)
+            elif file_format == 'xlsx':
+                combined_df.to_excel(save_path, index=False)
+            else:  # csv
+                combined_df.to_csv(save_path, index=False)
+
+            messagebox.showinfo(
+                "Export Complete",
+                f"Successfully combined and exported {len(files)} file(s) to:\n{save_path}\n\n"
+                f"Total rows: {len(combined_df):,}"
+            )
+
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Error exporting combined file:\n{str(e)}")
