@@ -616,7 +616,7 @@ class FileListPanel(tk.Frame):
 
         tk.Radiobutton(
             format_frame,
-            text="TXT (Tab-delimited) - For external programs",
+            text="TXT (Comma-delimited) - For external programs",
             variable=format_var,
             value="txt",
             font=("Segoe UI", 10),
@@ -817,7 +817,8 @@ class FileListPanel(tk.Frame):
 
                 # Export based on format
                 if file_format == 'txt':
-                    df.to_csv(output_path, sep='\t', index=False)
+                    # TXT files should be comma-delimited (CSV format with .txt extension)
+                    df.to_csv(output_path, sep=',', index=False, quoting=1)  # QUOTE_ALL
                 elif file_format == 'xlsx':
                     df.to_excel(output_path, index=False)
                 else:  # csv
@@ -872,7 +873,8 @@ class FileListPanel(tk.Frame):
                     buffer = io.BytesIO()
 
                     if file_format == 'txt':
-                        content = df.to_csv(sep='\t', index=False)
+                        # TXT files should be comma-delimited (CSV format with .txt extension)
+                        content = df.to_csv(sep=',', index=False, quoting=1)  # QUOTE_ALL
                         buffer.write(content.encode('utf-8'))
                     elif file_format == 'xlsx':
                         df.to_excel(buffer, index=False, engine='openpyxl')
@@ -929,7 +931,8 @@ class FileListPanel(tk.Frame):
 
             # Export
             if file_format == 'txt':
-                combined_df.to_csv(save_path, sep='\t', index=False)
+                # TXT files should be comma-delimited (CSV format with .txt extension)
+                combined_df.to_csv(save_path, sep=',', index=False, quoting=1)  # QUOTE_ALL
             elif file_format == 'xlsx':
                 combined_df.to_excel(save_path, index=False)
             else:  # csv
