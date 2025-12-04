@@ -963,21 +963,19 @@ class FileListPanel(tk.Frame):
             messagebox.showerror("Export Failed", f"Error exporting combined file:\n{str(e)}")
 
     def _show_rename_dialog(self):
-        """Show batch rename dialog"""
+        """Show batch rename dialog with integrated file selection"""
 
-        selected_files = self.get_selected_files()
-
-        if not selected_files:
+        if not self.files:
             messagebox.showwarning(
-                "No Files Selected",
-                "Please select files to rename"
+                "No Files",
+                "Please load files first"
             )
             return
 
         # Create dialog
         dialog = tk.Toplevel(self.winfo_toplevel())
         dialog.title("Batch Rename Files")
-        dialog.geometry("800x600")
+        dialog.geometry("900x700")  # Wider to accommodate checkboxes
         dialog.transient(self.winfo_toplevel())
         dialog.grab_set()
 
@@ -994,191 +992,60 @@ class FileListPanel(tk.Frame):
             fg="white"
         ).pack(pady=10)
 
-        tk.Label(
+        selected_count_label = tk.Label(
             header,
-            text=f"Renaming {len(selected_files)} file(s)",
+            text=f"0 file(s) selected",
             font=("Segoe UI", 10),
             bg="#0078D4",
             fg="white"
-        ).pack()
+        )
+        selected_count_label.pack()
 
         # Content
         content = tk.Frame(dialog, bg="white")
         content.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
-        # Rename pattern options
-        pattern_frame = tk.LabelFrame(
+        # FILE SELECTION SECTION (NEW)
+        selection_frame = tk.LabelFrame(
             content,
-            text="Rename Pattern",
+            text="1. Select Files to Rename",
             font=("Segoe UI", 10, "bold"),
             bg="white"
         )
-        pattern_frame.pack(fill=tk.X, pady=(0, 15))
+        selection_frame.pack(fill=tk.X, pady=(0, 15))
 
-        pattern_var = tk.StringVar(value="custom")
-
-        # Pattern: Custom name
-        custom_frame = tk.Frame(pattern_frame, bg="white")
-        custom_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        tk.Radiobutton(
-            custom_frame,
-            text="Custom name with numbering:",
-            variable=pattern_var,
-            value="custom",
-            font=("Segoe UI", 9),
-            bg="white"
-        ).pack(side=tk.LEFT)
-
-        custom_name_var = tk.StringVar(value="File")
-        custom_entry = tk.Entry(
-            custom_frame,
-            textvariable=custom_name_var,
-            font=("Segoe UI", 9),
-            width=30
-        )
-        custom_entry.pack(side=tk.LEFT, padx=(10, 5))
-
-        tk.Label(
-            custom_frame,
-            text="→ File_001, File_002, ...",
-            font=("Segoe UI", 8),
-            bg="white",
-            fg="#666"
-        ).pack(side=tk.LEFT)
-
-        # Pattern: Prefix
-        prefix_frame = tk.Frame(pattern_frame, bg="white")
-        prefix_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        tk.Radiobutton(
-            prefix_frame,
-            text="Add prefix:",
-            variable=pattern_var,
-            value="prefix",
-            font=("Segoe UI", 9),
-            bg="white"
-        ).pack(side=tk.LEFT)
-
-        prefix_var = tk.StringVar(value="")
-        prefix_entry = tk.Entry(
-            prefix_frame,
-            textvariable=prefix_var,
-            font=("Segoe UI", 9),
-            width=30
-        )
-        prefix_entry.pack(side=tk.LEFT, padx=(10, 5))
-
-        tk.Label(
-            prefix_frame,
-            text="→ prefix_originalname",
-            font=("Segoe UI", 8),
-            bg="white",
-            fg="#666"
-        ).pack(side=tk.LEFT)
-
-        # Pattern: Suffix
-        suffix_frame = tk.Frame(pattern_frame, bg="white")
-        suffix_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        tk.Radiobutton(
-            suffix_frame,
-            text="Add suffix:",
-            variable=pattern_var,
-            value="suffix",
-            font=("Segoe UI", 9),
-            bg="white"
-        ).pack(side=tk.LEFT)
-
-        suffix_var = tk.StringVar(value="")
-        suffix_entry = tk.Entry(
-            suffix_frame,
-            textvariable=suffix_var,
-            font=("Segoe UI", 9),
-            width=30
-        )
-        suffix_entry.pack(side=tk.LEFT, padx=(10, 5))
-
-        tk.Label(
-            suffix_frame,
-            text="→ originalname_suffix",
-            font=("Segoe UI", 8),
-            bg="white",
-            fg="#666"
-        ).pack(side=tk.LEFT)
-
-        # Pattern: Replace text
-        replace_frame = tk.Frame(pattern_frame, bg="white")
-        replace_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        tk.Radiobutton(
-            replace_frame,
-            text="Find and replace:",
-            variable=pattern_var,
-            value="replace",
-            font=("Segoe UI", 9),
-            bg="white"
-        ).pack(side=tk.LEFT)
-
-        find_var = tk.StringVar(value="")
-        replace_var = tk.StringVar(value="")
-
-        tk.Label(replace_frame, text="Find:", font=("Segoe UI", 8), bg="white").pack(side=tk.LEFT, padx=(10, 2))
-        tk.Entry(replace_frame, textvariable=find_var, font=("Segoe UI", 9), width=15).pack(side=tk.LEFT, padx=(0, 5))
-
-        tk.Label(replace_frame, text="Replace:", font=("Segoe UI", 8), bg="white").pack(side=tk.LEFT, padx=(10, 2))
-        tk.Entry(replace_frame, textvariable=replace_var, font=("Segoe UI", 9), width=15).pack(side=tk.LEFT)
-
-        # Numbering options
-        numbering_frame = tk.LabelFrame(
-            content,
-            text="Numbering Options (for Custom name)",
-            font=("Segoe UI", 10, "bold"),
-            bg="white"
-        )
-        numbering_frame.pack(fill=tk.X, pady=(0, 15))
-
-        num_options_frame = tk.Frame(numbering_frame, bg="white")
-        num_options_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        tk.Label(num_options_frame, text="Start at:", font=("Segoe UI", 9), bg="white").pack(side=tk.LEFT, padx=(0, 5))
-        start_num_var = tk.StringVar(value="1")
-        tk.Entry(num_options_frame, textvariable=start_num_var, font=("Segoe UI", 9), width=10).pack(side=tk.LEFT, padx=(0, 15))
-
-        tk.Label(num_options_frame, text="Digits:", font=("Segoe UI", 9), bg="white").pack(side=tk.LEFT, padx=(0, 5))
-        digits_var = tk.StringVar(value="3")
-        tk.Spinbox(num_options_frame, from_=1, to=5, textvariable=digits_var, font=("Segoe UI", 9), width=5).pack(side=tk.LEFT)
-
-        # Preview
-        preview_frame = tk.LabelFrame(
-            content,
-            text="Preview",
-            font=("Segoe UI", 10, "bold"),
-            bg="white"
-        )
-        preview_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-
-        # Preview table
-        preview_canvas = tk.Canvas(preview_frame, bg="white", highlightthickness=0)
-        preview_scrollbar = tk.Scrollbar(preview_frame, orient="vertical", command=preview_canvas.yview)
-        preview_table = tk.Frame(preview_canvas, bg="white")
-
-        preview_canvas.configure(yscrollcommand=preview_scrollbar.set)
-        preview_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        preview_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        canvas_window = preview_canvas.create_window((0, 0), window=preview_table, anchor="nw")
+        # Forward declarations for update functions
+        def update_selected_count():
+            """Update the count of selected files"""
+            count = sum(1 for f in self.files if f.get('rename_selected', tk.BooleanVar()).get())
+            selected_count_label.config(text=f"{count} file(s) selected")
 
         def update_preview(*args):
-            """Update the preview based on current settings"""
+            """Update preview showing ONLY selected files"""
             # Clear existing preview
             for widget in preview_table.winfo_children():
                 widget.destroy()
 
+            # Get only selected files
+            selected_files = [f for f in self.files if f.get('rename_selected', tk.BooleanVar()).get()]
+
+            if not selected_files:
+                tk.Label(
+                    preview_table,
+                    text="No files selected for renaming",
+                    font=("Segoe UI", 10),
+                    bg="white",
+                    fg="#999",
+                    pady=30
+                ).pack()
+                preview_table.update_idletasks()
+                preview_canvas.configure(scrollregion=preview_canvas.bbox("all"))
+                return
+
             # Headers
-            tk.Label(preview_table, text="Original Name", font=("Segoe UI", 9, "bold"), bg="#E1E1E1", padx=10, pady=5, width=35, anchor=tk.W).grid(row=0, column=0, sticky="ew")
+            tk.Label(preview_table, text="Original Name", font=("Segoe UI", 9, "bold"), bg="#E1E1E1", padx=10, pady=5, width=40, anchor=tk.W).grid(row=0, column=0, sticky="ew")
             tk.Label(preview_table, text="→", font=("Segoe UI", 9, "bold"), bg="#E1E1E1", padx=5, pady=5).grid(row=0, column=1)
-            tk.Label(preview_table, text="New Name", font=("Segoe UI", 9, "bold"), bg="#E1E1E1", padx=10, pady=5, width=35, anchor=tk.W).grid(row=0, column=2, sticky="ew")
+            tk.Label(preview_table, text="New Name", font=("Segoe UI", 9, "bold"), bg="#E1E1E1", padx=10, pady=5, width=40, anchor=tk.W).grid(row=0, column=2, sticky="ew")
 
             pattern = pattern_var.get()
 
@@ -1229,8 +1096,259 @@ class FileListPanel(tk.Frame):
             preview_table.update_idletasks()
             preview_canvas.configure(scrollregion=preview_canvas.bbox("all"))
 
-        # Bind updates
-        pattern_var.trace('w', update_preview)
+        # Select All / Deselect All buttons
+        select_buttons = tk.Frame(selection_frame, bg="white")
+        select_buttons.pack(fill=tk.X, padx=10, pady=5)
+
+        def select_all():
+            for file_obj in self.files:
+                file_obj['rename_selected'].set(True)
+            update_selected_count()
+            update_preview()
+
+        def deselect_all():
+            for file_obj in self.files:
+                file_obj['rename_selected'].set(False)
+            update_selected_count()
+            update_preview()
+
+        tk.Button(
+            select_buttons,
+            text="✓ Select All",
+            command=select_all,
+            font=("Segoe UI", 9),
+            bg="#0078D4",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=3
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        tk.Button(
+            select_buttons,
+            text="✗ Deselect All",
+            command=deselect_all,
+            font=("Segoe UI", 9),
+            bg="#E1E1E1",
+            fg="#333",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=3
+        ).pack(side=tk.LEFT)
+
+        # File list with checkboxes
+        files_canvas = tk.Canvas(selection_frame, bg="white", height=150, highlightthickness=0)
+        files_scrollbar = tk.Scrollbar(selection_frame, orient="vertical", command=files_canvas.yview)
+        files_list_frame = tk.Frame(files_canvas, bg="white")
+
+        files_canvas.configure(yscrollcommand=files_scrollbar.set)
+        files_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        files_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+
+        files_canvas_window = files_canvas.create_window((0, 0), window=files_list_frame, anchor="nw")
+
+        # Create checkbox for each file
+        for file_obj in self.files:
+            # Add selection variable to file object
+            if 'rename_selected' not in file_obj:
+                file_obj['rename_selected'] = tk.BooleanVar(value=True)  # Default: all selected
+
+            file_frame = tk.Frame(files_list_frame, bg="white")
+            file_frame.pack(fill=tk.X, pady=2)
+
+            cb = tk.Checkbutton(
+                file_frame,
+                variable=file_obj['rename_selected'],
+                bg="white",
+                command=lambda: (update_selected_count(), update_preview())
+            )
+            cb.pack(side=tk.LEFT, padx=(5, 5))
+
+            tk.Label(
+                file_frame,
+                text=file_obj['name'],
+                font=("Segoe UI", 9),
+                bg="white",
+                anchor=tk.W
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        files_list_frame.update_idletasks()
+        files_canvas.configure(scrollregion=files_canvas.bbox("all"))
+        files_canvas.bind('<Configure>', lambda e: files_canvas.itemconfig(files_canvas_window, width=e.width))
+
+        # Initial count
+        update_selected_count()
+
+        # Rename pattern options
+        pattern_frame = tk.LabelFrame(
+            content,
+            text="2. Select Rename Pattern",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        )
+        pattern_frame.pack(fill=tk.X, pady=(0, 15))
+
+        pattern_var = tk.StringVar(value="custom")
+
+        # Pattern: Custom name
+        custom_frame = tk.Frame(pattern_frame, bg="white")
+        custom_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        tk.Radiobutton(
+            custom_frame,
+            text="Custom name with numbering:",
+            variable=pattern_var,
+            value="custom",
+            font=("Segoe UI", 9),
+            bg="white",
+            command=update_preview
+        ).pack(side=tk.LEFT)
+
+        custom_name_var = tk.StringVar(value="File")
+        custom_entry = tk.Entry(
+            custom_frame,
+            textvariable=custom_name_var,
+            font=("Segoe UI", 9),
+            width=30
+        )
+        custom_entry.pack(side=tk.LEFT, padx=(10, 5))
+
+        tk.Label(
+            custom_frame,
+            text="→ File_001, File_002, ...",
+            font=("Segoe UI", 8),
+            bg="white",
+            fg="#666"
+        ).pack(side=tk.LEFT)
+
+        # Pattern: Prefix
+        prefix_frame = tk.Frame(pattern_frame, bg="white")
+        prefix_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        tk.Radiobutton(
+            prefix_frame,
+            text="Add prefix:",
+            variable=pattern_var,
+            value="prefix",
+            font=("Segoe UI", 9),
+            bg="white",
+            command=update_preview
+        ).pack(side=tk.LEFT)
+
+        prefix_var = tk.StringVar(value="")
+        prefix_entry = tk.Entry(
+            prefix_frame,
+            textvariable=prefix_var,
+            font=("Segoe UI", 9),
+            width=30
+        )
+        prefix_entry.pack(side=tk.LEFT, padx=(10, 5))
+
+        tk.Label(
+            prefix_frame,
+            text="→ prefix_originalname",
+            font=("Segoe UI", 8),
+            bg="white",
+            fg="#666"
+        ).pack(side=tk.LEFT)
+
+        # Pattern: Suffix
+        suffix_frame = tk.Frame(pattern_frame, bg="white")
+        suffix_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        tk.Radiobutton(
+            suffix_frame,
+            text="Add suffix:",
+            variable=pattern_var,
+            value="suffix",
+            font=("Segoe UI", 9),
+            bg="white",
+            command=update_preview
+        ).pack(side=tk.LEFT)
+
+        suffix_var = tk.StringVar(value="")
+        suffix_entry = tk.Entry(
+            suffix_frame,
+            textvariable=suffix_var,
+            font=("Segoe UI", 9),
+            width=30
+        )
+        suffix_entry.pack(side=tk.LEFT, padx=(10, 5))
+
+        tk.Label(
+            suffix_frame,
+            text="→ originalname_suffix",
+            font=("Segoe UI", 8),
+            bg="white",
+            fg="#666"
+        ).pack(side=tk.LEFT)
+
+        # Pattern: Replace text
+        replace_frame = tk.Frame(pattern_frame, bg="white")
+        replace_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        tk.Radiobutton(
+            replace_frame,
+            text="Find and replace:",
+            variable=pattern_var,
+            value="replace",
+            font=("Segoe UI", 9),
+            bg="white",
+            command=update_preview
+        ).pack(side=tk.LEFT)
+
+        find_var = tk.StringVar(value="")
+        replace_var = tk.StringVar(value="")
+
+        tk.Label(replace_frame, text="Find:", font=("Segoe UI", 8), bg="white").pack(side=tk.LEFT, padx=(10, 2))
+        tk.Entry(replace_frame, textvariable=find_var, font=("Segoe UI", 9), width=15).pack(side=tk.LEFT, padx=(0, 5))
+
+        tk.Label(replace_frame, text="Replace:", font=("Segoe UI", 8), bg="white").pack(side=tk.LEFT, padx=(10, 2))
+        tk.Entry(replace_frame, textvariable=replace_var, font=("Segoe UI", 9), width=15).pack(side=tk.LEFT)
+
+        # Numbering options
+        numbering_frame = tk.LabelFrame(
+            content,
+            text="3. Numbering Options (for Custom name)",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        )
+        numbering_frame.pack(fill=tk.X, pady=(0, 15))
+
+        num_options_frame = tk.Frame(numbering_frame, bg="white")
+        num_options_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        tk.Label(num_options_frame, text="Start at:", font=("Segoe UI", 9), bg="white").pack(side=tk.LEFT, padx=(0, 5))
+        start_num_var = tk.StringVar(value="1")
+        tk.Entry(num_options_frame, textvariable=start_num_var, font=("Segoe UI", 9), width=10).pack(side=tk.LEFT, padx=(0, 15))
+
+        tk.Label(num_options_frame, text="Digits:", font=("Segoe UI", 9), bg="white").pack(side=tk.LEFT, padx=(0, 5))
+        digits_var = tk.StringVar(value="3")
+        tk.Spinbox(num_options_frame, from_=1, to=5, textvariable=digits_var, font=("Segoe UI", 9), width=5).pack(side=tk.LEFT)
+
+        # Preview
+        preview_frame = tk.LabelFrame(
+            content,
+            text="4. Preview Changes",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        )
+        preview_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        # Preview table
+        preview_canvas = tk.Canvas(preview_frame, bg="white", highlightthickness=0)
+        preview_scrollbar = tk.Scrollbar(preview_frame, orient="vertical", command=preview_canvas.yview)
+        preview_table = tk.Frame(preview_canvas, bg="white")
+
+        preview_canvas.configure(yscrollcommand=preview_scrollbar.set)
+        preview_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        preview_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        canvas_window = preview_canvas.create_window((0, 0), window=preview_table, anchor="nw")
+
+        # Bind updates for real-time preview
         custom_name_var.trace('w', update_preview)
         prefix_var.trace('w', update_preview)
         suffix_var.trace('w', update_preview)
@@ -1247,7 +1365,13 @@ class FileListPanel(tk.Frame):
         button_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
 
         def apply_rename():
-            """Apply the rename to all selected files"""
+            """Apply rename to ONLY selected files"""
+            selected_files = [f for f in self.files if f.get('rename_selected', tk.BooleanVar()).get()]
+
+            if not selected_files:
+                messagebox.showwarning("No Selection", "Please select files to rename")
+                return
+
             pattern = pattern_var.get()
 
             for idx, file_obj in enumerate(selected_files):
