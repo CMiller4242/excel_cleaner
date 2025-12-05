@@ -8,6 +8,7 @@ from tkinter import ttk, messagebox
 from pathlib import Path
 import json
 import os
+from datetime import datetime
 
 
 class FileListPanel(tk.Frame):
@@ -963,21 +964,33 @@ class FileListPanel(tk.Frame):
             messagebox.showerror("Export Failed", f"Error exporting combined file:\n{str(e)}")
 
     def _show_rename_dialog(self):
-        """Show batch rename dialog with integrated file selection"""
+        """Show advanced batch rename dialog with batch cards"""
 
         if not self.files:
-            messagebox.showwarning(
-                "No Files",
-                "Please load files first"
-            )
+            messagebox.showwarning("No Files", "Please load files first")
             return
 
         # Create dialog
         dialog = tk.Toplevel(self.winfo_toplevel())
         dialog.title("Batch Rename Files")
-        dialog.geometry("900x700")  # Wider to accommodate checkboxes
+        dialog.geometry("1000x800")
         dialog.transient(self.winfo_toplevel())
         dialog.grab_set()
+
+        # Store batch data
+        batches = []  # List of batch dictionaries
+        batch_counter = [1]  # Counter for batch numbering
+        current_edit_batch = [None]  # Track if editing existing batch
+
+        # Store original names for reverting
+        original_names = {f['name']: f['name'] for f in self.files}
+
+        # Add selection state to files
+        for f in self.files:
+            if 'rename_selected' not in f:
+                f['rename_selected'] = tk.BooleanVar(value=False)
+            else:
+                f['rename_selected'].set(False)
 
         # Header
         header = tk.Frame(dialog, bg="#0078D4", height=70)
@@ -992,456 +1005,917 @@ class FileListPanel(tk.Frame):
             fg="white"
         ).pack(pady=10)
 
-        selected_count_label = tk.Label(
+        stats_label = tk.Label(
             header,
-            text=f"0 file(s) selected",
+            text=f"{len(self.files)} files loaded | 0 batches created | 0 files renamed",
             font=("Segoe UI", 10),
             bg="#0078D4",
             fg="white"
         )
-        selected_count_label.pack()
+        stats_label.pack()
 
-        # Content
-        content = tk.Frame(dialog, bg="white")
-        content.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        def update_stats():
+            """Update statistics in header"""
+            total_renamed = sum(len(b['files']) for b in batches)
+            stats_label.config(
+                text=f"{len(self.files)} files loaded | {len(batches)} batches created | {total_renamed} files renamed"
+            )
 
-        # FILE SELECTION SECTION (NEW)
-        selection_frame = tk.LabelFrame(
-            content,
-            text="1. Select Files to Rename",
-            font=("Segoe UI", 10, "bold"),
-            bg="white"
-        )
-        selection_frame.pack(fill=tk.X, pady=(0, 15))
+        # Main content area with scrolling
+        content_container = tk.Frame(dialog, bg="white")
+        content_container.pack(fill=tk.BOTH, expand=True)
 
-        # Forward declarations for update functions
-        def update_selected_count():
-            """Update the count of selected files"""
-            count = sum(1 for f in self.files if f.get('rename_selected', tk.BooleanVar()).get())
-            selected_count_label.config(text=f"{count} file(s) selected")
+        canvas = tk.Canvas(content_container, bg="white", highlightthickness=0)
+        scrollbar = tk.Scrollbar(content_container, orient="vertical", command=canvas.yview)
+        content = tk.Frame(canvas, bg="white")
 
-        def update_preview(*args):
-            """Update preview showing ONLY selected files"""
-            # Clear existing preview
-            for widget in preview_table.winfo_children():
-                widget.destroy()
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-            # Get only selected files
+        canvas_window = canvas.create_window((0, 0), window=content, anchor="nw")
+        content.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_window, width=e.width))
+
+        # Store reference to file selection widgets and pattern variables
+        file_checkboxes = {}  # file_obj -> checkbox widget
+        batch_cards_container = [None]  # Will hold batch cards frame
+        unrenamed_section_container = [None]  # Will hold unrenamed files section
+        selected_count_label = [None]  # Label showing selected file count
+
+        # Pattern configuration variables
+        pattern_var = tk.StringVar(value="custom")
+        custom_name_var = tk.StringVar(value="File")
+        start_num_var = tk.StringVar(value="1")
+        digits_var = tk.StringVar(value="3")
+        prefix_var = tk.StringVar(value="")
+        suffix_var = tk.StringVar(value="")
+        find_var = tk.StringVar(value="")
+        replace_var = tk.StringVar(value="")
+
+        # ========== HELPER FUNCTIONS ==========
+
+        def generate_batch_name(pattern_type, selected_files):
+            """Generate a descriptive batch name based on pattern"""
+            if pattern_type == "custom":
+                custom_name = custom_name_var.get() or "File"
+                return f"Batch {batch_counter[0]}: {custom_name}_###"
+            elif pattern_type == "prefix":
+                prefix = prefix_var.get() or "[prefix]"
+                return f"Batch {batch_counter[0]}: Add prefix '{prefix}'"
+            elif pattern_type == "suffix":
+                suffix = suffix_var.get() or "[suffix]"
+                return f"Batch {batch_counter[0]}: Add suffix '{suffix}'"
+            elif pattern_type == "replace":
+                find_text = find_var.get() or "[find]"
+                replace_text = replace_var.get() or "[replace]"
+                return f"Batch {batch_counter[0]}: Replace '{find_text}' with '{replace_text}'"
+            return f"Batch {batch_counter[0]}"
+
+        def generate_new_name(batch, file_obj, index_in_batch):
+            """Generate new filename based on batch pattern"""
+            current_name = file_obj.get('pending_name', file_obj['name'])
+            base_name = os.path.splitext(current_name)[0]
+            extension = os.path.splitext(current_name)[1]
+
+            pattern = batch['pattern']
+
+            if pattern == "custom":
+                custom_name = batch['custom_name']
+                start_num = batch['start_num']
+                digits = batch['digits']
+                num = str(start_num + index_in_batch).zfill(digits)
+                return f"{custom_name}_{num}{extension}"
+
+            elif pattern == "prefix":
+                prefix = batch['prefix']
+                return f"{prefix}{current_name}"
+
+            elif pattern == "suffix":
+                suffix = batch['suffix']
+                return f"{base_name}{suffix}{extension}"
+
+            elif pattern == "replace":
+                find_text = batch['find_text']
+                replace_text = batch['replace_text']
+                if find_text:
+                    return current_name.replace(find_text, replace_text)
+                return current_name
+
+            return current_name
+
+        def apply_or_update_batch():
+            """Create new batch or update existing batch being edited"""
             selected_files = [f for f in self.files if f.get('rename_selected', tk.BooleanVar()).get()]
 
             if not selected_files:
-                tk.Label(
-                    preview_table,
-                    text="No files selected for renaming",
-                    font=("Segoe UI", 10),
-                    bg="white",
-                    fg="#999",
-                    pady=30
-                ).pack()
-                preview_table.update_idletasks()
-                preview_canvas.configure(scrollregion=preview_canvas.bbox("all"))
+                messagebox.showwarning("No Selection", "Please select files to add to batch")
                 return
-
-            # Headers
-            tk.Label(preview_table, text="Original Name", font=("Segoe UI", 9, "bold"), bg="#E1E1E1", padx=10, pady=5, width=40, anchor=tk.W).grid(row=0, column=0, sticky="ew")
-            tk.Label(preview_table, text="→", font=("Segoe UI", 9, "bold"), bg="#E1E1E1", padx=5, pady=5).grid(row=0, column=1)
-            tk.Label(preview_table, text="New Name", font=("Segoe UI", 9, "bold"), bg="#E1E1E1", padx=10, pady=5, width=40, anchor=tk.W).grid(row=0, column=2, sticky="ew")
 
             pattern = pattern_var.get()
 
+            # Create batch data structure
+            batch_data = {
+                'id': current_edit_batch[0]['id'] if current_edit_batch[0] else batch_counter[0],
+                'pattern': pattern,
+                'custom_name': custom_name_var.get() or "File",
+                'start_num': int(start_num_var.get() or 1),
+                'digits': int(digits_var.get() or 3),
+                'prefix': prefix_var.get(),
+                'suffix': suffix_var.get(),
+                'find_text': find_var.get(),
+                'replace_text': replace_var.get(),
+                'files': [],
+                'expanded': tk.BooleanVar(value=True),
+                'name': tk.StringVar()
+            }
+
+            # If editing, remove old batch
+            if current_edit_batch[0]:
+                old_batch = current_edit_batch[0]
+                # Remove files from old batch
+                for f in old_batch['files']:
+                    f['current_batch'] = None
+                batches.remove(old_batch)
+                current_edit_batch[0] = None
+
+            # Process files and generate new names
             for idx, file_obj in enumerate(selected_files):
-                original_name = file_obj['name']
-                base_name = os.path.splitext(original_name)[0]
-                extension = os.path.splitext(original_name)[1]
+                # Remove from any previous batch
+                if 'current_batch' in file_obj and file_obj['current_batch']:
+                    prev_batch = file_obj['current_batch']
+                    if file_obj in prev_batch['files']:
+                        prev_batch['files'].remove(file_obj)
 
-                # Generate new name based on pattern
-                if pattern == "custom":
-                    custom_name = custom_name_var.get() or "File"
-                    try:
-                        start_num = int(start_num_var.get() or 1)
-                    except ValueError:
-                        start_num = 1
-                    try:
-                        digits = int(digits_var.get() or 3)
-                    except ValueError:
-                        digits = 3
-                    num = str(start_num + idx).zfill(digits)
-                    new_name = f"{custom_name}_{num}{extension}"
+                # Generate new name
+                new_name = generate_new_name(batch_data, file_obj, idx)
 
-                elif pattern == "prefix":
-                    prefix = prefix_var.get()
-                    new_name = f"{prefix}{original_name}" if prefix else original_name
+                # Add to batch
+                batch_data['files'].append(file_obj)
+                file_obj['current_batch'] = batch_data
+                file_obj['pending_name'] = new_name
 
-                elif pattern == "suffix":
-                    suffix = suffix_var.get()
-                    new_name = f"{base_name}{suffix}{extension}" if suffix else original_name
-
-                elif pattern == "replace":
-                    find_text = find_var.get()
-                    replace_text = replace_var.get()
-                    if find_text:
-                        new_name = original_name.replace(find_text, replace_text)
-                    else:
-                        new_name = original_name
-
-                else:
-                    new_name = original_name
-
-                # Display in table
-                row = idx + 1
-                tk.Label(preview_table, text=original_name, font=("Segoe UI", 9), bg="white", padx=10, pady=3, anchor=tk.W).grid(row=row, column=0, sticky="ew")
-                tk.Label(preview_table, text="→", font=("Segoe UI", 9), bg="white", padx=5, pady=3).grid(row=row, column=1)
-                tk.Label(preview_table, text=new_name, font=("Segoe UI", 9), bg="white", fg="#0078D4", padx=10, pady=3, anchor=tk.W).grid(row=row, column=2, sticky="ew")
-
-            preview_table.update_idletasks()
-            preview_canvas.configure(scrollregion=preview_canvas.bbox("all"))
-
-        # Select All / Deselect All buttons
-        select_buttons = tk.Frame(selection_frame, bg="white")
-        select_buttons.pack(fill=tk.X, padx=10, pady=5)
-
-        def select_all():
-            for file_obj in self.files:
-                file_obj['rename_selected'].set(True)
-            update_selected_count()
-            update_preview()
-
-        def deselect_all():
-            for file_obj in self.files:
+                # Deselect file after adding to batch
                 file_obj['rename_selected'].set(False)
-            update_selected_count()
-            update_preview()
+
+            # Set batch name
+            batch_data['name'].set(generate_batch_name(pattern, selected_files))
+
+            # Add batch to list
+            batches.append(batch_data)
+            batch_counter[0] += 1
+
+            # Refresh UI
+            update_file_selection_display()
+            create_batch_cards()
+            update_unrenamed_section()
+            update_stats()
+
+        def create_batch_cards():
+            """Render all batch cards"""
+            # Clear existing cards
+            if batch_cards_container[0]:
+                batch_cards_container[0].destroy()
+
+            # Create container
+            cards_frame = tk.LabelFrame(
+                content,
+                text=f"Rename Batches ({len(batches)})",
+                font=("Segoe UI", 11, "bold"),
+                bg="white",
+                fg="#333"
+            )
+            cards_frame.pack(fill=tk.X, padx=20, pady=(10, 5))
+            batch_cards_container[0] = cards_frame
+
+            if not batches:
+                tk.Label(
+                    cards_frame,
+                    text="No batches created yet. Select files and configure pattern above.",
+                    font=("Segoe UI", 9),
+                    bg="white",
+                    fg="#999",
+                    pady=20
+                ).pack()
+                return
+
+            # Create card for each batch
+            for batch in batches:
+                create_batch_card(cards_frame, batch)
+
+        def create_batch_card(parent, batch):
+            """Render a single batch card"""
+            card = tk.Frame(parent, bg="#F8F8F8", relief=tk.RIDGE, borderwidth=1)
+            card.pack(fill=tk.X, padx=10, pady=5)
+
+            # Header
+            header = tk.Frame(card, bg="#E1E1E1")
+            header.pack(fill=tk.X)
+
+            # Expand/collapse button
+            expand_btn = tk.Button(
+                header,
+                text="▼" if batch['expanded'].get() else "▶",
+                command=lambda: toggle_batch_expand(batch),
+                font=("Segoe UI", 10),
+                bg="#E1E1E1",
+                relief=tk.FLAT,
+                cursor="hand2",
+                width=3
+            )
+            expand_btn.pack(side=tk.LEFT, padx=5, pady=5)
+
+            # Batch name (editable)
+            name_entry = tk.Entry(
+                header,
+                textvariable=batch['name'],
+                font=("Segoe UI", 10, "bold"),
+                bg="#E1E1E1",
+                relief=tk.FLAT,
+                fg="#0078D4"
+            )
+            name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=5)
+
+            # File count
+            tk.Label(
+                header,
+                text=f"({len(batch['files'])} files)",
+                font=("Segoe UI", 9),
+                bg="#E1E1E1",
+                fg="#666"
+            ).pack(side=tk.LEFT, padx=10)
+
+            # Action buttons
+            btn_frame = tk.Frame(header, bg="#E1E1E1")
+            btn_frame.pack(side=tk.RIGHT, padx=5)
+
+            # Move up button
+            if batches.index(batch) > 0:
+                tk.Button(
+                    btn_frame,
+                    text="↑",
+                    command=lambda: move_batch_up(batch),
+                    font=("Segoe UI", 9),
+                    bg="#E1E1E1",
+                    relief=tk.FLAT,
+                    cursor="hand2",
+                    width=2
+                ).pack(side=tk.LEFT, padx=2)
+
+            # Move down button
+            if batches.index(batch) < len(batches) - 1:
+                tk.Button(
+                    btn_frame,
+                    text="↓",
+                    command=lambda: move_batch_down(batch),
+                    font=("Segoe UI", 9),
+                    bg="#E1E1E1",
+                    relief=tk.FLAT,
+                    cursor="hand2",
+                    width=2
+                ).pack(side=tk.LEFT, padx=2)
+
+            # Edit button
+            tk.Button(
+                btn_frame,
+                text="Edit",
+                command=lambda: edit_batch(batch),
+                font=("Segoe UI", 9),
+                bg="#0078D4",
+                fg="white",
+                relief=tk.FLAT,
+                cursor="hand2",
+                padx=8
+            ).pack(side=tk.LEFT, padx=2)
+
+            # Delete button
+            tk.Button(
+                btn_frame,
+                text="Delete",
+                command=lambda: delete_batch(batch),
+                font=("Segoe UI", 9),
+                bg="#D13438",
+                fg="white",
+                relief=tk.FLAT,
+                cursor="hand2",
+                padx=8
+            ).pack(side=tk.LEFT, padx=2)
+
+            # Expanded content: show renamed files
+            if batch['expanded'].get():
+                files_frame = tk.Frame(card, bg="white")
+                files_frame.pack(fill=tk.X, padx=10, pady=10)
+
+                for idx, file_obj in enumerate(batch['files']):
+                    file_row = tk.Frame(files_frame, bg="white")
+                    file_row.pack(fill=tk.X, pady=2)
+
+                    # Original name
+                    tk.Label(
+                        file_row,
+                        text=f"{file_obj['name']} →",
+                        font=("Segoe UI", 8),
+                        bg="white",
+                        fg="#666",
+                        anchor=tk.W,
+                        width=35
+                    ).pack(side=tk.LEFT)
+
+                    # New name
+                    tk.Label(
+                        file_row,
+                        text=file_obj.get('pending_name', file_obj['name']),
+                        font=("Segoe UI", 8, "bold"),
+                        bg="white",
+                        fg="#0078D4",
+                        anchor=tk.W
+                    ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+                    # Reset button
+                    tk.Button(
+                        file_row,
+                        text="Reset",
+                        command=lambda f=file_obj, b=batch: reset_file_from_batch(f, b),
+                        font=("Segoe UI", 7),
+                        bg="#E1E1E1",
+                        relief=tk.FLAT,
+                        cursor="hand2",
+                        padx=5
+                    ).pack(side=tk.RIGHT)
+
+        def toggle_batch_expand(batch):
+            """Expand or collapse batch card"""
+            batch['expanded'].set(not batch['expanded'].get())
+            create_batch_cards()
+
+        def edit_batch(batch):
+            """Load batch into editor for modification"""
+            current_edit_batch[0] = batch
+
+            # Load batch settings
+            pattern_var.set(batch['pattern'])
+            custom_name_var.set(batch['custom_name'])
+            start_num_var.set(str(batch['start_num']))
+            digits_var.set(str(batch['digits']))
+            prefix_var.set(batch['prefix'])
+            suffix_var.set(batch['suffix'])
+            find_var.set(batch['find_text'])
+            replace_var.set(batch['replace_text'])
+
+            # Select batch files
+            for f in self.files:
+                f['rename_selected'].set(f in batch['files'])
+
+            update_file_selection_display()
+            messagebox.showinfo("Edit Mode", f"Loaded batch for editing: {batch['name'].get()}\n\nModify settings and click 'Apply/Update Batch' to save changes.")
+
+        def delete_batch(batch):
+            """Remove a batch and restore original names"""
+            if not messagebox.askyesno("Delete Batch", f"Delete batch '{batch['name'].get()}'?\n\nFiles will return to unrenamed state."):
+                return
+
+            # Remove files from batch
+            for file_obj in batch['files']:
+                file_obj['current_batch'] = None
+                if 'pending_name' in file_obj:
+                    del file_obj['pending_name']
+
+            batches.remove(batch)
+            current_edit_batch[0] = None
+
+            # Refresh UI
+            update_file_selection_display()
+            create_batch_cards()
+            update_unrenamed_section()
+            update_stats()
+
+        def reset_file_from_batch(file_obj, batch):
+            """Remove a single file from a batch"""
+            if file_obj in batch['files']:
+                batch['files'].remove(file_obj)
+                file_obj['current_batch'] = None
+                if 'pending_name' in file_obj:
+                    del file_obj['pending_name']
+
+                # If batch is now empty, remove it
+                if not batch['files']:
+                    batches.remove(batch)
+
+                # Refresh UI
+                update_file_selection_display()
+                create_batch_cards()
+                update_unrenamed_section()
+                update_stats()
+
+        def move_batch_up(batch):
+            """Move batch up in order"""
+            idx = batches.index(batch)
+            if idx > 0:
+                batches[idx], batches[idx-1] = batches[idx-1], batches[idx]
+                create_batch_cards()
+
+        def move_batch_down(batch):
+            """Move batch down in order"""
+            idx = batches.index(batch)
+            if idx < len(batches) - 1:
+                batches[idx], batches[idx+1] = batches[idx+1], batches[idx]
+                create_batch_cards()
+
+        def update_unrenamed_section():
+            """Update display of files not in any batch"""
+            # Clear existing section
+            if unrenamed_section_container[0]:
+                unrenamed_section_container[0].destroy()
+
+            # Get unrenamed files
+            unrenamed_files = [f for f in self.files if not f.get('current_batch')]
+
+            if not unrenamed_files:
+                return
+
+            # Create section
+            unrenamed_frame = tk.LabelFrame(
+                content,
+                text=f"Unrenamed Files ({len(unrenamed_files)})",
+                font=("Segoe UI", 11, "bold"),
+                bg="white",
+                fg="#666"
+            )
+            unrenamed_frame.pack(fill=tk.X, padx=20, pady=(5, 10))
+            unrenamed_section_container[0] = unrenamed_frame
+
+            # Expandable list
+            for file_obj in unrenamed_files[:10]:  # Show first 10
+                tk.Label(
+                    unrenamed_frame,
+                    text=f"• {file_obj['name']}",
+                    font=("Segoe UI", 8),
+                    bg="white",
+                    fg="#666",
+                    anchor=tk.W
+                ).pack(fill=tk.X, padx=10, pady=1)
+
+            if len(unrenamed_files) > 10:
+                tk.Label(
+                    unrenamed_frame,
+                    text=f"... and {len(unrenamed_files) - 10} more",
+                    font=("Segoe UI", 8, "italic"),
+                    bg="white",
+                    fg="#999",
+                    anchor=tk.W
+                ).pack(fill=tk.X, padx=10, pady=3)
+
+        def undo_last_batch():
+            """Remove the most recently created batch"""
+            if not batches:
+                messagebox.showinfo("No Batches", "No batches to undo")
+                return
+
+            last_batch = batches[-1]
+            delete_batch(last_batch)
+
+        def reset_all_batches():
+            """Clear all batches and restore original names"""
+            if not batches:
+                messagebox.showinfo("No Batches", "No batches to reset")
+                return
+
+            if not messagebox.askyesno("Reset All", f"Remove all {len(batches)} batches?\n\nAll files will return to original names."):
+                return
+
+            # Clear all batches
+            for batch in batches[:]:
+                for file_obj in batch['files']:
+                    file_obj['current_batch'] = None
+                    if 'pending_name' in file_obj:
+                        del file_obj['pending_name']
+
+            batches.clear()
+            batch_counter[0] = 1
+            current_edit_batch[0] = None
+
+            # Refresh UI
+            update_file_selection_display()
+            create_batch_cards()
+            update_unrenamed_section()
+            update_stats()
+
+        def show_export_preview():
+            """Show preview dialog with all rename changes"""
+            if not batches:
+                messagebox.showinfo("No Changes", "No rename batches to preview")
+                return
+
+            # Create preview dialog
+            preview_dialog = tk.Toplevel(dialog)
+            preview_dialog.title("Preview All Changes")
+            preview_dialog.geometry("800x600")
+            preview_dialog.transient(dialog)
+            preview_dialog.grab_set()
+
+            # Header
+            header = tk.Frame(preview_dialog, bg="#0078D4", height=60)
+            header.pack(fill=tk.X)
+            header.pack_propagate(False)
+
+            tk.Label(
+                header,
+                text="Preview All Changes",
+                font=("Segoe UI", 14, "bold"),
+                bg="#0078D4",
+                fg="white"
+            ).pack(pady=10)
+
+            total_renamed = sum(len(b['files']) for b in batches)
+            tk.Label(
+                header,
+                text=f"{total_renamed} files will be renamed across {len(batches)} batches",
+                font=("Segoe UI", 10),
+                bg="#0078D4",
+                fg="white"
+            ).pack()
+
+            # Content with scrolling
+            preview_canvas = tk.Canvas(preview_dialog, bg="white", highlightthickness=0)
+            preview_scrollbar = tk.Scrollbar(preview_dialog, orient="vertical", command=preview_canvas.yview)
+            preview_content = tk.Frame(preview_canvas, bg="white")
+
+            preview_canvas.configure(yscrollcommand=preview_scrollbar.set)
+            preview_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            preview_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+            preview_canvas_window = preview_canvas.create_window((0, 0), window=preview_content, anchor="nw")
+            preview_content.bind("<Configure>", lambda e: preview_canvas.configure(scrollregion=preview_canvas.bbox("all")))
+            preview_canvas.bind("<Configure>", lambda e: preview_canvas.itemconfig(preview_canvas_window, width=e.width))
+
+            # Show each batch
+            for batch_idx, batch in enumerate(batches):
+                batch_frame = tk.LabelFrame(
+                    preview_content,
+                    text=batch['name'].get(),
+                    font=("Segoe UI", 10, "bold"),
+                    bg="white",
+                    fg="#0078D4"
+                )
+                batch_frame.pack(fill=tk.X, padx=20, pady=10)
+
+                for file_obj in batch['files']:
+                    file_row = tk.Frame(batch_frame, bg="white")
+                    file_row.pack(fill=tk.X, padx=10, pady=2)
+
+                    tk.Label(
+                        file_row,
+                        text=original_names[file_obj['name']],
+                        font=("Segoe UI", 9),
+                        bg="white",
+                        fg="#666",
+                        anchor=tk.W,
+                        width=40
+                    ).pack(side=tk.LEFT)
+
+                    tk.Label(
+                        file_row,
+                        text="→",
+                        font=("Segoe UI", 9),
+                        bg="white",
+                        fg="#999"
+                    ).pack(side=tk.LEFT, padx=5)
+
+                    tk.Label(
+                        file_row,
+                        text=file_obj.get('pending_name', file_obj['name']),
+                        font=("Segoe UI", 9, "bold"),
+                        bg="white",
+                        fg="#0078D4",
+                        anchor=tk.W
+                    ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            # Close button
+            tk.Button(
+                preview_dialog,
+                text="Close",
+                command=preview_dialog.destroy,
+                font=("Segoe UI", 10),
+                bg="#0078D4",
+                fg="white",
+                relief=tk.FLAT,
+                cursor="hand2",
+                padx=30,
+                pady=10
+            ).pack(pady=20)
+
+        def save_all_changes():
+            """Commit all rename changes"""
+            if not batches:
+                messagebox.showinfo("No Changes", "No rename batches to save")
+                return
+
+            total_renamed = sum(len(b['files']) for b in batches)
+
+            if not messagebox.askyesno(
+                "Confirm Save",
+                f"Apply all rename changes?\n\n{total_renamed} files will be renamed across {len(batches)} batches.\n\nThis cannot be undone."
+            ):
+                return
+
+            # Apply all changes
+            for batch in batches:
+                for file_obj in batch['files']:
+                    if 'pending_name' in file_obj:
+                        file_obj['name'] = file_obj['pending_name']
+                        # Update UI label
+                        if 'name_label' in file_obj:
+                            file_obj['name_label'].config(text=file_obj['name'])
+
+            dialog.destroy()
+            messagebox.showinfo("Success", f"Successfully renamed {total_renamed} file(s)")
+
+        def cancel_all():
+            """Close dialog without saving"""
+            if batches:
+                if not messagebox.askyesno("Cancel", f"Discard {len(batches)} batches without saving?"):
+                    return
+
+            # Clear all pending changes
+            for file_obj in self.files:
+                if 'current_batch' in file_obj:
+                    file_obj['current_batch'] = None
+                if 'pending_name' in file_obj:
+                    del file_obj['pending_name']
+
+            dialog.destroy()
+
+        def update_file_selection_display():
+            """Update file list to show batch membership status"""
+            for widget in files_list_frame.winfo_children():
+                widget.destroy()
+
+            for file_obj in self.files:
+                file_frame = tk.Frame(files_list_frame, bg="white")
+                file_frame.pack(fill=tk.X, pady=2)
+
+                # Checkbox
+                cb = tk.Checkbutton(
+                    file_frame,
+                    variable=file_obj['rename_selected'],
+                    bg="white",
+                    command=lambda: update_selected_count_display()
+                )
+                cb.pack(side=tk.LEFT, padx=(5, 5))
+
+                # File name with batch status
+                if file_obj.get('current_batch'):
+                    text = f"{file_obj['name']} [In Batch]"
+                    fg = "#999"
+                else:
+                    text = file_obj['name']
+                    fg = "#000"
+
+                tk.Label(
+                    file_frame,
+                    text=text,
+                    font=("Segoe UI", 9),
+                    bg="white",
+                    fg=fg,
+                    anchor=tk.W
+                ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            files_list_frame.update_idletasks()
+            files_canvas.configure(scrollregion=files_canvas.bbox("all"))
+
+        def update_selected_count_display():
+            """Update the count of selected files"""
+            if selected_count_label[0]:
+                count = sum(1 for f in self.files if f.get('rename_selected', tk.BooleanVar()).get())
+                selected_count_label[0].config(text=f"{count} file(s) selected")
+
+        # ========== SECTION 1: FILE SELECTION & PATTERN CONFIGURATION ==========
+
+        main_config_frame = tk.Frame(content, bg="white")
+        main_config_frame.pack(fill=tk.X, padx=20, pady=(10, 5))
+
+        # Left side: File selection
+        left_panel = tk.LabelFrame(
+            main_config_frame,
+            text="Select Files",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        )
+        left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+
+        # Select buttons
+        select_buttons = tk.Frame(left_panel, bg="white")
+        select_buttons.pack(fill=tk.X, padx=5, pady=5)
 
         tk.Button(
             select_buttons,
-            text="✓ Select All",
-            command=select_all,
-            font=("Segoe UI", 9),
+            text="Select All",
+            command=lambda: [f['rename_selected'].set(True) for f in self.files] or update_selected_count_display(),
+            font=("Segoe UI", 8),
             bg="#0078D4",
             fg="white",
             relief=tk.FLAT,
             cursor="hand2",
-            padx=15,
-            pady=3
+            padx=10,
+            pady=2
         ).pack(side=tk.LEFT, padx=(0, 5))
 
         tk.Button(
             select_buttons,
-            text="✗ Deselect All",
-            command=deselect_all,
+            text="Deselect All",
+            command=lambda: [f['rename_selected'].set(False) for f in self.files] or update_selected_count_display(),
+            font=("Segoe UI", 8),
+            bg="#E1E1E1",
+            fg="#333",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=10,
+            pady=2
+        ).pack(side=tk.LEFT)
+
+        count_label = tk.Label(
+            select_buttons,
+            text="0 file(s) selected",
+            font=("Segoe UI", 8),
+            bg="white",
+            fg="#666"
+        )
+        count_label.pack(side=tk.RIGHT, padx=5)
+        selected_count_label[0] = count_label
+
+        # File list with checkboxes
+        files_canvas = tk.Canvas(left_panel, bg="white", height=200, highlightthickness=0)
+        files_scrollbar = tk.Scrollbar(left_panel, orient="vertical", command=files_canvas.yview)
+        files_list_frame = tk.Frame(files_canvas, bg="white")
+
+        files_canvas.configure(yscrollcommand=files_scrollbar.set)
+        files_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        files_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
+
+        files_canvas_window = files_canvas.create_window((0, 0), window=files_list_frame, anchor="nw")
+        files_canvas.bind('<Configure>', lambda e: files_canvas.itemconfig(files_canvas_window, width=e.width))
+
+        # Right side: Pattern configuration
+        right_panel = tk.LabelFrame(
+            main_config_frame,
+            text="Configure Pattern",
+            font=("Segoe UI", 10, "bold"),
+            bg="white"
+        )
+        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+
+        # Pattern options
+        tk.Radiobutton(
+            right_panel,
+            text="Custom name + number:",
+            variable=pattern_var,
+            value="custom",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).grid(row=0, column=0, sticky=tk.W, padx=5, pady=3)
+        tk.Entry(right_panel, textvariable=custom_name_var, font=("Segoe UI", 9), width=20).grid(row=0, column=1, padx=5, pady=3)
+
+        tk.Label(right_panel, text="Start:", font=("Segoe UI", 8), bg="white").grid(row=1, column=0, sticky=tk.E, padx=5)
+        tk.Entry(right_panel, textvariable=start_num_var, font=("Segoe UI", 9), width=10).grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
+
+        tk.Label(right_panel, text="Digits:", font=("Segoe UI", 8), bg="white").grid(row=2, column=0, sticky=tk.E, padx=5)
+        tk.Spinbox(right_panel, from_=1, to=5, textvariable=digits_var, font=("Segoe UI", 9), width=8).grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
+
+        tk.Radiobutton(
+            right_panel,
+            text="Add prefix:",
+            variable=pattern_var,
+            value="prefix",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).grid(row=3, column=0, sticky=tk.W, padx=5, pady=3)
+        tk.Entry(right_panel, textvariable=prefix_var, font=("Segoe UI", 9), width=20).grid(row=3, column=1, padx=5, pady=3)
+
+        tk.Radiobutton(
+            right_panel,
+            text="Add suffix:",
+            variable=pattern_var,
+            value="suffix",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).grid(row=4, column=0, sticky=tk.W, padx=5, pady=3)
+        tk.Entry(right_panel, textvariable=suffix_var, font=("Segoe UI", 9), width=20).grid(row=4, column=1, padx=5, pady=3)
+
+        tk.Radiobutton(
+            right_panel,
+            text="Find/Replace:",
+            variable=pattern_var,
+            value="replace",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).grid(row=5, column=0, sticky=tk.W, padx=5, pady=3)
+
+        replace_inputs = tk.Frame(right_panel, bg="white")
+        replace_inputs.grid(row=5, column=1, sticky=tk.W, padx=5, pady=3)
+        tk.Label(replace_inputs, text="Find:", font=("Segoe UI", 8), bg="white").pack(side=tk.LEFT)
+        tk.Entry(replace_inputs, textvariable=find_var, font=("Segoe UI", 8), width=10).pack(side=tk.LEFT, padx=2)
+        tk.Label(replace_inputs, text="→", font=("Segoe UI", 8), bg="white").pack(side=tk.LEFT)
+        tk.Entry(replace_inputs, textvariable=replace_var, font=("Segoe UI", 8), width=10).pack(side=tk.LEFT, padx=2)
+
+        # Apply button
+        tk.Button(
+            right_panel,
+            text="Apply / Update Batch",
+            command=apply_or_update_batch,
+            font=("Segoe UI", 10, "bold"),
+            bg="#107C10",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=20,
+            pady=8
+        ).grid(row=6, column=0, columnspan=2, pady=10)
+
+        # ========== SECTION 2: BATCH CARDS ==========
+        # (Will be created dynamically by create_batch_cards())
+
+        # ========== SECTION 3: UNRENAMED FILES ==========
+        # (Will be created dynamically by update_unrenamed_section())
+
+        # ========== ACTION BUTTONS ==========
+        actions_frame = tk.Frame(content, bg="white")
+        actions_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        tk.Button(
+            actions_frame,
+            text="Undo Last Batch",
+            command=undo_last_batch,
             font=("Segoe UI", 9),
             bg="#E1E1E1",
             fg="#333",
             relief=tk.FLAT,
             cursor="hand2",
             padx=15,
-            pady=3
-        ).pack(side=tk.LEFT)
-
-        # File list with checkboxes
-        files_canvas = tk.Canvas(selection_frame, bg="white", height=150, highlightthickness=0)
-        files_scrollbar = tk.Scrollbar(selection_frame, orient="vertical", command=files_canvas.yview)
-        files_list_frame = tk.Frame(files_canvas, bg="white")
-
-        files_canvas.configure(yscrollcommand=files_scrollbar.set)
-        files_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        files_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-
-        files_canvas_window = files_canvas.create_window((0, 0), window=files_list_frame, anchor="nw")
-
-        # Create checkbox for each file
-        for file_obj in self.files:
-            # Add selection variable to file object
-            if 'rename_selected' not in file_obj:
-                file_obj['rename_selected'] = tk.BooleanVar(value=True)  # Default: all selected
-
-            file_frame = tk.Frame(files_list_frame, bg="white")
-            file_frame.pack(fill=tk.X, pady=2)
-
-            cb = tk.Checkbutton(
-                file_frame,
-                variable=file_obj['rename_selected'],
-                bg="white",
-                command=lambda: (update_selected_count(), update_preview())
-            )
-            cb.pack(side=tk.LEFT, padx=(5, 5))
-
-            tk.Label(
-                file_frame,
-                text=file_obj['name'],
-                font=("Segoe UI", 9),
-                bg="white",
-                anchor=tk.W
-            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        files_list_frame.update_idletasks()
-        files_canvas.configure(scrollregion=files_canvas.bbox("all"))
-        files_canvas.bind('<Configure>', lambda e: files_canvas.itemconfig(files_canvas_window, width=e.width))
-
-        # Initial count
-        update_selected_count()
-
-        # Rename pattern options
-        pattern_frame = tk.LabelFrame(
-            content,
-            text="2. Select Rename Pattern",
-            font=("Segoe UI", 10, "bold"),
-            bg="white"
-        )
-        pattern_frame.pack(fill=tk.X, pady=(0, 15))
-
-        pattern_var = tk.StringVar(value="custom")
-
-        # Pattern: Custom name
-        custom_frame = tk.Frame(pattern_frame, bg="white")
-        custom_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        tk.Radiobutton(
-            custom_frame,
-            text="Custom name with numbering:",
-            variable=pattern_var,
-            value="custom",
-            font=("Segoe UI", 9),
-            bg="white",
-            command=update_preview
-        ).pack(side=tk.LEFT)
-
-        custom_name_var = tk.StringVar(value="File")
-        custom_entry = tk.Entry(
-            custom_frame,
-            textvariable=custom_name_var,
-            font=("Segoe UI", 9),
-            width=30
-        )
-        custom_entry.pack(side=tk.LEFT, padx=(10, 5))
-
-        tk.Label(
-            custom_frame,
-            text="→ File_001, File_002, ...",
-            font=("Segoe UI", 8),
-            bg="white",
-            fg="#666"
-        ).pack(side=tk.LEFT)
-
-        # Pattern: Prefix
-        prefix_frame = tk.Frame(pattern_frame, bg="white")
-        prefix_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        tk.Radiobutton(
-            prefix_frame,
-            text="Add prefix:",
-            variable=pattern_var,
-            value="prefix",
-            font=("Segoe UI", 9),
-            bg="white",
-            command=update_preview
-        ).pack(side=tk.LEFT)
-
-        prefix_var = tk.StringVar(value="")
-        prefix_entry = tk.Entry(
-            prefix_frame,
-            textvariable=prefix_var,
-            font=("Segoe UI", 9),
-            width=30
-        )
-        prefix_entry.pack(side=tk.LEFT, padx=(10, 5))
-
-        tk.Label(
-            prefix_frame,
-            text="→ prefix_originalname",
-            font=("Segoe UI", 8),
-            bg="white",
-            fg="#666"
-        ).pack(side=tk.LEFT)
-
-        # Pattern: Suffix
-        suffix_frame = tk.Frame(pattern_frame, bg="white")
-        suffix_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        tk.Radiobutton(
-            suffix_frame,
-            text="Add suffix:",
-            variable=pattern_var,
-            value="suffix",
-            font=("Segoe UI", 9),
-            bg="white",
-            command=update_preview
-        ).pack(side=tk.LEFT)
-
-        suffix_var = tk.StringVar(value="")
-        suffix_entry = tk.Entry(
-            suffix_frame,
-            textvariable=suffix_var,
-            font=("Segoe UI", 9),
-            width=30
-        )
-        suffix_entry.pack(side=tk.LEFT, padx=(10, 5))
-
-        tk.Label(
-            suffix_frame,
-            text="→ originalname_suffix",
-            font=("Segoe UI", 8),
-            bg="white",
-            fg="#666"
-        ).pack(side=tk.LEFT)
-
-        # Pattern: Replace text
-        replace_frame = tk.Frame(pattern_frame, bg="white")
-        replace_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        tk.Radiobutton(
-            replace_frame,
-            text="Find and replace:",
-            variable=pattern_var,
-            value="replace",
-            font=("Segoe UI", 9),
-            bg="white",
-            command=update_preview
-        ).pack(side=tk.LEFT)
-
-        find_var = tk.StringVar(value="")
-        replace_var = tk.StringVar(value="")
-
-        tk.Label(replace_frame, text="Find:", font=("Segoe UI", 8), bg="white").pack(side=tk.LEFT, padx=(10, 2))
-        tk.Entry(replace_frame, textvariable=find_var, font=("Segoe UI", 9), width=15).pack(side=tk.LEFT, padx=(0, 5))
-
-        tk.Label(replace_frame, text="Replace:", font=("Segoe UI", 8), bg="white").pack(side=tk.LEFT, padx=(10, 2))
-        tk.Entry(replace_frame, textvariable=replace_var, font=("Segoe UI", 9), width=15).pack(side=tk.LEFT)
-
-        # Numbering options
-        numbering_frame = tk.LabelFrame(
-            content,
-            text="3. Numbering Options (for Custom name)",
-            font=("Segoe UI", 10, "bold"),
-            bg="white"
-        )
-        numbering_frame.pack(fill=tk.X, pady=(0, 15))
-
-        num_options_frame = tk.Frame(numbering_frame, bg="white")
-        num_options_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        tk.Label(num_options_frame, text="Start at:", font=("Segoe UI", 9), bg="white").pack(side=tk.LEFT, padx=(0, 5))
-        start_num_var = tk.StringVar(value="1")
-        tk.Entry(num_options_frame, textvariable=start_num_var, font=("Segoe UI", 9), width=10).pack(side=tk.LEFT, padx=(0, 15))
-
-        tk.Label(num_options_frame, text="Digits:", font=("Segoe UI", 9), bg="white").pack(side=tk.LEFT, padx=(0, 5))
-        digits_var = tk.StringVar(value="3")
-        tk.Spinbox(num_options_frame, from_=1, to=5, textvariable=digits_var, font=("Segoe UI", 9), width=5).pack(side=tk.LEFT)
-
-        # Preview
-        preview_frame = tk.LabelFrame(
-            content,
-            text="4. Preview Changes",
-            font=("Segoe UI", 10, "bold"),
-            bg="white"
-        )
-        preview_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-
-        # Preview table
-        preview_canvas = tk.Canvas(preview_frame, bg="white", highlightthickness=0)
-        preview_scrollbar = tk.Scrollbar(preview_frame, orient="vertical", command=preview_canvas.yview)
-        preview_table = tk.Frame(preview_canvas, bg="white")
-
-        preview_canvas.configure(yscrollcommand=preview_scrollbar.set)
-        preview_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        preview_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        canvas_window = preview_canvas.create_window((0, 0), window=preview_table, anchor="nw")
-
-        # Bind updates for real-time preview
-        custom_name_var.trace('w', update_preview)
-        prefix_var.trace('w', update_preview)
-        suffix_var.trace('w', update_preview)
-        find_var.trace('w', update_preview)
-        replace_var.trace('w', update_preview)
-        start_num_var.trace('w', update_preview)
-        digits_var.trace('w', update_preview)
-
-        # Initial preview
-        update_preview()
-
-        # Buttons
-        button_frame = tk.Frame(dialog, bg="white")
-        button_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
-
-        def apply_rename():
-            """Apply rename to ONLY selected files"""
-            selected_files = [f for f in self.files if f.get('rename_selected', tk.BooleanVar()).get()]
-
-            if not selected_files:
-                messagebox.showwarning("No Selection", "Please select files to rename")
-                return
-
-            pattern = pattern_var.get()
-
-            for idx, file_obj in enumerate(selected_files):
-                original_name = file_obj['name']
-                base_name = os.path.splitext(original_name)[0]
-                extension = os.path.splitext(original_name)[1]
-
-                # Generate new name
-                if pattern == "custom":
-                    custom_name = custom_name_var.get() or "File"
-                    try:
-                        start_num = int(start_num_var.get() or 1)
-                    except ValueError:
-                        start_num = 1
-                    try:
-                        digits = int(digits_var.get() or 3)
-                    except ValueError:
-                        digits = 3
-                    num = str(start_num + idx).zfill(digits)
-                    new_name = f"{custom_name}_{num}{extension}"
-
-                elif pattern == "prefix":
-                    prefix = prefix_var.get()
-                    new_name = f"{prefix}{original_name}" if prefix else original_name
-
-                elif pattern == "suffix":
-                    suffix = suffix_var.get()
-                    new_name = f"{base_name}{suffix}{extension}" if suffix else original_name
-
-                elif pattern == "replace":
-                    find_text = find_var.get()
-                    replace_text = replace_var.get()
-                    if find_text:
-                        new_name = original_name.replace(find_text, replace_text)
-                    else:
-                        new_name = original_name
-
-                else:
-                    new_name = original_name
-
-                # Update file object
-                file_obj['name'] = new_name
-
-                # Update UI
-                if 'name_label' in file_obj:
-                    file_obj['name_label'].config(text=new_name)
-
-            dialog.destroy()
-            messagebox.showinfo("Success", f"Renamed {len(selected_files)} file(s)")
+            pady=5
+        ).pack(side=tk.LEFT, padx=(0, 5))
 
         tk.Button(
-            button_frame,
-            text="Apply Rename",
-            command=apply_rename,
-            font=("Segoe UI", 10, "bold"),
+            actions_frame,
+            text="Reset All",
+            command=reset_all_batches,
+            font=("Segoe UI", 9),
+            bg="#E1E1E1",
+            fg="#D13438",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=5
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        tk.Button(
+            actions_frame,
+            text="Preview Export",
+            command=show_export_preview,
+            font=("Segoe UI", 9),
+            bg="#0078D4",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=5
+        ).pack(side=tk.LEFT)
+
+        # ========== BOTTOM BUTTONS ==========
+        bottom_frame = tk.Frame(dialog, bg="white", height=70)
+        bottom_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        bottom_frame.pack_propagate(False)
+
+        button_container = tk.Frame(bottom_frame, bg="white")
+        button_container.pack(expand=True)
+
+        tk.Button(
+            button_container,
+            text="Save All Changes",
+            command=save_all_changes,
+            font=("Segoe UI", 11, "bold"),
             bg="#107C10",
             fg="white",
             relief=tk.FLAT,
             cursor="hand2",
-            padx=30,
-            pady=10
+            padx=40,
+            pady=12
         ).pack(side=tk.RIGHT, padx=(10, 0))
 
         tk.Button(
-            button_frame,
-            text="Cancel",
-            command=dialog.destroy,
-            font=("Segoe UI", 10),
+            button_container,
+            text="Cancel All",
+            command=cancel_all,
+            font=("Segoe UI", 11),
+            bg="#E1E1E1",
+            fg="#333",
             relief=tk.FLAT,
             cursor="hand2",
-            padx=30,
-            pady=10
+            padx=40,
+            pady=12
         ).pack(side=tk.RIGHT)
+
+        # ========== INITIALIZE ==========
+        update_file_selection_display()
+        create_batch_cards()
+        update_unrenamed_section()
+        update_selected_count_display()
