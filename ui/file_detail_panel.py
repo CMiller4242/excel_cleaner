@@ -384,6 +384,34 @@ class FileDetailPanel(tk.Frame):
         btn_frame = tk.Frame(card, bg="#F3F3F3")
         btn_frame.pack(fill=tk.X, padx=10, pady=5)
 
+        # Move Up button
+        tk.Button(
+            btn_frame,
+            text="↑",
+            command=lambda: self._move_operation(file_obj, index - 1, "up"),
+            state=tk.NORMAL if index > 1 else tk.DISABLED,
+            font=('Segoe UI', 8),
+            relief=tk.FLAT,
+            cursor="hand2" if index > 1 else "arrow",
+            padx=8,
+            bg="#E1E1E1",
+            activebackground="#CCC"
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        # Move Down button
+        tk.Button(
+            btn_frame,
+            text="↓",
+            command=lambda: self._move_operation(file_obj, index - 1, "down"),
+            state=tk.NORMAL if index < len(file_obj['operations']) else tk.DISABLED,
+            font=('Segoe UI', 8),
+            relief=tk.FLAT,
+            cursor="hand2" if index < len(file_obj['operations']) else "arrow",
+            padx=8,
+            bg="#E1E1E1",
+            activebackground="#CCC"
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
         tk.Button(
             btn_frame,
             text="Edit",
@@ -524,6 +552,23 @@ class FileDetailPanel(tk.Frame):
         """Enable/disable an operation"""
         operation = file_obj['operations'][op_index]
         operation['enabled'] = not operation.get('enabled', True)
+        self._update_workflow(file_obj)
+
+    def _move_operation(self, file_obj, op_index, direction):
+        """Move an operation up or down in the workflow list"""
+        ops = file_obj.get('operations', [])
+
+        if direction == "up" and op_index > 0:
+            # Swap with previous operation
+            ops[op_index - 1], ops[op_index] = ops[op_index], ops[op_index - 1]
+            print(f"[DEBUG] Moved operation {op_index} up to position {op_index - 1}")
+
+        elif direction == "down" and op_index < len(ops) - 1:
+            # Swap with next operation
+            ops[op_index], ops[op_index + 1] = ops[op_index + 1], ops[op_index]
+            print(f"[DEBUG] Moved operation {op_index} down to position {op_index + 1}")
+
+        # Refresh UI to show new order
         self._update_workflow(file_obj)
 
     # ==================== OPERATION CONFIGURATION ====================
