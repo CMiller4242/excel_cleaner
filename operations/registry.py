@@ -154,19 +154,147 @@ class OperationRegistry:
     def to_dict(self) -> Dict:
         """
         Export registry as dictionary (for UI display)
-        
+
         Returns:
             Dictionary representation of registry
         """
         return {
             'operations': {
-                op_id: op.metadata.to_dict() 
+                op_id: op.metadata.to_dict()
                 for op_id, op in self.operations.items()
             },
             'categories': self._categories,
             'tags': self._tags,
             'count': self.get_count()
         }
+
+    def normalize_operation(self, op_dict: Dict) -> Dict:
+        """
+        Convert old-format preset operations into full operation format.
+
+        Handles multiple formats:
+        - Old format: {"operation_id": "...", "parameters": {}, "enabled": true}
+        - Legacy format: {"name": "...", "parameters": {}}
+        - New format: {"class": "...", "type": "...", "name": "...", "parameters": {}, "enabled": true}
+
+        Args:
+            op_dict: Operation dictionary from preset
+
+        Returns:
+            Normalized operation dictionary with class, name, type, parameters, enabled
+        """
+        print(f"[DEBUG] Normalizing operation: {op_dict}")
+
+        # If already in new format (has 'class' field), return as-is
+        if 'class' in op_dict:
+            print(f"[DEBUG] Already in new format")
+            return op_dict
+
+        # Extract operation ID from various possible keys
+        op_id = op_dict.get('operation_id') or op_dict.get('class') or op_dict.get('id')
+
+        if not op_id:
+            # If no ID found, check if there's a 'name' field (legacy format)
+            legacy_name = op_dict.get('name')
+            if legacy_name:
+                print(f"[DEBUG] Legacy format with name: {legacy_name}")
+                # Try to find operation by name
+                for operation in self.operations.values():
+                    if operation.metadata.name.lower() == legacy_name.lower():
+                        op_id = operation.metadata.id
+                        break
+
+        if not op_id:
+            print(f"[WARN] Could not determine operation ID, using UnknownOperation")
+            # Fallback to unknown operation
+            return {
+                'class': 'unknown_operation',
+                'name': op_dict.get('name', 'Unknown Operation'),
+                'type': 'Unknown',
+                'parameters': op_dict.get('parameters', op_dict.get('params', {})),
+                'enabled': op_dict.get('enabled', True),
+                'notes': op_dict.get('notes', ''),
+                '_original': op_dict  # Store original for debugging
+            }
+
+        # Look up operation in registry
+        operation = self.get_by_id(op_id)
+
+        if not operation:
+            print(f"[WARN] Operation '{op_id}' not found in registry")
+            # Operation not found - use fallback
+            return {
+                'class': op_id,
+                'name': op_dict.get('name', op_id.replace('_', ' ').title()),
+                'type': 'Unknown',
+                'parameters': op_dict.get('parameters', op_dict.get('params', {})),
+                'enabled': op_dict.get('enabled', True),
+                'notes': op_dict.get('notes', ''),
+                '_missing_from_registry': True
+            }
+
+        # Operation found - create normalized dict
+        normalized = {
+            'class': operation.metadata.id,
+            'name': operation.metadata.name,
+            'type': operation.metadata.category,
+            'parameters': op_dict.get('parameters', op_dict.get('params', {})),
+            'enabled': op_dict.get('enabled', True),
+            'notes': op_dict.get('notes', ''),
+            'description': operation.metadata.description
+        }
+
+        print(f"[DEBUG] Normalized to: {normalized['name']} ({normalized['class']})")
+        return normalized
+
+    def get_display_name(self, op_dict: Dict) -> str:
+        """
+        Get the display name for an operation, handling multiple formats.
+
+        Args:
+            op_dict: Operation dictionary
+
+        Returns:
+            Human-readable operation name
+        """
+        # Try direct name field first
+        if 'name' in op_dict and op_dict['name'] != 'Unknown Operation':
+            return op_dict['name']
+
+        # Try to get from class/operation_id
+        op_id = op_dict.get('class') or op_dict.get('operation_id') or op_dict.get('id')
+
+        if op_id:
+            operation = self.get_by_id(op_id)
+            if operation:
+                return operation.metadata.name
+
+            # Fallback: convert ID to readable name
+            return op_id.replace('_', ' ').title()
+
+        return 'Unknown Operation'
+
+    def get_operation_metadata(self, op_dict: Dict) -> Optional[Dict]:
+        """
+        Get full metadata for an operation from the registry.
+
+        Args:
+            op_dict: Operation dictionary
+
+        Returns:
+            Metadata dict or None if not found
+        """
+        op_id = op_dict.get('class') or op_dict.get('operation_id') or op_dict.get('id')
+
+        if not op_id:
+            return None
+
+        operation = self.get_by_id(op_id)
+
+        if not operation:
+            return None
+
+        return operation.metadata.to_dict()
 
 
 # Global registry instance
