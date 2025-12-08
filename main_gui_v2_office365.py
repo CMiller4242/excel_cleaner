@@ -40,6 +40,7 @@ from engine.executor import OperationExecutor
 from engine.validator import Validator
 from presets.preset_manager import PresetManager, Preset, OperationConfig
 from ui.themes.accessible_theme import AccessibleTheme
+from ui.dedupe_panel import DedupePanel
 
 # Authentication imports
 from auth.login_window import LoginWindow
@@ -127,6 +128,8 @@ class CleanSheetApp:
         self.queue_collapsed = False
         self.file_panel_visible = False
         self.file_management_panel = None
+        self.dedupe_panel_visible = False
+        self.dedupe_panel = None
 
         # Apply theme and create UI
         AccessibleTheme.apply_theme(self.root)
@@ -246,8 +249,8 @@ class CleanSheetApp:
                  background='#F3F2F1').pack(side='left', padx=(0, 5))
 
         proc_mode_menu = ttk.Combobox(proc_mode_frame, textvariable=self.processing_mode,
-                                      values=["single", "batch"],
-                                      state='readonly', width=8,
+                                      values=["single", "batch", "dedupe"],
+                                      state='readonly', width=10,
                                       font=('Segoe UI', 9))
         proc_mode_menu.pack(side='left')
         proc_mode_menu.bind('<<ComboboxSelected>>', lambda e: self.on_processing_mode_change())
@@ -741,16 +744,22 @@ class CleanSheetApp:
         self.load_operations()
 
     def on_processing_mode_change(self):
-        """Handle processing mode toggle (single/batch)"""
+        """Handle processing mode toggle (single/batch/dedupe)"""
         mode = self.processing_mode.get()
-        self.status_var.set(f"Switched to {mode.title()} file mode")
+        self.status_var.set(f"Switched to {mode.title()} mode")
 
         if mode == "batch":
-            # Show file management panel
+            # Show file management panel, hide dedupe panel
             self.show_file_management_panel()
-        else:
-            # Hide file management panel
+            self.hide_dedupe_panel()
+        elif mode == "dedupe":
+            # Show dedupe panel, hide file management panel
             self.hide_file_management_panel()
+            self.show_dedupe_panel()
+        else:
+            # Single file mode - hide both panels
+            self.hide_file_management_panel()
+            self.hide_dedupe_panel()
 
         # Refresh ribbon to show/hide batch operations
         if hasattr(self, 'excel_ribbon'):
@@ -826,6 +835,40 @@ class CleanSheetApp:
             self.main_paned.pack(fill='both', expand=True, padx=10, pady=5)
 
         self.file_panel_visible = False
+        self.status_var.set("Single file mode enabled")
+
+    def show_dedupe_panel(self):
+        """Show deduplication panel for dedupe mode"""
+        if self.dedupe_panel_visible:
+            return
+
+        # Hide single-file UI
+        if hasattr(self, 'main_paned'):
+            self.main_paned.pack_forget()
+
+        # Create dedupe panel if it doesn't exist
+        if self.dedupe_panel is None:
+            self.dedupe_panel = DedupePanel(self.root)
+
+        # Show dedupe panel
+        self.dedupe_panel.pack(fill='both', expand=True, padx=10, pady=5)
+        self.dedupe_panel_visible = True
+        self.status_var.set("Deduplication mode enabled - Compare two files")
+
+    def hide_dedupe_panel(self):
+        """Hide deduplication panel"""
+        if not self.dedupe_panel_visible:
+            return
+
+        # Hide dedupe panel
+        if self.dedupe_panel is not None:
+            self.dedupe_panel.pack_forget()
+
+        # Show single-file UI
+        if hasattr(self, 'main_paned'):
+            self.main_paned.pack(fill='both', expand=True, padx=10, pady=5)
+
+        self.dedupe_panel_visible = False
         self.status_var.set("Single file mode enabled")
 
     def _create_split_pane(self):

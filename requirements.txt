@@ -3,6 +3,8 @@ openpyxl>=3.0.0
 anthropic>=0.18.0
 tksheet>=7.0.0
 chardet>=5.0.0
+fuzzywuzzy>=0.18.0
+python-Levenshtein>=0.21.0
 
 # Authentication dependencies
 pymongo[srv]==4.6.1
