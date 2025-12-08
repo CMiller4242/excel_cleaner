@@ -24,6 +24,7 @@ import sys
 import os
 import logging
 import threading
+import copy
 
 # Add to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -1330,26 +1331,47 @@ class CleanSheetApp:
             messagebox.showwarning("No Source", "Source file not found")
             return
 
+        # Check if source has operations
+        source_ops = source_file.get('operations', [])
+        if not source_ops:
+            messagebox.showwarning("No Workflow", "Source file has no workflow operations to copy")
+            return
+
         # Get selected files
         selected_files = self.file_list_panel.get_selected_files()
         if not selected_files:
             messagebox.showwarning("No Selection", "Please select files to copy workflow to")
             return
 
-        # Copy operations
-        source_ops = source_file.get('operations', [])
+        print(f"[DEBUG] Copying workflow from '{source_file_name}' to {len(selected_files)} file(s)")
+        print(f"[DEBUG] Source has {len(source_ops)} operations")
+
         copied_count = 0
 
         for file_obj in selected_files:
             if file_obj != source_file:
-                file_obj['operations'] = [op.copy() if hasattr(op, 'copy') else dict(op) for op in source_ops]
+                # CRITICAL: Deep copy operations to prevent shared references between files
+                file_obj['operations'] = copy.deepcopy(source_ops)
+
+                # Remove preset association since workflow is now manually copied
+                file_obj.pop('preset_name', None)
+
                 copied_count += 1
+                print(f"[DEBUG] Copied workflow to '{file_obj['name']}' - now has {len(file_obj['operations'])} operations")
 
-        messagebox.showinfo("Success", f"Copied workflow to {copied_count} files")
+        # Refresh UI for all affected files
+        # If currently viewing one of the target files, refresh its display
+        if hasattr(self, 'file_detail_panel') and self.file_detail_panel.current_file:
+            if self.file_detail_panel.current_file in selected_files:
+                print(f"[DEBUG] Refreshing UI for currently selected file")
+                self.file_detail_panel.show_file(self.file_detail_panel.current_file)
 
-        # Refresh display if current file is affected
-        if hasattr(self, 'file_detail_panel') and self.file_detail_panel.current_file in selected_files:
-            self.file_detail_panel.show_file(self.file_detail_panel.current_file)
+        messagebox.showinfo(
+            "Success",
+            f"Copied workflow with {len(source_ops)} operation(s) to {copied_count} file(s)"
+        )
+
+        print(f"[DEBUG] Workflow copy completed successfully")
 
     def apply_preset_to_selected_files(self, preset_name):
         """Apply a preset to selected files"""
