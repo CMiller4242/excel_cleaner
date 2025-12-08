@@ -1294,22 +1294,38 @@ class CleanMailingCustomerDataOperation(BaseOperation):
 
     def _standardize_customer(self, value, length, handle_non_hyphenated):
         """
-        Standardize a single customer number.
+        Standardize a single customer number by extracting and padding.
 
         Extracts the part BEFORE the hyphen and pads to target length.
+        CRITICAL FIX: Handles numeric types (int, float) properly to avoid the bug
+        where floats like 1726274.0 become "1726274.0" → "17262740" when regex strips decimal.
+
+        Expected behavior:
+        - "1726274-639507" → extract "1726274" → pad to "01726274"
+        - "9609-640231" → extract "9609" → pad to "00009609"
+        - 5164.0 or 5164 → "00005164"
+        - "5164" → "00005164"
 
         Args:
-            value: Customer number value (e.g., "1726274-639507")
+            value: Customer number value (e.g., "1726274-639507", 5164, 5164.0)
             length: Target length (default 8)
             handle_non_hyphenated: How to handle non-hyphenated values
 
         Returns:
-            Standardized customer number string
+            Standardized customer number string with leading zero padding
         """
         if pd.isna(value) or not value:
             return ""
 
-        value_str = str(value).strip()
+        # CRITICAL FIX: Convert numeric types to int BEFORE string conversion
+        # This prevents floats like 1726274.0 from becoming "1726274.0" which becomes "17262740"
+        if isinstance(value, (int, float)):
+            try:
+                value_str = str(int(value))
+            except (ValueError, OverflowError):
+                value_str = str(value).strip()
+        else:
+            value_str = str(value).strip()
 
         # Check if hyphen exists
         if '-' in value_str:
@@ -1331,35 +1347,55 @@ class CleanMailingCustomerDataOperation(BaseOperation):
         if not digits:
             return '0' * length
 
-        # Pad with leading zeros to target length
+        # Pad with leading zeros to target length using zfill()
         padded = digits.zfill(length)
 
         return padded
 
     def _standardize_segment(self, value, length, blank_to_zero):
         """
-        Standardize a single segment number.
+        Standardize a single segment number by padding to target length.
 
-        Pads existing segment value to target length (typically 2 digits).
+        CRITICAL FIX: Handles numeric types (int, float) properly to avoid the bug
+        where floats like 10.0 become "10.0" → "100" when regex strips the decimal.
+
+        Expected behavior:
+        - 0 or 0.0 → "00"
+        - 2 or 2.0 → "02"
+        - 10 or 10.0 → "10" (NOT "100")
+        - "10" → "10"
+        - Blank → "" or "00" (depending on blank_to_zero)
 
         Args:
-            value: Segment number value (e.g., "0", "1", "31")
+            value: Segment number value (e.g., 0, 10, 2, "0", "10", "2")
             length: Target length (default 2)
             blank_to_zero: Whether to convert blank values to zeros
 
         Returns:
-            Standardized segment number string
+            Standardized segment number string with leading zero padding
         """
+        # Handle None, NaN, or empty string
         if pd.isna(value) or value == '':
-            # Handle blank values
             if blank_to_zero:
                 return '0' * length
             else:
                 return ""
 
-        value_str = str(value).strip()
+        # CRITICAL FIX: Convert numeric types to int BEFORE string conversion
+        # This prevents floats like 10.0 from becoming "10.0" which then becomes "100"
+        if isinstance(value, (int, float)):
+            # Convert to int to strip decimal portion (10.0 → 10)
+            # This ensures str(10) = "10" not "10.0"
+            try:
+                value_str = str(int(value))
+            except (ValueError, OverflowError):
+                # Handle edge cases like NaN, inf
+                value_str = str(value).strip()
+        else:
+            # Already a string or other type
+            value_str = str(value).strip()
 
-        # Remove any non-digit characters
+        # Remove any non-digit characters (handles strings like "10a" or "-5")
         digits = re.sub(r'\D', '', value_str)
 
         # If empty after cleaning
@@ -1369,7 +1405,9 @@ class CleanMailingCustomerDataOperation(BaseOperation):
             else:
                 return ""
 
-        # Pad with leading zeros to target length
+        # Pad with leading zeros to target length using zfill()
+        # "10".zfill(2) → "10" (already 2 digits)
+        # "2".zfill(2) → "02" (pads to 2 digits)
         padded = digits.zfill(length)
 
         return padded
