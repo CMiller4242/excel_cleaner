@@ -294,9 +294,10 @@ class FileDetailPanel(tk.Frame):
         """Create UI card for an operation"""
         # HANDLE BOTH OLD AND NEW OPERATION FORMATS
         # Old format: {'name': 'Op Name', 'parameters': {...}}
+        # Preset format: {'operation_id': '...', 'parameters': {...}}
         # New format: {'class': 'ClassName', 'type': 'Category', 'parameters': {...}, 'enabled': True}
 
-        print(f"[DEBUG] Creating card {index} for operation: {operation.get('name', operation.get('class', 'Unknown'))}")
+        print(f"[DEBUG] Creating card {index} for operation keys: {list(operation.keys())}")
 
         card = tk.Frame(
             self.operations_frame,
@@ -310,10 +311,15 @@ class FileDetailPanel(tk.Frame):
         header = tk.Frame(card, bg="#E1E1E1")
         header.pack(fill=tk.X)
 
-        # Get operation name and status (support multiple formats)
-        op_name = operation.get('name', operation.get('operation', operation.get('class', 'Unknown Operation')))
+        # Get operation name and status (use registry for accurate names)
+        from operations.registry import get_registry
+        registry = get_registry()
+
+        op_name = registry.get_display_name(operation)
         enabled = operation.get('enabled', True)
         status_icon = "✓" if enabled else "○"
+
+        print(f"[DEBUG] Display name: {op_name}, Enabled: {enabled}")
 
         tk.Label(
             header,
@@ -463,21 +469,37 @@ class FileDetailPanel(tk.Frame):
         from operations.registry import get_registry
 
         operation_config = file_obj['operations'][op_index]
-        operation_id = operation_config.get('name')  # In batch mode, 'name' stores the operation name
+
+        # Get operation ID from various possible keys
+        operation_id = operation_config.get('class') or operation_config.get('operation_id') or operation_config.get('id')
+
+        if not operation_id:
+            # Fallback: try to find by name
+            operation_name = operation_config.get('name')
+            print(f"[DEBUG] No class/operation_id found, trying to find by name: {operation_name}")
+
+        print(f"[DEBUG] Editing operation with ID: {operation_id}")
 
         # Get operation from registry
         registry = get_registry()
-        operation = None
+        operation = registry.get_by_id(operation_id) if operation_id else None
 
-        # Search for operation by name
-        for op in registry.list_all():
-            if op.metadata.name == operation_id or op.metadata.id == operation_id:
-                operation = op
-                break
+        if not operation and 'name' in operation_config:
+            # Fallback: search by name
+            operation_name = operation_config['name']
+            print(f"[DEBUG] Searching by name: {operation_name}")
+            for op in registry.list_all():
+                if op.metadata.name == operation_name:
+                    operation = op
+                    break
 
         if not operation:
-            messagebox.showerror("Operation Not Found", f"Could not find operation '{operation_id}'")
+            error_msg = f"Could not find operation '{operation_id or operation_config.get('name', 'Unknown')}'"
+            print(f"[ERROR] {error_msg}")
+            messagebox.showerror("Operation Not Found", error_msg)
             return
+
+        print(f"[DEBUG] Found operation: {operation.metadata.name}")
 
         # Get current parameters
         current_params = operation_config.get('parameters', operation_config.get('params', {}))

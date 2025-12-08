@@ -501,16 +501,32 @@ class FileListPanel(tk.Frame):
 
             operations = preset_data.get('operations', [])
 
-            print(f"[DEBUG] Operations loaded: {len(operations)} operations")
+            print(f"[DEBUG] Raw operations loaded: {len(operations)} operations")
 
             if not operations:
                 messagebox.showwarning("Empty Preset", "This preset has no operations")
                 return
 
+            # CRITICAL FIX: Normalize operations to new format
+            # This converts old preset format (operation_id) to new format (class, name, type)
+            from operations.registry import get_registry
+            registry = get_registry()
+
+            print(f"[DEBUG] Normalizing {len(operations)} operations...")
+            normalized_operations = []
+            for idx, op in enumerate(operations):
+                print(f"[DEBUG] Normalizing operation {idx+1}: {op.get('operation_id', op.get('class', 'Unknown'))}")
+                normalized_op = registry.normalize_operation(op)
+                normalized_operations.append(normalized_op)
+                print(f"[DEBUG] Result: {normalized_op.get('name')} ({normalized_op.get('class')})")
+
+            operations = normalized_operations
+            print(f"[DEBUG] Normalization complete. {len(operations)} operations ready")
+
             # Apply to each selected file
             for file_obj in selected_files:
-                # CRITICAL: Store operations in file object
-                file_obj['operations'] = operations.copy()
+                # CRITICAL: Store normalized operations in file object
+                file_obj['operations'] = [op.copy() for op in operations]
                 file_obj['preset_name'] = preset_name
                 print(f"[DEBUG] Applied preset to '{file_obj['name']}' - now has {len(file_obj['operations'])} operations")
 
