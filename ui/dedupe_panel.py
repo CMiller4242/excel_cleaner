@@ -22,6 +22,12 @@ class DedupePanel(tk.Frame):
         self.file2_path = None
         self.file1_df = None
         self.file2_df = None
+        self.file1_sheets = []
+        self.file2_sheets = []
+        self.file1_sheet_var = tk.StringVar()
+        self.file2_sheet_var = tk.StringVar()
+        self.file1_display_name = tk.StringVar()
+        self.file2_display_name = tk.StringVar()
         self.column_mapping = {}
         self.results = None
 
@@ -185,6 +191,46 @@ class DedupePanel(tk.Frame):
         )
         self.file1_status.pack(anchor=tk.W, pady=(3, 0))
 
+        # Sheet selection for File 1
+        self.file1_sheet_frame = tk.Frame(master_frame, bg="white")
+        # Initially hidden, shown after file load
+
+        tk.Label(
+            self.file1_sheet_frame,
+            text="Select Sheet:",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        self.file1_sheet_combo = ttk.Combobox(
+            self.file1_sheet_frame,
+            textvariable=self.file1_sheet_var,
+            state="readonly",
+            width=25,
+            font=("Segoe UI", 9)
+        )
+        self.file1_sheet_combo.pack(side=tk.LEFT)
+        self.file1_sheet_combo.bind('<<ComboboxSelected>>', lambda e: self._on_sheet_selected())
+
+        # Display name for File 1
+        self.file1_name_frame = tk.Frame(master_frame, bg="white")
+        # Initially hidden, shown after file load
+
+        tk.Label(
+            self.file1_name_frame,
+            text="Display Name (optional):",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        self.file1_name_entry = tk.Entry(
+            self.file1_name_frame,
+            textvariable=self.file1_display_name,
+            font=("Segoe UI", 9),
+            width=40
+        )
+        self.file1_name_entry.pack(side=tk.LEFT)
+
         # Secondary file
         secondary_frame = tk.Frame(file_section, bg="white")
         secondary_frame.pack(fill=tk.X, padx=15, pady=(10, 15))
@@ -228,6 +274,46 @@ class DedupePanel(tk.Frame):
         )
         self.file2_status.pack(anchor=tk.W, pady=(3, 0))
 
+        # Sheet selection for File 2
+        self.file2_sheet_frame = tk.Frame(secondary_frame, bg="white")
+        # Initially hidden, shown after file load
+
+        tk.Label(
+            self.file2_sheet_frame,
+            text="Select Sheet:",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        self.file2_sheet_combo = ttk.Combobox(
+            self.file2_sheet_frame,
+            textvariable=self.file2_sheet_var,
+            state="readonly",
+            width=25,
+            font=("Segoe UI", 9)
+        )
+        self.file2_sheet_combo.pack(side=tk.LEFT)
+        self.file2_sheet_combo.bind('<<ComboboxSelected>>', lambda e: self._on_sheet_selected())
+
+        # Display name for File 2
+        self.file2_name_frame = tk.Frame(secondary_frame, bg="white")
+        # Initially hidden, shown after file load
+
+        tk.Label(
+            self.file2_name_frame,
+            text="Display Name (optional):",
+            font=("Segoe UI", 9),
+            bg="white"
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        self.file2_name_entry = tk.Entry(
+            self.file2_name_frame,
+            textvariable=self.file2_display_name,
+            font=("Segoe UI", 9),
+            width=40
+        )
+        self.file2_name_entry.pack(side=tk.LEFT)
+
     def _load_file(self, file_num):
         """Load a file and update UI"""
         file_path = filedialog.askopenfilename(
@@ -242,40 +328,144 @@ class DedupePanel(tk.Frame):
             return
 
         try:
-            df = pd.read_excel(file_path)
+            # Detect sheets in file
+            excel_file = pd.ExcelFile(file_path)
+            sheet_names = excel_file.sheet_names
+
+            # Extract filename without extension for display name
+            filename = os.path.basename(file_path)
+            display_name = os.path.splitext(filename)[0]
 
             if file_num == 1:
+                # Store sheet info
                 self.file1_path = file_path
-                self.file1_df = df
+                self.file1_sheets = sheet_names
+
+                # Update file entry
                 self.file1_entry.config(state="normal")
                 self.file1_entry.delete(0, tk.END)
-                self.file1_entry.insert(0, os.path.basename(file_path))
+                self.file1_entry.insert(0, filename)
                 self.file1_entry.config(state="readonly")
-                self.file1_status.config(
-                    text=f"✓ Loaded: {len(df)} rows × {len(df.columns)} columns",
-                    fg="#107C10"
-                )
-                self._log(f"Master file loaded: {os.path.basename(file_path)} ({len(df)} rows)")
+
+                # Set display name
+                self.file1_display_name.set(display_name)
+
+                # Handle sheet selection
+                if len(sheet_names) == 1:
+                    # Single sheet - auto-select and disable dropdown
+                    self.file1_sheet_var.set(sheet_names[0])
+                    self.file1_sheet_combo['values'] = sheet_names
+                    self.file1_sheet_combo.config(state="disabled")
+                    # Load the sheet immediately
+                    self.file1_df = pd.read_excel(file_path, sheet_name=sheet_names[0])
+                    self.file1_status.config(
+                        text=f"✓ Loaded: {len(self.file1_df)} rows × {len(self.file1_df.columns)} columns",
+                        fg="#107C10"
+                    )
+                    self._log(f"Master file loaded: {filename} (sheet: {sheet_names[0]}, {len(self.file1_df)} rows)")
+                else:
+                    # Multiple sheets - require selection
+                    self.file1_sheet_combo['values'] = sheet_names
+                    self.file1_sheet_combo.config(state="readonly")
+                    self.file1_sheet_var.set('')  # No default selection
+                    self.file1_df = None
+                    self.file1_status.config(
+                        text=f"✓ File loaded with {len(sheet_names)} sheets - please select a sheet",
+                        fg="#0078D4"
+                    )
+                    self._log(f"Master file loaded: {filename} ({len(sheet_names)} sheets)")
+
+                # Show sheet and display name UI
+                self.file1_sheet_frame.pack(fill=tk.X, pady=(5, 0))
+                self.file1_name_frame.pack(fill=tk.X, pady=(5, 0))
+
             else:
+                # Store sheet info
                 self.file2_path = file_path
-                self.file2_df = df
+                self.file2_sheets = sheet_names
+
+                # Update file entry
                 self.file2_entry.config(state="normal")
                 self.file2_entry.delete(0, tk.END)
-                self.file2_entry.insert(0, os.path.basename(file_path))
+                self.file2_entry.insert(0, filename)
                 self.file2_entry.config(state="readonly")
-                self.file2_status.config(
-                    text=f"✓ Loaded: {len(df)} rows × {len(df.columns)} columns",
-                    fg="#107C10"
-                )
-                self._log(f"Secondary file loaded: {os.path.basename(file_path)} ({len(df)} rows)")
 
-            # If both files loaded, create column mapping UI
-            if self.file1_df is not None and self.file2_df is not None:
-                self._create_column_mapping_ui()
-                self.run_button.config(state=tk.NORMAL)
+                # Set display name
+                self.file2_display_name.set(display_name)
+
+                # Handle sheet selection
+                if len(sheet_names) == 1:
+                    # Single sheet - auto-select and disable dropdown
+                    self.file2_sheet_var.set(sheet_names[0])
+                    self.file2_sheet_combo['values'] = sheet_names
+                    self.file2_sheet_combo.config(state="disabled")
+                    # Load the sheet immediately
+                    self.file2_df = pd.read_excel(file_path, sheet_name=sheet_names[0])
+                    self.file2_status.config(
+                        text=f"✓ Loaded: {len(self.file2_df)} rows × {len(self.file2_df.columns)} columns",
+                        fg="#107C10"
+                    )
+                    self._log(f"Secondary file loaded: {filename} (sheet: {sheet_names[0]}, {len(self.file2_df)} rows)")
+                else:
+                    # Multiple sheets - require selection
+                    self.file2_sheet_combo['values'] = sheet_names
+                    self.file2_sheet_combo.config(state="readonly")
+                    self.file2_sheet_var.set('')  # No default selection
+                    self.file2_df = None
+                    self.file2_status.config(
+                        text=f"✓ File loaded with {len(sheet_names)} sheets - please select a sheet",
+                        fg="#0078D4"
+                    )
+                    self._log(f"Secondary file loaded: {filename} ({len(sheet_names)} sheets)")
+
+                # Show sheet and display name UI
+                self.file2_sheet_frame.pack(fill=tk.X, pady=(5, 0))
+                self.file2_name_frame.pack(fill=tk.X, pady=(5, 0))
+
+            # Check if we can enable column mapping
+            self._check_ready_for_mapping()
 
         except Exception as e:
             messagebox.showerror("Error Loading File", f"Failed to load file:\n{str(e)}")
+
+    def _on_sheet_selected(self):
+        """Handle sheet selection from dropdown"""
+        # Load File 1 sheet if selected
+        if self.file1_path and self.file1_sheet_var.get() and not self.file1_df:
+            try:
+                sheet_name = self.file1_sheet_var.get()
+                self.file1_df = pd.read_excel(self.file1_path, sheet_name=sheet_name)
+                self.file1_status.config(
+                    text=f"✓ Loaded: {len(self.file1_df)} rows × {len(self.file1_df.columns)} columns",
+                    fg="#107C10"
+                )
+                self._log(f"Master file sheet loaded: {sheet_name} ({len(self.file1_df)} rows)")
+            except Exception as e:
+                messagebox.showerror("Error Loading Sheet", f"Failed to load sheet:\n{str(e)}")
+                return
+
+        # Load File 2 sheet if selected
+        if self.file2_path and self.file2_sheet_var.get() and not self.file2_df:
+            try:
+                sheet_name = self.file2_sheet_var.get()
+                self.file2_df = pd.read_excel(self.file2_path, sheet_name=sheet_name)
+                self.file2_status.config(
+                    text=f"✓ Loaded: {len(self.file2_df)} rows × {len(self.file2_df.columns)} columns",
+                    fg="#107C10"
+                )
+                self._log(f"Secondary file sheet loaded: {sheet_name} ({len(self.file2_df)} rows)")
+            except Exception as e:
+                messagebox.showerror("Error Loading Sheet", f"Failed to load sheet:\n{str(e)}")
+                return
+
+        # Check if we can enable column mapping
+        self._check_ready_for_mapping()
+
+    def _check_ready_for_mapping(self):
+        """Check if both files are loaded with sheets selected, then enable column mapping"""
+        if self.file1_df is not None and self.file2_df is not None:
+            self._create_column_mapping_ui()
+            self.run_button.config(state=tk.NORMAL)
 
     def _create_column_mapping_ui(self):
         """Create column mapping interface"""
@@ -394,9 +584,21 @@ class DedupePanel(tk.Frame):
         self.update()
 
         try:
+            # Get display names (use filename if empty)
+            file1_display = self.file1_display_name.get().strip() or os.path.splitext(os.path.basename(self.file1_path))[0]
+            file2_display = self.file2_display_name.get().strip() or os.path.splitext(os.path.basename(self.file2_path))[0]
+
             # Run deduplication
             engine = DeduplicationEngine(progress_callback=self._log)
-            self.results = engine.run(self.file1_path, self.file2_path, mapping)
+            self.results = engine.run(
+                self.file1_path,
+                self.file2_path,
+                mapping,
+                sheet1=self.file1_sheet_var.get(),
+                sheet2=self.file2_sheet_var.get(),
+                display_name1=file1_display,
+                display_name2=file2_display
+            )
 
             # Export results
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

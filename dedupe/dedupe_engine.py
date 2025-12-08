@@ -36,6 +36,8 @@ class DeduplicationEngine:
             'unique_count': 0,
             'dedup_rate': 0.0
         }
+        self.display_name1 = None
+        self.display_name2 = None
 
     def log(self, message):
         """Log progress message"""
@@ -43,7 +45,7 @@ class DeduplicationEngine:
             self.progress_callback(message)
         print(message)
 
-    def run(self, file1_path, file2_path, column_mapping):
+    def run(self, file1_path, file2_path, column_mapping, sheet1=None, sheet2=None, display_name1=None, display_name2=None):
         """
         Run deduplication process
 
@@ -51,20 +53,10 @@ class DeduplicationEngine:
             file1_path: Path to master file
             file2_path: Path to secondary file
             column_mapping: Dict mapping logical columns to actual column names
-                {
-                    'file1_email': 'Email',
-                    'file2_email': 'Email Address',
-                    'file1_phone': 'Phone',
-                    'file2_phone': 'Phone Number',
-                    'file1_name': 'Contact Name',
-                    'file2_name': 'Full Name',
-                    'file1_company': 'Company',
-                    'file2_company': 'Organization',
-                    'file1_city': 'City',
-                    'file2_city': 'City',
-                    'file1_state': 'State',
-                    'file2_state': 'State'
-                }
+            sheet1: Sheet name for file1 (optional, uses first sheet if None)
+            sheet2: Sheet name for file2 (optional, uses first sheet if None)
+            display_name1: Display name for file1 (optional, uses filename if None)
+            display_name2: Display name for file2 (optional, uses filename if None)
 
         Returns:
             dict: Results containing all output sheets
@@ -77,24 +69,37 @@ class DeduplicationEngine:
                 }
         """
 
+        # Store display names for use in reports
+        import os
+        self.display_name1 = display_name1 or os.path.splitext(os.path.basename(file1_path))[0]
+        self.display_name2 = display_name2 or os.path.splitext(os.path.basename(file2_path))[0]
+
         self.log("=" * 60)
         self.log("STARTING TWO-FILE DEDUPLICATION")
         self.log("=" * 60)
 
-        # Load files
+        # Load files with sheet selection
         self.log(f"\nLoading master file: {file1_path}")
-        df1 = pd.read_excel(file1_path)
+        if sheet1:
+            self.log(f"  Sheet: {sheet1}")
+            df1 = pd.read_excel(file1_path, sheet_name=sheet1)
+        else:
+            df1 = pd.read_excel(file1_path)
         self.stats['file1_count'] = len(df1)
         self.log(f"✓ Loaded {len(df1)} rows from master file")
 
         self.log(f"\nLoading secondary file: {file2_path}")
-        df2 = pd.read_excel(file2_path)
+        if sheet2:
+            self.log(f"  Sheet: {sheet2}")
+            df2 = pd.read_excel(file2_path, sheet_name=sheet2)
+        else:
+            df2 = pd.read_excel(file2_path)
         self.stats['file2_count'] = len(df2)
         self.log(f"✓ Loaded {len(df2)} rows from secondary file")
 
-        # Add source column
-        df1['Source'] = 'Master File'
-        df2['Source'] = 'Secondary File'
+        # Add source column with display names
+        df1['Source'] = self.display_name1
+        df2['Source'] = self.display_name2
 
         # Store raw data
         file1_raw = df1.copy()
@@ -348,16 +353,16 @@ class DeduplicationEngine:
         return unmatched_df, duplicates
 
     def _create_summary_report(self):
-        """Create summary report sheet"""
+        """Create summary report sheet with dynamic file names"""
         summary_data = {
             'Metric': [
-                'Master File Records',
-                'Secondary File Records',
+                f'{self.display_name1} — Records',
+                f'{self.display_name2} — Records',
                 'Tier 1 Matches (Email)',
                 'Tier 2 Matches (Phone + Name)',
                 'Tier 3 Matches (Company + Location)',
                 'Total Duplicates Removed',
-                'Final Unique Records',
+                f'{self.display_name1} + {self.display_name2} Combined Unique',
                 'Deduplication Rate (%)'
             ],
             'Value': [
