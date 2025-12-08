@@ -28,6 +28,8 @@ class DedupePanel(tk.Frame):
         self.file2_sheet_var = tk.StringVar()
         self.file1_display_name = tk.StringVar()
         self.file2_display_name = tk.StringVar()
+        self.file1_sheet_locked = False
+        self.file2_sheet_locked = False
         self.column_mapping = {}
         self.results = None
 
@@ -212,6 +214,34 @@ class DedupePanel(tk.Frame):
         self.file1_sheet_combo.pack(side=tk.LEFT)
         self.file1_sheet_combo.bind('<<ComboboxSelected>>', lambda e: self._on_sheet_selected())
 
+        # Lock button for File 1
+        self.file1_lock_frame = tk.Frame(master_frame, bg="white")
+        # Initially hidden, shown after file load
+
+        self.file1_lock_button = tk.Button(
+            self.file1_lock_frame,
+            text="Lock Sheet Selection",
+            command=lambda: self._lock_sheet(1),
+            font=("Segoe UI", 9),
+            bg="#0078D4",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=5,
+            state=tk.DISABLED
+        )
+        self.file1_lock_button.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.file1_lock_status = tk.Label(
+            self.file1_lock_frame,
+            text="",
+            font=("Segoe UI", 8),
+            bg="white",
+            fg="#107C10"
+        )
+        self.file1_lock_status.pack(side=tk.LEFT)
+
         # Display name for File 1
         self.file1_name_frame = tk.Frame(master_frame, bg="white")
         # Initially hidden, shown after file load
@@ -295,6 +325,34 @@ class DedupePanel(tk.Frame):
         self.file2_sheet_combo.pack(side=tk.LEFT)
         self.file2_sheet_combo.bind('<<ComboboxSelected>>', lambda e: self._on_sheet_selected())
 
+        # Lock button for File 2
+        self.file2_lock_frame = tk.Frame(secondary_frame, bg="white")
+        # Initially hidden, shown after file load
+
+        self.file2_lock_button = tk.Button(
+            self.file2_lock_frame,
+            text="Lock Sheet Selection",
+            command=lambda: self._lock_sheet(2),
+            font=("Segoe UI", 9),
+            bg="#0078D4",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=5,
+            state=tk.DISABLED
+        )
+        self.file2_lock_button.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.file2_lock_status = tk.Label(
+            self.file2_lock_frame,
+            text="",
+            font=("Segoe UI", 8),
+            bg="white",
+            fg="#107C10"
+        )
+        self.file2_lock_status.pack(side=tk.LEFT)
+
         # Display name for File 2
         self.file2_name_frame = tk.Frame(secondary_frame, bg="white")
         # Initially hidden, shown after file load
@@ -337,6 +395,10 @@ class DedupePanel(tk.Frame):
             display_name = os.path.splitext(filename)[0]
 
             if file_num == 1:
+                # Reset lock state
+                self.file1_sheet_locked = False
+                self.file1_lock_status.config(text="")
+
                 # Store sheet info
                 self.file1_path = file_path
                 self.file1_sheets = sheet_names
@@ -363,6 +425,13 @@ class DedupePanel(tk.Frame):
                         fg="#107C10"
                     )
                     self._log(f"Master file loaded: {filename} (sheet: {sheet_names[0]}, {len(self.file1_df)} rows)")
+                    # Enable lock button for single sheet
+                    self.file1_lock_button.config(
+                        state=tk.NORMAL,
+                        text="Lock Sheet Selection",
+                        bg="#0078D4",
+                        cursor="hand2"
+                    )
                 else:
                     # Multiple sheets - require selection
                     self.file1_sheet_combo['values'] = sheet_names
@@ -374,12 +443,23 @@ class DedupePanel(tk.Frame):
                         fg="#0078D4"
                     )
                     self._log(f"Master file loaded: {filename} ({len(sheet_names)} sheets)")
+                    # Disable lock button until sheet is selected
+                    self.file1_lock_button.config(
+                        state=tk.DISABLED,
+                        text="Lock Sheet Selection",
+                        bg="#0078D4"
+                    )
 
-                # Show sheet and display name UI
+                # Show sheet, lock, and display name UI
                 self.file1_sheet_frame.pack(fill=tk.X, pady=(5, 0))
+                self.file1_lock_frame.pack(fill=tk.X, pady=(5, 0))
                 self.file1_name_frame.pack(fill=tk.X, pady=(5, 0))
 
             else:
+                # Reset lock state
+                self.file2_sheet_locked = False
+                self.file2_lock_status.config(text="")
+
                 # Store sheet info
                 self.file2_path = file_path
                 self.file2_sheets = sheet_names
@@ -406,6 +486,13 @@ class DedupePanel(tk.Frame):
                         fg="#107C10"
                     )
                     self._log(f"Secondary file loaded: {filename} (sheet: {sheet_names[0]}, {len(self.file2_df)} rows)")
+                    # Enable lock button for single sheet
+                    self.file2_lock_button.config(
+                        state=tk.NORMAL,
+                        text="Lock Sheet Selection",
+                        bg="#0078D4",
+                        cursor="hand2"
+                    )
                 else:
                     # Multiple sheets - require selection
                     self.file2_sheet_combo['values'] = sheet_names
@@ -417,9 +504,16 @@ class DedupePanel(tk.Frame):
                         fg="#0078D4"
                     )
                     self._log(f"Secondary file loaded: {filename} ({len(sheet_names)} sheets)")
+                    # Disable lock button until sheet is selected
+                    self.file2_lock_button.config(
+                        state=tk.DISABLED,
+                        text="Lock Sheet Selection",
+                        bg="#0078D4"
+                    )
 
-                # Show sheet and display name UI
+                # Show sheet, lock, and display name UI
                 self.file2_sheet_frame.pack(fill=tk.X, pady=(5, 0))
+                self.file2_lock_frame.pack(fill=tk.X, pady=(5, 0))
                 self.file2_name_frame.pack(fill=tk.X, pady=(5, 0))
 
             # Check if we can enable column mapping
@@ -440,6 +534,13 @@ class DedupePanel(tk.Frame):
                     fg="#107C10"
                 )
                 self._log(f"Master file sheet loaded: {sheet_name} ({len(self.file1_df)} rows)")
+                # Enable lock button after sheet is loaded
+                if not self.file1_sheet_locked:
+                    self.file1_lock_button.config(
+                        state=tk.NORMAL,
+                        bg="#0078D4",
+                        cursor="hand2"
+                    )
             except Exception as e:
                 messagebox.showerror("Error Loading Sheet", f"Failed to load sheet:\n{str(e)}")
                 return
@@ -454,6 +555,13 @@ class DedupePanel(tk.Frame):
                     fg="#107C10"
                 )
                 self._log(f"Secondary file sheet loaded: {sheet_name} ({len(self.file2_df)} rows)")
+                # Enable lock button after sheet is loaded
+                if not self.file2_sheet_locked:
+                    self.file2_lock_button.config(
+                        state=tk.NORMAL,
+                        bg="#0078D4",
+                        cursor="hand2"
+                    )
             except Exception as e:
                 messagebox.showerror("Error Loading Sheet", f"Failed to load sheet:\n{str(e)}")
                 return
@@ -461,9 +569,61 @@ class DedupePanel(tk.Frame):
         # Check if we can enable column mapping
         self._check_ready_for_mapping()
 
+    def _lock_sheet(self, file_num):
+        """Lock the sheet selection for a file"""
+        if file_num == 1:
+            if not self.file1_sheet_var.get():
+                messagebox.showwarning("No Sheet Selected", "Please select a sheet first")
+                return
+
+            # Lock the sheet
+            self.file1_sheet_locked = True
+
+            # Disable the sheet dropdown
+            self.file1_sheet_combo.config(state="disabled")
+
+            # Update lock button to "Locked" state
+            self.file1_lock_button.config(
+                state=tk.DISABLED,
+                text="Locked",
+                bg="#A0A0A0",
+                cursor="arrow"
+            )
+
+            # Show confirmation
+            self.file1_lock_status.config(text="✓ Sheet locked")
+            self._log(f"Master file sheet locked: {self.file1_sheet_var.get()}")
+
+        else:
+            if not self.file2_sheet_var.get():
+                messagebox.showwarning("No Sheet Selected", "Please select a sheet first")
+                return
+
+            # Lock the sheet
+            self.file2_sheet_locked = True
+
+            # Disable the sheet dropdown
+            self.file2_sheet_combo.config(state="disabled")
+
+            # Update lock button to "Locked" state
+            self.file2_lock_button.config(
+                state=tk.DISABLED,
+                text="Locked",
+                bg="#A0A0A0",
+                cursor="arrow"
+            )
+
+            # Show confirmation
+            self.file2_lock_status.config(text="✓ Sheet locked")
+            self._log(f"Secondary file sheet locked: {self.file2_sheet_var.get()}")
+
+        # Check if we can enable column mapping now
+        self._check_ready_for_mapping()
+
     def _check_ready_for_mapping(self):
-        """Check if both files are loaded with sheets selected, then enable column mapping"""
-        if self.file1_df is not None and self.file2_df is not None:
+        """Check if both files are loaded AND sheets are locked, then enable column mapping"""
+        if self.file1_df is not None and self.file2_df is not None and \
+           self.file1_sheet_locked and self.file2_sheet_locked:
             self._create_column_mapping_ui()
             self.run_button.config(state=tk.NORMAL)
 
