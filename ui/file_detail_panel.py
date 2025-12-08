@@ -230,11 +230,17 @@ class FileDetailPanel(tk.Frame):
 
     def _update_workflow(self, file_obj):
         """Update workflow operations list"""
+        print(f"[DEBUG] Updating workflow for {file_obj.get('name', 'Unknown')}")
+
         # Clear existing
         for widget in self.operations_frame.winfo_children():
             widget.destroy()
 
         operations = file_obj.get('operations', [])
+        print(f"[DEBUG] Found {len(operations)} operations in file object")
+
+        if operations:
+            print(f"[DEBUG] First operation: {operations[0]}")
 
         # Update count
         self.operations_count_label.config(text=f"({len(operations)} operations)")
@@ -252,24 +258,46 @@ class FileDetailPanel(tk.Frame):
             # Show preset name if applied
             preset_name = file_obj.get('preset_name')
             if preset_name:
-                preset_label = tk.Label(
+                print(f"[DEBUG] Displaying preset: {preset_name}")
+                preset_label = tk.Frame(
                     self.operations_frame,
+                    bg="#E6F2FF",
+                    relief=tk.RAISED,
+                    borderwidth=1
+                )
+                preset_label.pack(fill=tk.X, pady=(0, 10))
+
+                tk.Label(
+                    preset_label,
                     text=f"📋 Preset: {preset_name}",
-                    font=('Segoe UI', 9, 'italic'),
+                    font=('Segoe UI', 10, 'bold'),
                     bg="#E6F2FF",
                     fg="#0078D4",
                     anchor=tk.W,
                     padx=10,
-                    pady=5
-                )
-                preset_label.pack(fill=tk.X, pady=(0, 10))
+                    pady=8
+                ).pack(fill=tk.X)
 
             # Display each operation
+            print(f"[DEBUG] Creating {len(operations)} operation cards")
             for idx, op in enumerate(operations, 1):
-                self._create_operation_card(op, idx, file_obj)
+                try:
+                    self._create_operation_card(op, idx, file_obj)
+                except Exception as e:
+                    print(f"[ERROR] Failed to create operation card {idx}: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            print(f"[DEBUG] Workflow update complete")
 
     def _create_operation_card(self, operation, index, file_obj):
         """Create UI card for an operation"""
+        # HANDLE BOTH OLD AND NEW OPERATION FORMATS
+        # Old format: {'name': 'Op Name', 'parameters': {...}}
+        # New format: {'class': 'ClassName', 'type': 'Category', 'parameters': {...}, 'enabled': True}
+
+        print(f"[DEBUG] Creating card {index} for operation: {operation.get('name', operation.get('class', 'Unknown'))}")
+
         card = tk.Frame(
             self.operations_frame,
             bg="#F3F3F3",
@@ -282,8 +310,8 @@ class FileDetailPanel(tk.Frame):
         header = tk.Frame(card, bg="#E1E1E1")
         header.pack(fill=tk.X)
 
-        # Get operation name and status
-        op_name = operation.get('name', operation.get('operation', 'Unknown Operation'))
+        # Get operation name and status (support multiple formats)
+        op_name = operation.get('name', operation.get('operation', operation.get('class', 'Unknown Operation')))
         enabled = operation.get('enabled', True)
         status_icon = "✓" if enabled else "○"
 
@@ -306,23 +334,27 @@ class FileDetailPanel(tk.Frame):
                 fg="#666"
             ).pack(side=tk.LEFT, padx=5)
 
-        # Operation parameters
+        # Operation parameters (support both 'params' and 'parameters')
         params = operation.get('params', operation.get('parameters', {}))
         if params and isinstance(params, dict):
             params_frame = tk.Frame(card, bg="#F3F3F3")
             params_frame.pack(fill=tk.X, padx=10, pady=5)
 
-            for key, value in list(params.items())[:3]:
+            # Show first 5 parameters
+            param_items = list(params.items())[:5]
+            for key, value in param_items:
                 # Format value nicely
                 if isinstance(value, list):
                     if len(value) > 3:
                         value_str = f"{len(value)} items"
                     else:
                         value_str = ", ".join(str(v) for v in value)
+                elif isinstance(value, dict):
+                    value_str = f"{len(value)} mappings"
                 else:
                     value_str = str(value)
-                    if len(value_str) > 50:
-                        value_str = value_str[:47] + "..."
+                    if len(value_str) > 60:
+                        value_str = value_str[:57] + "..."
 
                 tk.Label(
                     params_frame,
@@ -333,10 +365,10 @@ class FileDetailPanel(tk.Frame):
                     anchor=tk.W
                 ).pack(fill=tk.X)
 
-            if len(params) > 3:
+            if len(params) > 5:
                 tk.Label(
                     params_frame,
-                    text=f"  ... and {len(params) - 3} more parameters",
+                    text=f"  ... and {len(params) - 5} more parameter(s)",
                     font=('Segoe UI', 8, 'italic'),
                     bg="#F3F3F3",
                     fg="#999"
@@ -355,7 +387,8 @@ class FileDetailPanel(tk.Frame):
             cursor="hand2",
             padx=10,
             bg="#E1E1E1",
-            activebackground="#CCC"
+            activebackground="#CCC",
+            state=tk.NORMAL if enabled else tk.DISABLED
         ).pack(side=tk.LEFT, padx=(0, 5))
 
         tk.Button(
@@ -458,6 +491,11 @@ class FileDetailPanel(tk.Frame):
 
         if messagebox.askyesno("Confirm Delete", "Remove this operation from workflow?"):
             file_obj['operations'].pop(op_index)
+
+            # If we deleted all operations, clear preset name
+            if not file_obj['operations']:
+                file_obj.pop('preset_name', None)
+
             self._update_workflow(file_obj)
 
     def _toggle_operation(self, file_obj, op_index):
