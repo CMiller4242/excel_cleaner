@@ -493,10 +493,15 @@ class FileListPanel(tk.Frame):
             return
 
         try:
+            print(f"[DEBUG] Loading preset: {preset_name}")
+            print(f"[DEBUG] Preset file: {preset_path}")
+
             with open(preset_path, 'r') as f:
                 preset_data = json.load(f)
 
             operations = preset_data.get('operations', [])
+
+            print(f"[DEBUG] Operations loaded: {len(operations)} operations")
 
             if not operations:
                 messagebox.showwarning("Empty Preset", "This preset has no operations")
@@ -507,19 +512,30 @@ class FileListPanel(tk.Frame):
                 # CRITICAL: Store operations in file object
                 file_obj['operations'] = operations.copy()
                 file_obj['preset_name'] = preset_name
+                print(f"[DEBUG] Applied preset to '{file_obj['name']}' - now has {len(file_obj['operations'])} operations")
+
+            # CRITICAL FIX: Refresh the UI to show operations
+            # If there's a currently selected file, refresh its detail view
+            if self.selected_file and self.selected_file in selected_files:
+                print(f"[DEBUG] Refreshing UI for selected file: {self.selected_file['name']}")
+                if self.app and hasattr(self.app, '_on_file_selected'):
+                    self.app._on_file_selected(self.selected_file)
+                elif self.app and hasattr(self.app, 'file_detail_panel'):
+                    # Alternative: directly call file detail panel
+                    self.app.file_detail_panel.show_file(self.selected_file)
+                print(f"[DEBUG] UI refresh completed")
+            else:
+                print(f"[DEBUG] No file currently selected or selected file not in preset application")
 
             messagebox.showinfo(
                 "Success",
-                f"Applied preset '{preset_name}' to {len(selected_files)} file(s)"
+                f"Loaded preset '{preset_name}' with {len(operations)} operation(s)\nApplied to {len(selected_files)} file(s)"
             )
-
-            # If a file is currently selected, refresh its detail view
-            if self.selected_file and self.selected_file in selected_files:
-                if self.app and hasattr(self.app, '_on_file_selected'):
-                    self.app._on_file_selected(self.selected_file)
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to apply preset:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def _on_frame_configure(self, event):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
