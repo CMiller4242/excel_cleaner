@@ -953,7 +953,7 @@ class DedupePanel(tk.Frame):
         self.run_button.config(state=tk.DISABLED)
 
     def _create_column_mapping_ui(self):
-        """Create column mapping interface"""
+        """Create column mapping interface with dynamic columns for each secondary file"""
         # Clear existing
         for widget in self.mapping_section.winfo_children():
             widget.destroy()
@@ -965,17 +965,41 @@ class DedupePanel(tk.Frame):
             bg="white"
         ).pack(anchor=tk.W, padx=15, pady=(15, 10))
 
-        # Create mapping grid
-        mapping_grid = tk.Frame(self.mapping_section, bg="white")
-        mapping_grid.pack(fill=tk.X, padx=15, pady=(0, 15))
+        # Create scrollable mapping container for horizontal scroll if >5 files
+        mapping_container = tk.Frame(self.mapping_section, bg="white")
+        mapping_container.pack(fill=tk.X, padx=15, pady=(0, 15))
+
+        if len(self.secondary_files) > 5:
+            # Add horizontal scroll for many files
+            canvas = tk.Canvas(mapping_container, bg="white", height=300)
+            scrollbar = tk.Scrollbar(mapping_container, orient="horizontal", command=canvas.xview)
+            mapping_grid = tk.Frame(canvas, bg="white")
+
+            canvas.configure(xscrollcommand=scrollbar.set)
+            scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+            canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+            canvas.create_window((0, 0), window=mapping_grid, anchor="nw")
+            mapping_grid.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        else:
+            mapping_grid = tk.Frame(mapping_container, bg="white")
+            mapping_grid.pack(fill=tk.X)
 
         # Headers
         tk.Label(mapping_grid, text="Enable", font=("Segoe UI", 9, "bold"), bg="white", width=8).grid(row=0, column=0, padx=5, pady=5)
         tk.Label(mapping_grid, text="Field", font=("Segoe UI", 9, "bold"), bg="white", width=15, anchor=tk.W).grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
-        tk.Label(mapping_grid, text="Master File Column", font=("Segoe UI", 9, "bold"), bg="white", width=25).grid(row=0, column=2, padx=5, pady=5)
-        tk.Label(mapping_grid, text="Secondary File Column", font=("Segoe UI", 9, "bold"), bg="white", width=25).grid(row=0, column=3, padx=5, pady=5)
+        tk.Label(mapping_grid, text="Master File", font=("Segoe UI", 9, "bold"), bg="white", width=20).grid(row=0, column=2, padx=5, pady=5)
 
-        # Column dropdowns
+        # Dynamic headers for each secondary file
+        for file_idx, file_data in enumerate(self.secondary_files):
+            tk.Label(
+                mapping_grid,
+                text=f"File #{file_idx + 1}",
+                font=("Segoe UI", 9, "bold"),
+                bg="white",
+                width=20
+            ).grid(row=0, column=3 + file_idx, padx=5, pady=5)
+
+        # Reset column_combos to store per-file mappings
         self.column_combos = {}
         self.field_combos = {}
 
@@ -988,12 +1012,11 @@ class DedupePanel(tk.Frame):
             ('State', 'state')
         ]
 
+        # Get master file columns
         file1_cols = ['(None)'] + list(self.file1_df.columns)
-        # Use first secondary file for mapping
-        file2_cols = ['(None)'] + list(self.secondary_files[0]['df'].columns)
 
-        for idx, (label, key) in enumerate(fields, start=1):
-            # Enable checkbox
+        for row_idx, (label, key) in enumerate(fields, start=1):
+            # Enable checkbox (one per field, not per file)
             is_email = (key == 'email')
             checkbox = tk.Checkbutton(
                 mapping_grid,
@@ -1002,7 +1025,7 @@ class DedupePanel(tk.Frame):
                 bg="white",
                 state=tk.DISABLED if is_email else tk.NORMAL
             )
-            checkbox.grid(row=idx, column=0, padx=5, pady=3)
+            checkbox.grid(row=row_idx, column=0, padx=5, pady=3)
 
             # Field label
             tk.Label(
@@ -1011,65 +1034,74 @@ class DedupePanel(tk.Frame):
                 font=("Segoe UI", 9),
                 bg="white",
                 anchor=tk.W
-            ).grid(row=idx, column=1, padx=5, pady=3, sticky=tk.W)
+            ).grid(row=row_idx, column=1, padx=5, pady=3, sticky=tk.W)
 
-            # File 1 dropdown
+            # Master file dropdown
             file1_var = tk.StringVar(value='(None)')
             file1_combo = ttk.Combobox(
                 mapping_grid,
                 textvariable=file1_var,
                 values=file1_cols,
                 state="readonly",
-                width=23
+                width=18
             )
-            file1_combo.grid(row=idx, column=2, padx=5, pady=3)
-            self.column_combos[f'file1_{key}'] = file1_var
+            file1_combo.grid(row=row_idx, column=2, padx=5, pady=3)
+            self.column_combos[f'master_{key}'] = file1_var
 
-            # Try to auto-detect
+            # Try to auto-detect master column
             for col in self.file1_df.columns:
                 if key.lower() in col.lower():
                     file1_var.set(col)
                     break
 
-            # File 2 dropdown
-            file2_var = tk.StringVar(value='(None)')
-            file2_combo = ttk.Combobox(
-                mapping_grid,
-                textvariable=file2_var,
-                values=file2_cols,
-                state="readonly",
-                width=23
-            )
-            file2_combo.grid(row=idx, column=3, padx=5, pady=3)
-            self.column_combos[f'file2_{key}'] = file2_var
+            # Store all combo references for this field (for enable/disable)
+            combo_refs = [file1_combo]
 
-            # Store combo references for enable/disable
-            self.field_combos[key] = (file1_combo, file2_combo)
+            # Secondary file dropdowns (one per file)
+            for file_idx, file_data in enumerate(self.secondary_files):
+                file_cols = ['(None)'] + list(file_data['df'].columns)
 
-            # Try to auto-detect
-            for col in self.file2_df.columns:
-                if key.lower() in col.lower():
-                    file2_var.set(col)
-                    break
+                file_var = tk.StringVar(value='(None)')
+                file_combo = ttk.Combobox(
+                    mapping_grid,
+                    textvariable=file_var,
+                    values=file_cols,
+                    state="readonly",
+                    width=18
+                )
+                file_combo.grid(row=row_idx, column=3 + file_idx, padx=5, pady=3)
+
+                # Store with file index: secondary_0_email, secondary_1_email, etc.
+                self.column_combos[f'secondary_{file_idx}_{key}'] = file_var
+                combo_refs.append(file_combo)
+
+                # Try to auto-detect
+                for col in file_data['df'].columns:
+                    if key.lower() in col.lower():
+                        file_var.set(col)
+                        break
+
+            # Store all combos for this field (for enable/disable toggling)
+            self.field_combos[key] = tuple(combo_refs)
 
         # Note
         tk.Label(
             self.mapping_section,
-            text="Note: Email is required. Other fields improve matching accuracy. Uncheck fields to exclude them from matching.",
+            text="Note: Email is required for all files. Other fields improve matching accuracy. Uncheck fields to exclude them from matching.",
             font=("Segoe UI", 8),
             bg="white",
             fg="#666"
         ).pack(anchor=tk.W, padx=15, pady=(0, 10))
 
     def _on_field_toggle(self, field_key):
-        """Handle field enable/disable toggle"""
+        """Handle field enable/disable toggle for all file columns"""
         enabled = self.field_enabled[field_key].get()
 
         if field_key in self.field_combos:
-            file1_combo, file2_combo = self.field_combos[field_key]
+            combo_refs = self.field_combos[field_key]
             new_state = "readonly" if enabled else "disabled"
-            file1_combo.config(state=new_state)
-            file2_combo.config(state=new_state)
+            for combo in combo_refs:
+                combo.config(state=new_state)
 
     def _run_deduplication(self):
         """Run the comparison process"""
@@ -1080,13 +1112,22 @@ class DedupePanel(tk.Frame):
             if value != '(None)':
                 mapping[key] = value
 
-        # Check required fields
-        if 'file1_email' not in mapping or 'file2_email' not in mapping:
+        # Check required fields - email must be mapped for master and ALL secondary files
+        if 'master_email' not in mapping:
             messagebox.showwarning(
                 "Missing Required Field",
-                "Email column mapping is required for both files"
+                "Email column mapping is required for master file"
             )
             return
+
+        # Check email mapping for all secondary files
+        for file_idx in range(len(self.secondary_files)):
+            if f'secondary_{file_idx}_email' not in mapping:
+                messagebox.showwarning(
+                    "Missing Required Field",
+                    f"Email column mapping is required for Secondary File #{file_idx + 1}"
+                )
+                return
 
         # Clear log
         self.log_text.delete('1.0', tk.END)
@@ -1100,7 +1141,7 @@ class DedupePanel(tk.Frame):
             # Get master file display name
             file1_display = self.file1_display_name.get().strip() or os.path.splitext(os.path.basename(self.file1_path))[0]
 
-            # Gather all secondary files data
+            # Gather all secondary files data (will add mappings later)
             secondary_files_data = []
             for file_data in self.secondary_files:
                 display_name = file_data['display_name_var'].get().strip() or \
@@ -1114,6 +1155,27 @@ class DedupePanel(tk.Frame):
             # Get field enabled states
             enabled_fields = {key: var.get() for key, var in self.field_enabled.items()}
 
+            # Restructure mapping for multi-file processing
+            # Convert from flat dict (master_email, secondary_0_email, etc.)
+            # to structured format: master_mapping and list of secondary_mappings
+            master_mapping = {}
+            secondary_mappings = [{}  for _ in self.secondary_files]
+
+            for key, column in mapping.items():
+                if key.startswith('master_'):
+                    field = key.replace('master_', '')
+                    master_mapping[field] = column
+                elif key.startswith('secondary_'):
+                    # Extract file index and field name: secondary_0_email → idx=0, field=email
+                    parts = key.split('_', 2)  # ['secondary', '0', 'email']
+                    file_idx = int(parts[1])
+                    field = parts[2]
+                    secondary_mappings[file_idx][field] = column
+
+            # Add mappings to each secondary file's data
+            for idx, file_data_dict in enumerate(secondary_files_data):
+                file_data_dict['mapping'] = secondary_mappings[idx]
+
             # Check for large dataset
             total_rows = len(self.file1_df)
             for file_data in self.secondary_files:
@@ -1125,11 +1187,11 @@ class DedupePanel(tk.Frame):
             # Run multi-file comparison
             engine = DeduplicationEngine(progress_callback=self._log)
             self.results = engine.run_multi(
-                self.file1_path,
-                secondary_files_data,
-                mapping,
-                sheet1=self.file1_sheet_var.get(),
-                display_name1=file1_display,
+                master_file_path=self.file1_path,
+                master_sheet=self.file1_sheet_var.get(),
+                master_display_name=file1_display,
+                master_mapping=master_mapping,
+                secondary_files=secondary_files_data,
                 enabled_fields=enabled_fields
             )
 
