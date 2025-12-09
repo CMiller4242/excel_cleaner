@@ -616,20 +616,20 @@ class DeduplicationEngine:
         metrics = []
         values = []
 
-        # Always include file counts
-        metrics.append(f'{self.display_name1} — Total Records')
+        # Always include file counts (sanitize display names to prevent XML corruption)
+        metrics.append(clean_excel_text(f'{self.display_name1} - Total Records'))
         values.append(self.stats['file1_count'])
 
-        metrics.append(f'{self.display_name2} — Total Records')
+        metrics.append(clean_excel_text(f'{self.display_name2} - Total Records'))
         values.append(self.stats['file2_count'])
 
         # Include tier 1 (email) - always active
-        metrics.append('Exact Email Matches')
+        metrics.append(clean_excel_text('Exact Email Matches'))
         values.append(self.stats['tier1_matches'])
 
         # Include tier 2 only if it was active
         if self.enabled_fields.get('phone') and self.enabled_fields.get('name'):
-            metrics.append('Phone + Name Matches')
+            metrics.append(clean_excel_text('Phone + Name Matches'))
             values.append(self.stats['tier2_matches'])
 
         # Include tier 3 only if it was active
@@ -637,18 +637,23 @@ class DeduplicationEngine:
                         self.enabled_fields.get('city') or
                         self.enabled_fields.get('state'))
         if tier3_enabled:
-            metrics.append('Company + Location Matches')
+            metrics.append(clean_excel_text('Company + Location Matches'))
             values.append(self.stats['tier3_matches'])
 
         # Always include totals
-        metrics.append('Total Overlapping Records')
+        metrics.append(clean_excel_text('Total Overlapping Records'))
         values.append(self.stats['total_duplicates'])
 
-        metrics.append('Combined Unique Records')
+        metrics.append(clean_excel_text('Combined Unique Records'))
         values.append(self.stats['unique_count'])
 
-        metrics.append('Overlap Rate (%)')
+        metrics.append(clean_excel_text('Overlap Rate (%)'))
         values.append(f"{self.stats['dedup_rate']:.2f}%")
+
+        # Log the rows being written for debugging
+        self.log("\n=== SUMMARY REPORT DEBUG ===")
+        for i, (metric, value) in enumerate(zip(metrics, values), start=2):
+            self.log(f"Row {i}: {metric} = {value}")
 
         summary_data = {
             'Metric': metrics,
@@ -836,53 +841,58 @@ class DeduplicationEngine:
         values = []
 
         # Section 1: Master File Overview
-        metrics.append('=== MASTER FILE ===')
+        metrics.append(clean_excel_text('=== MASTER FILE ==='))
         values.append('')
-        metrics.append(f'{master_display_name} — Total Records')
+        metrics.append(clean_excel_text(f'{master_display_name} - Total Records'))
         values.append(self.multi_stats['master_count'])
 
         # Section 2: Per-File Comparison Metrics
         for idx, file_stats in enumerate(self.multi_stats['secondary_files']):
             metrics.append('')
             values.append('')
-            metrics.append(f'=== SECONDARY FILE #{idx + 1}: {file_stats["display_name"]} ===')
+            metrics.append(clean_excel_text(f'=== SECONDARY FILE #{idx + 1}: {file_stats["display_name"]} ==='))
             values.append('')
-            metrics.append(f'{file_stats["display_name"]} — Total Records')
+            metrics.append(clean_excel_text(f'{file_stats["display_name"]} - Total Records'))
             values.append(file_stats['total_records'])
 
             # Only show tiers that were active
-            metrics.append('  Exact Email Matches')
+            metrics.append(clean_excel_text('  Exact Email Matches'))
             values.append(file_stats['tier1_matches'])
 
             if self.enabled_fields.get('phone') and self.enabled_fields.get('name'):
-                metrics.append('  Phone + Name Matches')
+                metrics.append(clean_excel_text('  Phone + Name Matches'))
                 values.append(file_stats['tier2_matches'])
 
             tier3_enabled = (self.enabled_fields.get('company') or
                            self.enabled_fields.get('city') or
                            self.enabled_fields.get('state'))
             if tier3_enabled:
-                metrics.append('  Company + Location Matches')
+                metrics.append(clean_excel_text('  Company + Location Matches'))
                 values.append(file_stats['tier3_matches'])
 
-            metrics.append(f'{file_stats["display_name"]} — Overlapping Records')
+            metrics.append(clean_excel_text(f'{file_stats["display_name"]} - Overlapping Records'))
             values.append(file_stats['overlapping'])
-            metrics.append(f'{file_stats["display_name"]} — Unique Records')
+            metrics.append(clean_excel_text(f'{file_stats["display_name"]} - Unique Records'))
             values.append(file_stats['unique'])
-            metrics.append(f'{file_stats["display_name"]} — Overlap Rate (%)')
+            metrics.append(clean_excel_text(f'{file_stats["display_name"]} - Overlap Rate (%)'))
             values.append(f"{file_stats['overlap_rate']:.2f}%")
 
         # Section 3: Global Summary
         metrics.append('')
         values.append('')
-        metrics.append('=== GLOBAL SUMMARY ===')
+        metrics.append(clean_excel_text('=== GLOBAL SUMMARY ==='))
         values.append('')
-        metrics.append('Total Overlapping Records (All Files)')
+        metrics.append(clean_excel_text('Total Overlapping Records (All Files)'))
         values.append(self.multi_stats['total_overlapping'])
-        metrics.append('Combined Unique Records')
+        metrics.append(clean_excel_text('Combined Unique Records'))
         values.append(self.multi_stats['combined_unique'])
-        metrics.append('Global Overlap Rate (%)')
+        metrics.append(clean_excel_text('Global Overlap Rate (%)'))
         values.append(f"{self.multi_stats['global_overlap_rate']:.2f}%")
+
+        # Log the rows being written for debugging
+        self.log("\n=== SUMMARY REPORT DEBUG ===")
+        for i, (metric, value) in enumerate(zip(metrics, values), start=2):
+            self.log(f"Row {i}: {metric} = {value}")
 
         return pd.DataFrame({'Metric': metrics, 'Value': values})
 
@@ -913,6 +923,25 @@ class DeduplicationEngine:
             df_overlapping = df_overlapping.sort_values(['Source_File', 'Overlap_Tier'])
 
         return df_overlapping
+
+def clean_excel_text(s):
+    """
+    Sanitize text for safe Excel cell writing
+    - Replace em-dash and en-dash with hyphen
+    - Remove illegal XML characters
+    - Prevent formula interpretation by escaping leading '='
+    """
+    if s is None:
+        return ""
+    s = str(s)
+    # Replace em-dash (—) and en-dash (–) with hyphen
+    s = s.replace("—", "-").replace("–", "-")
+    # Remove non-printable characters that can cause XML corruption
+    s = "".join(c for c in s if c.isprintable())
+    # Prevent formula interpretation: if text starts with '=', prefix with apostrophe
+    if s.startswith("="):
+        s = "'" + s
+    return s
 
 def sanitize_sheet_name(name):
     """
