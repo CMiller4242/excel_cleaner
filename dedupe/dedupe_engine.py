@@ -1,6 +1,6 @@
 """
-Two-File Deduplication Engine
-Main processing logic for comparing and deduplicating two Excel files
+Two-File Comparison Engine
+Main processing logic for comparing two Excel files and identifying overlaps
 """
 
 import pandas as pd
@@ -15,12 +15,12 @@ from .helpers import (
 
 class DeduplicationEngine:
     """
-    Engine for deduplicating two Excel files using tiered matching logic
+    Engine for comparing two Excel files using tiered matching logic
     """
 
     def __init__(self, progress_callback=None):
         """
-        Initialize deduplication engine
+        Initialize comparison engine
 
         Args:
             progress_callback: Function to call with progress updates (optional)
@@ -47,7 +47,7 @@ class DeduplicationEngine:
 
     def run(self, file1_path, file2_path, column_mapping, sheet1=None, sheet2=None, display_name1=None, display_name2=None):
         """
-        Run deduplication process
+        Run comparison process
 
         Args:
             file1_path: Path to master file
@@ -75,7 +75,7 @@ class DeduplicationEngine:
         self.display_name2 = display_name2 or os.path.splitext(os.path.basename(file2_path))[0]
 
         self.log("=" * 60)
-        self.log("STARTING TWO-FILE DEDUPLICATION")
+        self.log("STARTING TWO-FILE COMPARISON")
         self.log("=" * 60)
 
         # Load files with sheet selection
@@ -110,9 +110,9 @@ class DeduplicationEngine:
         df1_normalized = self._normalize_dataframe(df1, column_mapping, prefix='file1')
         df2_normalized = self._normalize_dataframe(df2, column_mapping, prefix='file2')
 
-        # Run tiered deduplication
+        # Run tiered matching
         self.log("\n" + "=" * 60)
-        self.log("RUNNING TIERED DEDUPLICATION")
+        self.log("RUNNING TIERED MATCHING")
         self.log("=" * 60)
 
         duplicates = []
@@ -169,15 +169,15 @@ class DeduplicationEngine:
 
         self.log("\n✓ Summary report created")
         self.log("✓ Combined cleaned data created")
-        self.log("✓ Duplicates list created")
+        self.log("✓ Overlapping records list created")
 
         self.log("\n" + "=" * 60)
-        self.log("DEDUPLICATION COMPLETE")
+        self.log("COMPARISON COMPLETE")
         self.log("=" * 60)
         self.log(f"\nTotal records processed: {self.stats['file1_count'] + self.stats['file2_count']}")
-        self.log(f"Duplicates found: {self.stats['total_duplicates']}")
+        self.log(f"Overlapping records found: {self.stats['total_duplicates']}")
         self.log(f"Unique records: {self.stats['unique_count']}")
-        self.log(f"Deduplication rate: {self.stats['dedup_rate']:.2f}%")
+        self.log(f"Overlap rate: {self.stats['dedup_rate']:.2f}%")
 
         return {
             'summary': summary,
@@ -356,14 +356,14 @@ class DeduplicationEngine:
         """Create summary report sheet with dynamic file names"""
         summary_data = {
             'Metric': [
-                f'{self.display_name1} — Records',
-                f'{self.display_name2} — Records',
-                'Tier 1 Matches (Email)',
-                'Tier 2 Matches (Phone + Name)',
-                'Tier 3 Matches (Company + Location)',
-                'Total Duplicates Removed',
-                f'{self.display_name1} + {self.display_name2} Combined Unique',
-                'Deduplication Rate (%)'
+                f'{self.display_name1} — Total Records',
+                f'{self.display_name2} — Total Records',
+                'Exact Email Matches',
+                'Phone + Name Matches',
+                'Company + Location Matches',
+                'Total Overlapping Records',
+                'Combined Unique Records',
+                'Overlap Rate (%)'
             ],
             'Value': [
                 self.stats['file1_count'],
@@ -409,7 +409,7 @@ class DeduplicationEngine:
 
 def export_results(results, output_path):
     """
-    Export deduplication results to Excel file with multiple sheets
+    Export comparison results to Excel file with multiple sheets
 
     Args:
         results: Dict from DeduplicationEngine.run()
@@ -420,4 +420,4 @@ def export_results(results, output_path):
         results['combined_cleaned'].to_excel(writer, sheet_name='Combined_Cleaned', index=False)
         results['file1_raw'].to_excel(writer, sheet_name='File1_Raw', index=False)
         results['file2_raw'].to_excel(writer, sheet_name='File2_Raw', index=False)
-        results['duplicates_removed'].to_excel(writer, sheet_name='Duplicates_Removed', index=False)
+        results['duplicates_removed'].to_excel(writer, sheet_name='Overlapping_Records', index=False)

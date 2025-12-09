@@ -249,7 +249,7 @@ class CleanSheetApp:
                  background='#F3F2F1').pack(side='left', padx=(0, 5))
 
         proc_mode_menu = ttk.Combobox(proc_mode_frame, textvariable=self.processing_mode,
-                                      values=["single", "batch", "dedupe"],
+                                      values=["single", "batch", "compare"],
                                       state='readonly', width=10,
                                       font=('Segoe UI', 9))
         proc_mode_menu.pack(side='left')
@@ -744,16 +744,16 @@ class CleanSheetApp:
         self.load_operations()
 
     def on_processing_mode_change(self):
-        """Handle processing mode toggle (single/batch/dedupe)"""
+        """Handle processing mode toggle (single/batch/compare)"""
         mode = self.processing_mode.get()
         self.status_var.set(f"Switched to {mode.title()} mode")
 
         if mode == "batch":
-            # Show file management panel, hide dedupe panel
+            # Show file management panel, hide compare panel
             self.show_file_management_panel()
             self.hide_dedupe_panel()
-        elif mode == "dedupe":
-            # Show dedupe panel, hide file management panel
+        elif mode == "compare":
+            # Show compare panel, hide file management panel
             self.hide_file_management_panel()
             self.show_dedupe_panel()
         else:
@@ -838,7 +838,7 @@ class CleanSheetApp:
         self.status_var.set("Single file mode enabled")
 
     def show_dedupe_panel(self):
-        """Show deduplication panel for dedupe mode"""
+        """Show comparison panel for compare mode"""
         if self.dedupe_panel_visible:
             return
 
@@ -846,21 +846,21 @@ class CleanSheetApp:
         if hasattr(self, 'main_paned'):
             self.main_paned.pack_forget()
 
-        # Create dedupe panel if it doesn't exist
+        # Create compare panel if it doesn't exist
         if self.dedupe_panel is None:
             self.dedupe_panel = DedupePanel(self.root)
 
-        # Show dedupe panel
+        # Show compare panel
         self.dedupe_panel.pack(fill='both', expand=True, padx=10, pady=5)
         self.dedupe_panel_visible = True
-        self.status_var.set("Deduplication mode enabled - Compare two files")
+        self.status_var.set("Comparison mode enabled - Compare two files")
 
     def hide_dedupe_panel(self):
-        """Hide deduplication panel"""
+        """Hide comparison panel"""
         if not self.dedupe_panel_visible:
             return
 
-        # Hide dedupe panel
+        # Hide compare panel
         if self.dedupe_panel is not None:
             self.dedupe_panel.pack_forget()
 

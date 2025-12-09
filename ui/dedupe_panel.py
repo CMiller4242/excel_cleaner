@@ -1,6 +1,6 @@
 """
-Deduplication Mode UI Panel
-Provides interface for two-file deduplication processing
+Comparison Mode UI Panel
+Provides interface for two-file comparison processing
 """
 
 import tkinter as tk
@@ -12,7 +12,7 @@ import os
 
 class DedupePanel(tk.Frame):
     """
-    UI panel for two-file deduplication mode
+    UI panel for two-file comparison mode
     """
 
     def __init__(self, parent):
@@ -45,7 +45,7 @@ class DedupePanel(tk.Frame):
 
         tk.Label(
             header,
-            text="Two-File Deduplication Mode",
+            text="Comparison Mode",
             font=("Segoe UI", 16, "bold"),
             bg="#0078D4",
             fg="white"
@@ -53,7 +53,7 @@ class DedupePanel(tk.Frame):
 
         tk.Label(
             header,
-            text="Compare two files and remove duplicates using tiered matching (Email → Phone+Name → Company+Location)",
+            text="Compare files to identify overlap, differences, new entries, and existing matches using tiered matching (Email → Phone+Name → Company+Location).",
             font=("Segoe UI", 10),
             bg="#0078D4",
             fg="white"
@@ -102,7 +102,7 @@ class DedupePanel(tk.Frame):
 
         self.run_button = tk.Button(
             action_frame,
-            text="▶ Run Deduplication",
+            text="▶ Run Comparison",
             command=self._run_deduplication,
             font=("Segoe UI", 12, "bold"),
             bg="#107C10",
@@ -717,7 +717,7 @@ class DedupePanel(tk.Frame):
         ).pack(anchor=tk.W, padx=15, pady=(0, 10))
 
     def _run_deduplication(self):
-        """Run the deduplication process"""
+        """Run the comparison process"""
         # Validate column mapping
         mapping = {}
         for key, var in self.column_combos.items():
@@ -735,7 +735,7 @@ class DedupePanel(tk.Frame):
 
         # Clear log
         self.log_text.delete('1.0', tk.END)
-        self._log("Initializing deduplication engine...")
+        self._log("Initializing comparison engine...")
 
         # Disable button during processing
         self.run_button.config(state=tk.DISABLED, text="Processing...")
@@ -746,7 +746,7 @@ class DedupePanel(tk.Frame):
             file1_display = self.file1_display_name.get().strip() or os.path.splitext(os.path.basename(self.file1_path))[0]
             file2_display = self.file2_display_name.get().strip() or os.path.splitext(os.path.basename(self.file2_path))[0]
 
-            # Run deduplication
+            # Run comparison
             engine = DeduplicationEngine(progress_callback=self._log)
             self.results = engine.run(
                 self.file1_path,
@@ -760,10 +760,10 @@ class DedupePanel(tk.Frame):
 
             # Export results
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_filename = f"Deduplicated_Results_{timestamp}.xlsx"
+            output_filename = f"Comparison_Results_{timestamp}.xlsx"
 
             output_path = filedialog.asksaveasfilename(
-                title="Save Deduplication Results",
+                title="Save Comparison Results",
                 defaultextension=".xlsx",
                 initialfile=output_filename,
                 filetypes=[("Excel files", "*.xlsx")]
@@ -775,9 +775,9 @@ class DedupePanel(tk.Frame):
                 self._log("✓ Export complete!")
 
                 messagebox.showinfo(
-                    "Deduplication Complete",
+                    "Comparison Complete",
                     f"Results saved to:\n{output_path}\n\n"
-                    f"Duplicates removed: {engine.stats['total_duplicates']}\n"
+                    f"Overlapping records: {engine.stats['total_duplicates']}\n"
                     f"Unique records: {engine.stats['unique_count']}"
                 )
             else:
@@ -785,12 +785,12 @@ class DedupePanel(tk.Frame):
 
         except Exception as e:
             self._log(f"\n❌ ERROR: {str(e)}")
-            messagebox.showerror("Deduplication Failed", f"An error occurred:\n{str(e)}")
+            messagebox.showerror("Comparison Failed", f"An error occurred:\n{str(e)}")
             import traceback
             traceback.print_exc()
 
         finally:
-            self.run_button.config(state=tk.NORMAL, text="▶ Run Deduplication")
+            self.run_button.config(state=tk.NORMAL, text="▶ Run Comparison")
 
     def _log(self, message):
         """Add message to log"""
