@@ -1,6 +1,11 @@
 """
 Professional Excel Formatting Module
 Provides styling functions for comparison mode output sheets
+
+IMPORTANT: This module ONLY applies styles to existing data.
+DO NOT write any Excel formulas (e.g., ws["B5"] = "=SUM(B6:B10)").
+All values must be pre-computed in Python and written as plain values.
+This prevents Excel XML corruption issues.
 """
 
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment, NamedStyle
@@ -163,6 +168,13 @@ def format_summary_report(worksheet):
     # Apply metric label style to column A
     for row_idx in range(2, worksheet.max_row + 1):
         cell = worksheet.cell(row=row_idx, column=1)
+
+        # Safety check: ensure cell value doesn't start with '=' (would be interpreted as formula)
+        # This should already be handled by clean_excel_text(), but double-check here
+        if cell.value and isinstance(cell.value, str) and cell.value.startswith('=') and not cell.value.startswith("'="):
+            # Prefix with apostrophe to force text interpretation
+            cell.value = "'" + cell.value
+
         cell.style = 'metric_label_style'
 
         # Apply metric value style to column B
