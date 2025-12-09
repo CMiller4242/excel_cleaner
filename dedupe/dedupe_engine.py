@@ -207,6 +207,224 @@ class DeduplicationEngine:
             'duplicates_removed': duplicates_removed
         }
 
+    def run_multi(self, master_file_path, master_sheet, master_display_name, master_mapping,
+                  secondary_files, enabled_fields=None):
+        """
+        Run multi-file comparison process (1 master + multiple secondary files)
+
+        Args:
+            master_file_path: Path to master file
+            master_sheet: Sheet name for master file
+            master_display_name: Display name for master file
+            master_mapping: Dict mapping logical fields to master file columns
+            secondary_files: List of dicts, each containing:
+                {
+                    'path': file path,
+                    'sheet': sheet name,
+                    'display_name': display name,
+                    'mapping': dict mapping logical fields to this file's columns
+                }
+            enabled_fields: Dict of field enabled states (optional, all enabled if None)
+
+        Returns:
+            dict: Results containing all output sheets with multi-file data
+        """
+        import os
+
+        # Store enabled fields (default all enabled)
+        self.enabled_fields = enabled_fields or {
+            'email': True, 'phone': True, 'name': True,
+            'company': True, 'city': True, 'state': True
+        }
+
+        # Initialize multi-file statistics
+        self.multi_stats = {
+            'master_count': 0,
+            'secondary_files': [],  # Per-file stats
+            'total_overlapping': 0,
+            'combined_unique': 0,
+            'global_overlap_rate': 0.0
+        }
+
+        self.log("=" * 60)
+        self.log("STARTING MULTI-FILE COMPARISON")
+        self.log("=" * 60)
+
+        # Load master file
+        self.log(f"\nLoading MASTER file: {master_file_path}")
+        self.log(f"  Sheet: {master_sheet}")
+        master_df = pd.read_excel(master_file_path, sheet_name=master_sheet)
+        self.multi_stats['master_count'] = len(master_df)
+        self.log(f"✓ Loaded {len(master_df)} rows from master file")
+
+        # Add source column to master
+        master_df['Source_File'] = master_display_name
+
+        # Store raw master
+        master_raw = master_df.copy()
+
+        # Combine all unique records here (starts with master)
+        combined_unique_df = master_df.copy()
+
+        # Track all overlapping records across all files
+        all_overlapping_records = []
+
+        # Process each secondary file sequentially
+        for file_idx, file_info in enumerate(secondary_files):
+            self.log("\n" + "=" * 60)
+            self.log(f"PROCESSING SECONDARY FILE #{file_idx + 1}: {file_info['display_name']}")
+            self.log("=" * 60)
+
+            # Load secondary file
+            self.log(f"\nLoading file: {file_info['path']}")
+            self.log(f"  Sheet: {file_info['sheet']}")
+            secondary_df = pd.read_excel(file_info['path'], sheet_name=file_info['sheet'])
+            secondary_count = len(secondary_df)
+            self.log(f"✓ Loaded {secondary_count} rows")
+
+            # Add source column
+            secondary_df['Source_File'] = file_info['display_name']
+
+            # Normalize both dataframes for matching
+            self.log(f"\nNormalizing data for comparison #{file_idx + 1}...")
+
+            # For master, use master_mapping
+            master_norm = self._normalize_dataframe_direct(combined_unique_df, master_mapping)
+
+            # For secondary, use this file's mapping
+            secondary_norm = self._normalize_dataframe_direct(secondary_df, file_info['mapping'])
+
+            # Run tiered matching
+            self.log("\n" + "-" * 40)
+            self.log("RUNNING TIERED MATCHING")
+            self.log("-" * 40)
+
+            duplicates_this_file = []
+            unmatched_secondary = secondary_norm.copy()
+
+            # Tier 1: Email matching (always required)
+            self.log("\nTIER 1: Email Matching")
+            unmatched_secondary, tier1_dupes = self._tier1_email_match_direct(
+                master_norm, unmatched_secondary
+            )
+            duplicates_this_file.extend(tier1_dupes)
+            tier1_count = len(tier1_dupes)
+            self.log(f"✓ Found {tier1_count} email matches")
+            self.log(f"  Remaining unmatched: {len(unmatched_secondary)}")
+
+            # Tier 2: Phone + Name matching (only if both enabled)
+            tier2_count = 0
+            if self.enabled_fields.get('phone') and self.enabled_fields.get('name'):
+                self.log("\nTIER 2: Phone + Name Matching")
+                unmatched_secondary, tier2_dupes = self._tier2_phone_name_match_direct(
+                    master_norm, unmatched_secondary
+                )
+                duplicates_this_file.extend(tier2_dupes)
+                tier2_count = len(tier2_dupes)
+                self.log(f"✓ Found {tier2_count} phone+name matches")
+                self.log(f"  Remaining unmatched: {len(unmatched_secondary)}")
+            else:
+                self.log("\nTIER 2: Phone + Name Matching - SKIPPED (fields disabled)")
+
+            # Tier 3: Company + Location + Name matching
+            tier3_count = 0
+            tier3_enabled = (self.enabled_fields.get('company') or
+                           self.enabled_fields.get('city') or
+                           self.enabled_fields.get('state'))
+            if tier3_enabled:
+                self.log("\nTIER 3: Company + Location + Name Matching")
+                unmatched_secondary, tier3_dupes = self._tier3_company_location_match_direct(
+                    master_norm, unmatched_secondary
+                )
+                duplicates_this_file.extend(tier3_dupes)
+                tier3_count = len(tier3_dupes)
+                self.log(f"✓ Found {tier3_count} company+location matches")
+                self.log(f"  Remaining unmatched: {len(unmatched_secondary)}")
+            else:
+                self.log("\nTIER 3: Company + Location Matching - SKIPPED (fields disabled)")
+
+            # Calculate stats for this file
+            overlapping_count = len(duplicates_this_file)
+            unique_from_this_file = len(unmatched_secondary)
+            overlap_rate = (overlapping_count / secondary_count * 100) if secondary_count > 0 else 0
+
+            self.multi_stats['secondary_files'].append({
+                'display_name': file_info['display_name'],
+                'total_records': secondary_count,
+                'tier1_matches': tier1_count,
+                'tier2_matches': tier2_count,
+                'tier3_matches': tier3_count,
+                'overlapping': overlapping_count,
+                'unique': unique_from_this_file,
+                'overlap_rate': overlap_rate
+            })
+
+            self.log(f"\n✓ File #{file_idx + 1} comparison complete:")
+            self.log(f"  Overlapping: {overlapping_count}")
+            self.log(f"  Unique: {unique_from_this_file}")
+            self.log(f"  Overlap rate: {overlap_rate:.2f}%")
+
+            # Add overlapping records to global list (with Source_File info)
+            all_overlapping_records.extend(duplicates_this_file)
+
+            # Add unique records from this file to combined_unique_df for next iteration
+            if len(unmatched_secondary) > 0:
+                # Remove normalized columns before adding
+                cols_to_drop = [col for col in unmatched_secondary.columns if col.startswith('_norm_')]
+                unmatched_clean = unmatched_secondary.drop(columns=cols_to_drop)
+                combined_unique_df = pd.concat([combined_unique_df, unmatched_clean], ignore_index=True)
+                self.log(f"  Added {len(unmatched_clean)} unique records to master for next comparison")
+
+        # Calculate global statistics
+        total_secondary_records = sum(f['total_records'] for f in self.multi_stats['secondary_files'])
+        self.multi_stats['total_overlapping'] = len(all_overlapping_records)
+        self.multi_stats['combined_unique'] = len(combined_unique_df)
+        if total_secondary_records > 0:
+            self.multi_stats['global_overlap_rate'] = (
+                self.multi_stats['total_overlapping'] / total_secondary_records * 100
+            )
+
+        # Create output sheets
+        self.log("\n" + "=" * 60)
+        self.log("GENERATING OUTPUT SHEETS")
+        self.log("=" * 60)
+
+        summary = self._create_multi_summary_report(master_display_name)
+        combined_cleaned = combined_unique_df.copy()
+
+        # Remove normalized columns from combined_cleaned
+        cols_to_drop = [col for col in combined_cleaned.columns if col.startswith('_norm_')]
+        if cols_to_drop:
+            combined_cleaned = combined_cleaned.drop(columns=cols_to_drop)
+
+        overlapping_records = self._create_multi_overlapping_sheet(all_overlapping_records)
+
+        self.log("\n✓ Summary report created")
+        self.log("✓ Combined cleaned data created")
+        self.log("✓ Overlapping records list created")
+
+        self.log("\n" + "=" * 60)
+        self.log("MULTI-FILE COMPARISON COMPLETE")
+        self.log("=" * 60)
+        self.log(f"\nMaster file records: {self.multi_stats['master_count']}")
+        self.log(f"Total secondary records: {total_secondary_records}")
+        self.log(f"Total overlapping records: {self.multi_stats['total_overlapping']}")
+        self.log(f"Combined unique records: {self.multi_stats['combined_unique']}")
+        self.log(f"Global overlap rate: {self.multi_stats['global_overlap_rate']:.2f}%")
+
+        # For backward compatibility with the stats property
+        self.stats = {
+            'total_duplicates': self.multi_stats['total_overlapping'],
+            'unique_count': self.multi_stats['combined_unique']
+        }
+
+        return {
+            'summary': summary,
+            'combined_cleaned': combined_cleaned,
+            'file1_raw': master_raw,
+            'duplicates_removed': overlapping_records
+        }
+
     def _normalize_dataframe(self, df, column_mapping, prefix):
         """Add normalized columns for matching"""
         df_norm = df.copy()
@@ -445,6 +663,235 @@ class DeduplicationEngine:
             df_dupes = df_dupes[cols]
 
         return df_dupes
+
+    def _normalize_dataframe_direct(self, df, mapping):
+        """
+        Normalize dataframe using direct field names (no prefix)
+        For multi-file processing where mapping is already file-specific
+        """
+        df_norm = df.copy()
+
+        # Add normalized email
+        if 'email' in mapping and mapping['email'] in df.columns:
+            df_norm['_norm_email'] = df[mapping['email']].apply(normalize_email)
+
+        # Add normalized phone
+        if 'phone' in mapping and mapping['phone'] in df.columns:
+            df_norm['_norm_phone'] = df[mapping['phone']].apply(normalize_phone)
+
+        # Add normalized name
+        if 'name' in mapping and mapping['name'] in df.columns:
+            df_norm['_norm_name'] = df[mapping['name']].apply(normalize_text)
+
+        # Add normalized company
+        if 'company' in mapping and mapping['company'] in df.columns:
+            df_norm['_norm_company'] = df[mapping['company']].apply(normalize_text)
+
+        # Add normalized city
+        if 'city' in mapping and mapping['city'] in df.columns:
+            df_norm['_norm_city'] = df[mapping['city']].apply(normalize_text)
+
+        # Add normalized state
+        if 'state' in mapping and mapping['state'] in df.columns:
+            df_norm['_norm_state'] = df[mapping['state']].apply(normalize_text)
+
+        return df_norm
+
+    def _tier1_email_match_direct(self, master_df, secondary_df):
+        """Tier 1 email matching for multi-file mode (direct normalization)"""
+        matched_rows = []
+        unmatched_rows = []
+
+        for idx, row in secondary_df.iterrows():
+            if pd.isna(row.get('_norm_email')) or row.get('_norm_email') == '':
+                unmatched_rows.append(row)
+                continue
+
+            # Check for exact email match in master
+            match = master_df[master_df['_norm_email'] == row['_norm_email']]
+
+            if not match.empty:
+                # Found a match
+                row_dict = row.to_dict()
+                row_dict['Match_Reason'] = 'Email Match'
+                row_dict['Overlap_Tier'] = 'Tier 1'
+                matched_rows.append(row_dict)
+            else:
+                unmatched_rows.append(row)
+
+        unmatched_df = pd.DataFrame(unmatched_rows) if unmatched_rows else pd.DataFrame(columns=secondary_df.columns)
+        return unmatched_df, matched_rows
+
+    def _tier2_phone_name_match_direct(self, master_df, secondary_df):
+        """Tier 2 phone+name matching for multi-file mode"""
+        matched_rows = []
+        unmatched_rows = []
+
+        for idx, row in secondary_df.iterrows():
+            phone = row.get('_norm_phone')
+            name = row.get('_norm_name')
+
+            # Skip if either field is missing
+            if pd.isna(phone) or phone == '' or pd.isna(name) or name == '':
+                unmatched_rows.append(row)
+                continue
+
+            # Check for phone+name match in master
+            match = master_df[
+                (master_df['_norm_phone'] == phone) &
+                (master_df['_norm_name'] == name)
+            ]
+
+            if not match.empty:
+                row_dict = row.to_dict()
+                row_dict['Match_Reason'] = 'Phone + Name Match'
+                row_dict['Overlap_Tier'] = 'Tier 2'
+                matched_rows.append(row_dict)
+            else:
+                unmatched_rows.append(row)
+
+        unmatched_df = pd.DataFrame(unmatched_rows) if unmatched_rows else pd.DataFrame(columns=secondary_df.columns)
+        return unmatched_df, matched_rows
+
+    def _tier3_company_location_match_direct(self, master_df, secondary_df):
+        """Tier 3 company+location+name matching for multi-file mode"""
+        matched_rows = []
+        unmatched_rows = []
+
+        for idx, row in secondary_df.iterrows():
+            company = row.get('_norm_company')
+            city = row.get('_norm_city')
+            state = row.get('_norm_state')
+            name = row.get('_norm_name')
+
+            # Need at least company or location, plus name
+            has_company = not pd.isna(company) and company != ''
+            has_location = (not pd.isna(city) and city != '') or (not pd.isna(state) and state != '')
+            has_name = not pd.isna(name) and name != ''
+
+            if not ((has_company or has_location) and has_name):
+                unmatched_rows.append(row)
+                continue
+
+            # Build match conditions
+            conditions = []
+
+            if has_company:
+                conditions.append(master_df['_norm_company'] == company)
+
+            if not pd.isna(city) and city != '':
+                conditions.append(master_df['_norm_city'] == city)
+
+            if not pd.isna(state) and state != '':
+                conditions.append(master_df['_norm_state'] == state)
+
+            if has_name:
+                conditions.append(master_df['_norm_name'] == name)
+
+            # Combine all conditions
+            if conditions:
+                combined_condition = conditions[0]
+                for condition in conditions[1:]:
+                    combined_condition = combined_condition & condition
+
+                match = master_df[combined_condition]
+
+                if not match.empty:
+                    row_dict = row.to_dict()
+                    row_dict['Match_Reason'] = 'Company + Location Match'
+                    row_dict['Overlap_Tier'] = 'Tier 3'
+                    matched_rows.append(row_dict)
+                else:
+                    unmatched_rows.append(row)
+            else:
+                unmatched_rows.append(row)
+
+        unmatched_df = pd.DataFrame(unmatched_rows) if unmatched_rows else pd.DataFrame(columns=secondary_df.columns)
+        return unmatched_df, matched_rows
+
+    def _create_multi_summary_report(self, master_display_name):
+        """Create summary report for multi-file comparison"""
+        metrics = []
+        values = []
+
+        # Section 1: Master File Overview
+        metrics.append('=== MASTER FILE ===')
+        values.append('')
+        metrics.append(f'{master_display_name} — Total Records')
+        values.append(self.multi_stats['master_count'])
+
+        # Section 2: Per-File Comparison Metrics
+        for idx, file_stats in enumerate(self.multi_stats['secondary_files']):
+            metrics.append('')
+            values.append('')
+            metrics.append(f'=== SECONDARY FILE #{idx + 1}: {file_stats["display_name"]} ===')
+            values.append('')
+            metrics.append(f'{file_stats["display_name"]} — Total Records')
+            values.append(file_stats['total_records'])
+
+            # Only show tiers that were active
+            metrics.append('  Exact Email Matches')
+            values.append(file_stats['tier1_matches'])
+
+            if self.enabled_fields.get('phone') and self.enabled_fields.get('name'):
+                metrics.append('  Phone + Name Matches')
+                values.append(file_stats['tier2_matches'])
+
+            tier3_enabled = (self.enabled_fields.get('company') or
+                           self.enabled_fields.get('city') or
+                           self.enabled_fields.get('state'))
+            if tier3_enabled:
+                metrics.append('  Company + Location Matches')
+                values.append(file_stats['tier3_matches'])
+
+            metrics.append(f'{file_stats["display_name"]} — Overlapping Records')
+            values.append(file_stats['overlapping'])
+            metrics.append(f'{file_stats["display_name"]} — Unique Records')
+            values.append(file_stats['unique'])
+            metrics.append(f'{file_stats["display_name"]} — Overlap Rate (%)')
+            values.append(f"{file_stats['overlap_rate']:.2f}%")
+
+        # Section 3: Global Summary
+        metrics.append('')
+        values.append('')
+        metrics.append('=== GLOBAL SUMMARY ===')
+        values.append('')
+        metrics.append('Total Overlapping Records (All Files)')
+        values.append(self.multi_stats['total_overlapping'])
+        metrics.append('Combined Unique Records')
+        values.append(self.multi_stats['combined_unique'])
+        metrics.append('Global Overlap Rate (%)')
+        values.append(f"{self.multi_stats['global_overlap_rate']:.2f}%")
+
+        return pd.DataFrame({'Metric': metrics, 'Value': values})
+
+    def _create_multi_overlapping_sheet(self, overlapping_records):
+        """Create overlapping records sheet for multi-file comparison"""
+        if not overlapping_records:
+            return pd.DataFrame()
+
+        df_overlapping = pd.DataFrame(overlapping_records)
+
+        # Remove normalization columns
+        df_overlapping = df_overlapping[[col for col in df_overlapping.columns if not col.startswith('_norm_')]]
+
+        # Reorder columns: Source_File, Overlap_Tier, Match_Reason, then rest
+        priority_cols = []
+        if 'Source_File' in df_overlapping.columns:
+            priority_cols.append('Source_File')
+        if 'Overlap_Tier' in df_overlapping.columns:
+            priority_cols.append('Overlap_Tier')
+        if 'Match_Reason' in df_overlapping.columns:
+            priority_cols.append('Match_Reason')
+
+        other_cols = [col for col in df_overlapping.columns if col not in priority_cols]
+        df_overlapping = df_overlapping[priority_cols + other_cols]
+
+        # Sort by Source_File then Overlap_Tier
+        if 'Source_File' in df_overlapping.columns and 'Overlap_Tier' in df_overlapping.columns:
+            df_overlapping = df_overlapping.sort_values(['Source_File', 'Overlap_Tier'])
+
+        return df_overlapping
 
 def export_results(results, output_path):
     """
