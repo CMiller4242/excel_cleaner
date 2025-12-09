@@ -33,6 +33,19 @@ class DedupePanel(tk.Frame):
         self.column_mapping = {}
         self.results = None
 
+        # Field enabled states (for mapping toggles)
+        self.field_enabled = {
+            'email': tk.BooleanVar(value=True),  # Always required
+            'phone': tk.BooleanVar(value=True),
+            'name': tk.BooleanVar(value=True),
+            'company': tk.BooleanVar(value=True),
+            'city': tk.BooleanVar(value=True),
+            'state': tk.BooleanVar(value=True)
+        }
+
+        # Store combobox widgets for enable/disable
+        self.field_combos = {}
+
         self._create_widgets()
 
     def _create_widgets(self):
@@ -643,12 +656,14 @@ class DedupePanel(tk.Frame):
         mapping_grid.pack(fill=tk.X, padx=15, pady=(0, 15))
 
         # Headers
-        tk.Label(mapping_grid, text="Field", font=("Segoe UI", 9, "bold"), bg="white", width=15, anchor=tk.W).grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-        tk.Label(mapping_grid, text="Master File Column", font=("Segoe UI", 9, "bold"), bg="white", width=25).grid(row=0, column=1, padx=5, pady=5)
-        tk.Label(mapping_grid, text="Secondary File Column", font=("Segoe UI", 9, "bold"), bg="white", width=25).grid(row=0, column=2, padx=5, pady=5)
+        tk.Label(mapping_grid, text="Enable", font=("Segoe UI", 9, "bold"), bg="white", width=8).grid(row=0, column=0, padx=5, pady=5)
+        tk.Label(mapping_grid, text="Field", font=("Segoe UI", 9, "bold"), bg="white", width=15, anchor=tk.W).grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+        tk.Label(mapping_grid, text="Master File Column", font=("Segoe UI", 9, "bold"), bg="white", width=25).grid(row=0, column=2, padx=5, pady=5)
+        tk.Label(mapping_grid, text="Secondary File Column", font=("Segoe UI", 9, "bold"), bg="white", width=25).grid(row=0, column=3, padx=5, pady=5)
 
         # Column dropdowns
         self.column_combos = {}
+        self.field_combos = {}
 
         fields = [
             ('Email', 'email'),
@@ -663,13 +678,25 @@ class DedupePanel(tk.Frame):
         file2_cols = ['(None)'] + list(self.file2_df.columns)
 
         for idx, (label, key) in enumerate(fields, start=1):
+            # Enable checkbox
+            is_email = (key == 'email')
+            checkbox = tk.Checkbutton(
+                mapping_grid,
+                variable=self.field_enabled[key],
+                command=lambda k=key: self._on_field_toggle(k),
+                bg="white",
+                state=tk.DISABLED if is_email else tk.NORMAL
+            )
+            checkbox.grid(row=idx, column=0, padx=5, pady=3)
+
+            # Field label
             tk.Label(
                 mapping_grid,
                 text=f"{label}:",
                 font=("Segoe UI", 9),
                 bg="white",
                 anchor=tk.W
-            ).grid(row=idx, column=0, padx=5, pady=3, sticky=tk.W)
+            ).grid(row=idx, column=1, padx=5, pady=3, sticky=tk.W)
 
             # File 1 dropdown
             file1_var = tk.StringVar(value='(None)')
@@ -680,7 +707,7 @@ class DedupePanel(tk.Frame):
                 state="readonly",
                 width=23
             )
-            file1_combo.grid(row=idx, column=1, padx=5, pady=3)
+            file1_combo.grid(row=idx, column=2, padx=5, pady=3)
             self.column_combos[f'file1_{key}'] = file1_var
 
             # Try to auto-detect
@@ -698,8 +725,11 @@ class DedupePanel(tk.Frame):
                 state="readonly",
                 width=23
             )
-            file2_combo.grid(row=idx, column=2, padx=5, pady=3)
+            file2_combo.grid(row=idx, column=3, padx=5, pady=3)
             self.column_combos[f'file2_{key}'] = file2_var
+
+            # Store combo references for enable/disable
+            self.field_combos[key] = (file1_combo, file2_combo)
 
             # Try to auto-detect
             for col in self.file2_df.columns:
@@ -710,11 +740,21 @@ class DedupePanel(tk.Frame):
         # Note
         tk.Label(
             self.mapping_section,
-            text="Note: Email is required. Other fields improve matching accuracy.",
+            text="Note: Email is required. Other fields improve matching accuracy. Uncheck fields to exclude them from matching.",
             font=("Segoe UI", 8),
             bg="white",
             fg="#666"
         ).pack(anchor=tk.W, padx=15, pady=(0, 10))
+
+    def _on_field_toggle(self, field_key):
+        """Handle field enable/disable toggle"""
+        enabled = self.field_enabled[field_key].get()
+
+        if field_key in self.field_combos:
+            file1_combo, file2_combo = self.field_combos[field_key]
+            new_state = "readonly" if enabled else "disabled"
+            file1_combo.config(state=new_state)
+            file2_combo.config(state=new_state)
 
     def _run_deduplication(self):
         """Run the comparison process"""
@@ -746,6 +786,9 @@ class DedupePanel(tk.Frame):
             file1_display = self.file1_display_name.get().strip() or os.path.splitext(os.path.basename(self.file1_path))[0]
             file2_display = self.file2_display_name.get().strip() or os.path.splitext(os.path.basename(self.file2_path))[0]
 
+            # Get field enabled states
+            enabled_fields = {key: var.get() for key, var in self.field_enabled.items()}
+
             # Run comparison
             engine = DeduplicationEngine(progress_callback=self._log)
             self.results = engine.run(
@@ -755,7 +798,8 @@ class DedupePanel(tk.Frame):
                 sheet1=self.file1_sheet_var.get(),
                 sheet2=self.file2_sheet_var.get(),
                 display_name1=file1_display,
-                display_name2=file2_display
+                display_name2=file2_display,
+                enabled_fields=enabled_fields
             )
 
             # Export results

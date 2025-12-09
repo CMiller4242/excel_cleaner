@@ -12,6 +12,7 @@ from .helpers import (
     fuzzy_match,
     get_match_reason
 )
+from .excel_formatting import apply_professional_formatting
 
 class DeduplicationEngine:
     """
@@ -38,6 +39,7 @@ class DeduplicationEngine:
         }
         self.display_name1 = None
         self.display_name2 = None
+        self.enabled_fields = None
 
     def log(self, message):
         """Log progress message"""
@@ -45,7 +47,7 @@ class DeduplicationEngine:
             self.progress_callback(message)
         print(message)
 
-    def run(self, file1_path, file2_path, column_mapping, sheet1=None, sheet2=None, display_name1=None, display_name2=None):
+    def run(self, file1_path, file2_path, column_mapping, sheet1=None, sheet2=None, display_name1=None, display_name2=None, enabled_fields=None):
         """
         Run comparison process
 
@@ -57,6 +59,7 @@ class DeduplicationEngine:
             sheet2: Sheet name for file2 (optional, uses first sheet if None)
             display_name1: Display name for file1 (optional, uses filename if None)
             display_name2: Display name for file2 (optional, uses filename if None)
+            enabled_fields: Dict of field enabled states (optional, all enabled if None)
 
         Returns:
             dict: Results containing all output sheets
@@ -73,6 +76,12 @@ class DeduplicationEngine:
         import os
         self.display_name1 = display_name1 or os.path.splitext(os.path.basename(file1_path))[0]
         self.display_name2 = display_name2 or os.path.splitext(os.path.basename(file2_path))[0]
+
+        # Store enabled fields (default all enabled)
+        self.enabled_fields = enabled_fields or {
+            'email': True, 'phone': True, 'name': True,
+            'company': True, 'city': True, 'state': True
+        }
 
         self.log("=" * 60)
         self.log("STARTING TWO-FILE COMPARISON")
@@ -118,7 +127,7 @@ class DeduplicationEngine:
         duplicates = []
         unmatched_df2 = df2_normalized.copy()
 
-        # Tier 1: Email matching
+        # Tier 1: Email matching (always required)
         self.log("\nTIER 1: Email Matching")
         self.log("-" * 40)
         unmatched_df2, tier1_dupes = self._tier1_email_match(
@@ -129,27 +138,38 @@ class DeduplicationEngine:
         self.log(f"✓ Found {len(tier1_dupes)} email matches")
         self.log(f"  Remaining unmatched: {len(unmatched_df2)}")
 
-        # Tier 2: Phone + Name matching
-        self.log("\nTIER 2: Phone + Name Matching")
-        self.log("-" * 40)
-        unmatched_df2, tier2_dupes = self._tier2_phone_name_match(
-            df1_normalized, unmatched_df2, column_mapping
-        )
-        duplicates.extend(tier2_dupes)
-        self.stats['tier2_matches'] = len(tier2_dupes)
-        self.log(f"✓ Found {len(tier2_dupes)} phone+name matches")
-        self.log(f"  Remaining unmatched: {len(unmatched_df2)}")
+        # Tier 2: Phone + Name matching (only if both enabled)
+        if self.enabled_fields.get('phone') and self.enabled_fields.get('name'):
+            self.log("\nTIER 2: Phone + Name Matching")
+            self.log("-" * 40)
+            unmatched_df2, tier2_dupes = self._tier2_phone_name_match(
+                df1_normalized, unmatched_df2, column_mapping
+            )
+            duplicates.extend(tier2_dupes)
+            self.stats['tier2_matches'] = len(tier2_dupes)
+            self.log(f"✓ Found {len(tier2_dupes)} phone+name matches")
+            self.log(f"  Remaining unmatched: {len(unmatched_df2)}")
+        else:
+            self.log("\nTIER 2: Phone + Name Matching - SKIPPED (fields disabled)")
+            self.stats['tier2_matches'] = 0
 
-        # Tier 3: Company + Location + Name matching
-        self.log("\nTIER 3: Company + Location + Name Matching")
-        self.log("-" * 40)
-        unmatched_df2, tier3_dupes = self._tier3_company_location_match(
-            df1_normalized, unmatched_df2, column_mapping
-        )
-        duplicates.extend(tier3_dupes)
-        self.stats['tier3_matches'] = len(tier3_dupes)
-        self.log(f"✓ Found {len(tier3_dupes)} company+location matches")
-        self.log(f"  Remaining unmatched: {len(unmatched_df2)}")
+        # Tier 3: Company + Location + Name matching (only if company or location fields enabled)
+        tier3_enabled = (self.enabled_fields.get('company') or
+                        self.enabled_fields.get('city') or
+                        self.enabled_fields.get('state'))
+        if tier3_enabled:
+            self.log("\nTIER 3: Company + Location + Name Matching")
+            self.log("-" * 40)
+            unmatched_df2, tier3_dupes = self._tier3_company_location_match(
+                df1_normalized, unmatched_df2, column_mapping
+            )
+            duplicates.extend(tier3_dupes)
+            self.stats['tier3_matches'] = len(tier3_dupes)
+            self.log(f"✓ Found {len(tier3_dupes)} company+location matches")
+            self.log(f"  Remaining unmatched: {len(unmatched_df2)}")
+        else:
+            self.log("\nTIER 3: Company + Location Matching - SKIPPED (fields disabled)")
+            self.stats['tier3_matches'] = 0
 
         # Calculate final statistics
         self.stats['total_duplicates'] = len(duplicates)
@@ -353,28 +373,47 @@ class DeduplicationEngine:
         return unmatched_df, duplicates
 
     def _create_summary_report(self):
-        """Create summary report sheet with dynamic file names"""
+        """Create summary report sheet with dynamic file names and active tiers only"""
+        metrics = []
+        values = []
+
+        # Always include file counts
+        metrics.append(f'{self.display_name1} — Total Records')
+        values.append(self.stats['file1_count'])
+
+        metrics.append(f'{self.display_name2} — Total Records')
+        values.append(self.stats['file2_count'])
+
+        # Include tier 1 (email) - always active
+        metrics.append('Exact Email Matches')
+        values.append(self.stats['tier1_matches'])
+
+        # Include tier 2 only if it was active
+        if self.enabled_fields.get('phone') and self.enabled_fields.get('name'):
+            metrics.append('Phone + Name Matches')
+            values.append(self.stats['tier2_matches'])
+
+        # Include tier 3 only if it was active
+        tier3_enabled = (self.enabled_fields.get('company') or
+                        self.enabled_fields.get('city') or
+                        self.enabled_fields.get('state'))
+        if tier3_enabled:
+            metrics.append('Company + Location Matches')
+            values.append(self.stats['tier3_matches'])
+
+        # Always include totals
+        metrics.append('Total Overlapping Records')
+        values.append(self.stats['total_duplicates'])
+
+        metrics.append('Combined Unique Records')
+        values.append(self.stats['unique_count'])
+
+        metrics.append('Overlap Rate (%)')
+        values.append(f"{self.stats['dedup_rate']:.2f}%")
+
         summary_data = {
-            'Metric': [
-                f'{self.display_name1} — Total Records',
-                f'{self.display_name2} — Total Records',
-                'Exact Email Matches',
-                'Phone + Name Matches',
-                'Company + Location Matches',
-                'Total Overlapping Records',
-                'Combined Unique Records',
-                'Overlap Rate (%)'
-            ],
-            'Value': [
-                self.stats['file1_count'],
-                self.stats['file2_count'],
-                self.stats['tier1_matches'],
-                self.stats['tier2_matches'],
-                self.stats['tier3_matches'],
-                self.stats['total_duplicates'],
-                self.stats['unique_count'],
-                f"{self.stats['dedup_rate']:.2f}%"
-            ]
+            'Metric': metrics,
+            'Value': values
         }
 
         return pd.DataFrame(summary_data)
@@ -409,15 +448,19 @@ class DeduplicationEngine:
 
 def export_results(results, output_path):
     """
-    Export comparison results to Excel file with multiple sheets
+    Export comparison results to Excel file with multiple sheets and professional formatting
 
     Args:
         results: Dict from DeduplicationEngine.run()
         output_path: Output file path
     """
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        # Write all sheets
         results['summary'].to_excel(writer, sheet_name='Summary_Report', index=False)
         results['combined_cleaned'].to_excel(writer, sheet_name='Combined_Cleaned', index=False)
         results['file1_raw'].to_excel(writer, sheet_name='File1_Raw', index=False)
         results['file2_raw'].to_excel(writer, sheet_name='File2_Raw', index=False)
         results['duplicates_removed'].to_excel(writer, sheet_name='Overlapping_Records', index=False)
+
+        # Apply professional formatting to all sheets
+        apply_professional_formatting(writer.book)
