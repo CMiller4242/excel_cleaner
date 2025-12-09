@@ -434,7 +434,7 @@ class DeduplicationEngine:
         results = {
             'summary': summary,
             'combined_cleaned': combined_cleaned,
-            'file1_raw': master_raw,
+            'master_raw': master_raw,  # Master file raw data
             'duplicates_removed': overlapping_records
         }
 
@@ -975,7 +975,21 @@ def export_results(results, output_path):
         results['combined_cleaned'].to_excel(writer, sheet_name='Combined_Cleaned', index=False)
         results['duplicates_removed'].to_excel(writer, sheet_name='Overlapping_Records', index=False)
 
-        # Dynamically export all raw file sheets (file1_raw, file2_raw, file3_raw, etc.)
+        # --- EXPORT MASTER RAW SHEET (for multi-file mode) ---
+        if 'master_raw' in results:
+            master_df = results['master_raw']
+            # Extract display name from Source_File column
+            if 'Source_File' in master_df.columns and len(master_df) > 0:
+                master_display = master_df['Source_File'].dropna().iloc[0] if not master_df['Source_File'].dropna().empty else "Master"
+            else:
+                master_display = "Master"
+
+            # Sanitize and write master raw sheet
+            master_sheet_name = sanitize_sheet_name(f"{master_display}_Raw")
+            master_df.to_excel(writer, sheet_name=master_sheet_name, index=False)
+            print(f"✓ Creating raw sheet for Master: {master_display}")
+
+        # --- EXPORT SECONDARY RAW SHEETS (file1_raw, file2_raw, etc.) ---
         import re
         raw_file_pattern = re.compile(r'^file(\d+)_raw$')
 
