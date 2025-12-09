@@ -269,6 +269,9 @@ class DeduplicationEngine:
         # Track all overlapping records across all files
         all_overlapping_records = []
 
+        # Store raw dataframes for all secondary files
+        secondary_raw_files = []
+
         # Process each secondary file sequentially
         for file_idx, file_info in enumerate(secondary_files):
             self.log("\n" + "=" * 60)
@@ -284,6 +287,15 @@ class DeduplicationEngine:
 
             # Add source column
             secondary_df['Source_File'] = file_info['display_name']
+
+            # Store raw copy of this secondary file BEFORE normalization
+            secondary_raw = secondary_df.copy()
+            secondary_raw_files.append({
+                'index': file_idx + 1,  # 1-based index for file naming
+                'display_name': file_info['display_name'],
+                'dataframe': secondary_raw
+            })
+            self.log(f"✓ Stored raw data for File #{file_idx + 1}: {file_info['display_name']}")
 
             # Normalize both dataframes for matching
             self.log(f"\nNormalizing data for comparison #{file_idx + 1}...")
@@ -418,12 +430,21 @@ class DeduplicationEngine:
             'unique_count': self.multi_stats['combined_unique']
         }
 
-        return {
+        # Build results dict with all raw files
+        results = {
             'summary': summary,
             'combined_cleaned': combined_cleaned,
             'file1_raw': master_raw,
             'duplicates_removed': overlapping_records
         }
+
+        # Add all secondary raw files with file{N}_raw keys
+        for raw_file_info in secondary_raw_files:
+            file_key = f"file{raw_file_info['index']}_raw"
+            results[file_key] = raw_file_info['dataframe']
+            self.log(f"✓ Added {file_key} to results ({raw_file_info['display_name']})")
+
+        return results
 
     def _normalize_dataframe(self, df, column_mapping, prefix):
         """Add normalized columns for matching"""
@@ -893,21 +914,61 @@ class DeduplicationEngine:
 
         return df_overlapping
 
+def sanitize_sheet_name(name):
+    """
+    Sanitize a name to be a valid Excel sheet name
+    - Remove invalid characters: \ / * ? : [ ]
+    - Limit to 31 characters
+    - Ensure not empty
+    """
+    import re
+    # Remove invalid characters
+    sanitized = re.sub(r'[\\/*?:\[\]]', '_', name)
+    # Limit to 31 characters
+    if len(sanitized) > 31:
+        sanitized = sanitized[:31]
+    # Ensure not empty
+    if not sanitized:
+        sanitized = "Sheet"
+    return sanitized
+
 def export_results(results, output_path):
     """
     Export comparison results to Excel file with multiple sheets and professional formatting
 
     Args:
-        results: Dict from DeduplicationEngine.run()
+        results: Dict from DeduplicationEngine.run() or run_multi()
         output_path: Output file path
     """
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        # Write all sheets
+        # Write core sheets (always present)
         results['summary'].to_excel(writer, sheet_name='Summary_Report', index=False)
         results['combined_cleaned'].to_excel(writer, sheet_name='Combined_Cleaned', index=False)
-        results['file1_raw'].to_excel(writer, sheet_name='File1_Raw', index=False)
-        results['file2_raw'].to_excel(writer, sheet_name='File2_Raw', index=False)
         results['duplicates_removed'].to_excel(writer, sheet_name='Overlapping_Records', index=False)
+
+        # Dynamically export all raw file sheets (file1_raw, file2_raw, file3_raw, etc.)
+        import re
+        raw_file_pattern = re.compile(r'^file(\d+)_raw$')
+
+        for key in sorted(results.keys()):
+            match = raw_file_pattern.match(key)
+            if match:
+                file_num = int(match.group(1))
+                raw_df = results[key]
+
+                # Try to extract display name from Source_File column if available
+                if 'Source_File' in raw_df.columns and len(raw_df) > 0:
+                    # Get the first non-null value from Source_File column
+                    display_name = raw_df['Source_File'].dropna().iloc[0] if not raw_df['Source_File'].dropna().empty else f"File{file_num}"
+                else:
+                    display_name = f"File{file_num}"
+
+                # Sanitize the sheet name
+                sheet_name = sanitize_sheet_name(f"{display_name}_Raw")
+
+                # Write the sheet
+                raw_df.to_excel(writer, sheet_name=sheet_name, index=False)
+                print(f"✓ Creating raw sheet for File #{file_num}: {display_name}")
 
         # Apply professional formatting to all sheets
         apply_professional_formatting(writer.book)
