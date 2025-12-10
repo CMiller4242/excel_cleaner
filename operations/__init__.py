@@ -15,6 +15,9 @@ from . import zoominfo_ops
 # Import standardization operations (phone, ZIP, state, etc.)
 from . import standardization_ops
 
+# Import smart column operations
+from . import add_column_smart_ops
+
 # Import v2 advanced operations
 try:
     from .advanced import math_advanced
