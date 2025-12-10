@@ -32,13 +32,13 @@ class AddColumnSmartOperation(BaseOperation):
             description='''Create a new column with values populated in three ways:
 
 1. CONSTANT VALUE: Fill all rows with the same value
-2. TIMESTAMP: Auto-generate current date/time
-3. SMART/DERIVED: Generate values based on other columns
-   - Country from City/State/ZIP (detects USA)
-   - Email domain extraction (user@company.com → company.com)
-   - Parse full name into first/last names
+2. TIMESTAMP: Auto-generate the current date/time
+3. SMART / DERIVED: Generate values based on other columns
+   - Detect country from City/State/ZIP (currently supports USA only)
+   - Extract domain from email (user@company.com → company.com)
+   - Parse a full name into first or last name
 
-This operation is different from Add Columns (math) which performs calculations.''',
+This operation is different from Add Columns (math), which performs calculations.''',
             parameters=[
                 Parameter(
                     name='new_column_name',
@@ -80,6 +80,12 @@ This operation is different from Add Columns (math) which performs calculations.
                 ),
                 # Column mappings for smart rules
                 Parameter(
+                    name='city_column',
+                    type='column',
+                    description='City column (for country detection)',
+                    required=False
+                ),
+                Parameter(
                     name='state_column',
                     type='column',
                     description='State column (for country detection)',
@@ -106,13 +112,13 @@ This operation is different from Add Columns (math) which performs calculations.
                 Parameter(
                     name='name_part',
                     type='choice',
-                    description='Which part to extract (for name parsing)',
+                    description='Choose which name part to extract',
                     choices=['first', 'last'],
                     required=False,
                     default='first'
                 )
             ],
-            excel_equivalent='Not directly equivalent - combines multiple functions',
+            excel_equivalent='Not directly equivalent — combines multiple functions',
             examples=[
                 'Add "Source" column with value "Web Import"',
                 'Add "Import Date" column with current date',
@@ -144,18 +150,46 @@ This operation is different from Add Columns (math) which performs calculations.
 
             # Validate required columns for each rule
             if smart_rule == 'country_from_location':
-                has_state = params.get('state_column') and params['state_column'] in df.columns
-                has_zip = params.get('zip_column') and params['zip_column'] in df.columns
-                if not has_state and not has_zip:
-                    return False, "At least one of State or ZIP column is required for country detection"
+                city_col = params.get('city_column')
+                state_col = params.get('state_column')
+                zip_col = params.get('zip_column')
+
+                missing = []
+                if not city_col or not city_col.strip():
+                    missing.append('City')
+                if not state_col or not state_col.strip():
+                    missing.append('State')
+                if not zip_col or not zip_col.strip():
+                    missing.append('ZIP')
+
+                if missing:
+                    return False, f"Country detection requires City, State, and ZIP columns. Please select all three. Missing: {', '.join(missing)}"
+
+                # Validate columns exist in dataframe
+                if city_col not in df.columns:
+                    return False, f"City column '{city_col}' not found in data"
+                if state_col not in df.columns:
+                    return False, f"State column '{state_col}' not found in data"
+                if zip_col not in df.columns:
+                    return False, f"ZIP column '{zip_col}' not found in data"
 
             elif smart_rule == 'email_domain':
-                if 'email_column' not in params or params['email_column'] not in df.columns:
-                    return False, "Email column is required for email domain extraction"
+                email_col = params.get('email_column')
+                if not email_col or not email_col.strip():
+                    return False, "Email domain extraction requires selecting an Email column."
+                if email_col not in df.columns:
+                    return False, f"Email column '{email_col}' not found in data"
 
             elif smart_rule == 'parse_name':
-                if 'full_name_column' not in params or params['full_name_column'] not in df.columns:
-                    return False, "Full name column is required for name parsing"
+                name_col = params.get('full_name_column')
+                name_part = params.get('name_part')
+
+                if not name_col or not name_col.strip():
+                    return False, "Name parsing requires a Full Name column and selecting whether to extract 'first' or 'last'."
+                if not name_part or name_part not in ['first', 'last']:
+                    return False, "Name parsing requires selecting whether to extract 'first' or 'last'."
+                if name_col not in df.columns:
+                    return False, f"Full Name column '{name_col}' not found in data"
 
         return True, ""
 
@@ -200,9 +234,10 @@ This operation is different from Add Columns (math) which performs calculations.
         return df
 
     def _detect_country(self, df: pd.DataFrame, params: Dict) -> pd.Series:
-        """Detect country based on state/ZIP code"""
+        """Detect country based on city/state/ZIP code"""
         result = pd.Series([''] * len(df), index=df.index)
 
+        city_col = params.get('city_column')
         state_col = params.get('state_column')
         zip_col = params.get('zip_column')
 
