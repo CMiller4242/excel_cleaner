@@ -941,9 +941,9 @@ class CleanSheetApp:
 
         subtitle_label = ttk.Label(
             main_container,
-            text="Combine multiple CSV/TXT files into one properly structured file.\n"
-                 "Headers are validated and only written once. CSV parsing is used\n"
-                 "to prevent data loss or formatting corruption.",
+            text="Combine multiple CSV/TXT files into one file with exact formatting preservation.\n"
+                 "Header from first file is kept. Repeated headers are automatically removed.\n"
+                 "No formatting changes - quotes, spacing, and delimiters preserved exactly.",
             font=('Segoe UI', 10),
             foreground='#666666',
             justify='center'
@@ -1672,14 +1672,14 @@ class CleanSheetApp:
         try:
             file_type = self.combine_mode_handler.detected_file_type
 
-            # COMBINE_CSV_FIX: Use CSV module for text files
+            # RAW TEXT COMBINING: Use line-based processing for exact format preservation
             if file_type == 'text':
-                # Use CSV-aware combining
+                # Use raw text line-based combining
                 file_paths = [f['path'] for f in self.combine_mode_handler.loaded_files]
                 delimiter = self.combine_mode_handler.detected_delimiter
 
-                # Validate headers and combine
-                header, combined_rows = self.combine_mode_handler.combine_csv_files_with_csv_module(
+                # Combine files using raw text processing
+                header_line, data_lines, files_processed = self.combine_mode_handler.combine_text_files_raw(
                     file_paths, delimiter
                 )
 
@@ -1688,14 +1688,14 @@ class CleanSheetApp:
                 messagebox.showinfo(
                     "Files Combined",
                     f"Successfully combined {summary['file_count']} files!\n\n"
-                    f"Total rows: {len(combined_rows):,}\n"
-                    f"Total columns: {len(header)}\n\n"
-                    "CSV formatting preserved exactly.\n"
+                    f"Total data rows: {len(data_lines):,}\n"
+                    f"Repeated headers removed automatically.\n\n"
+                    "Original formatting preserved exactly.\n"
                     "Click OK to select export location."
                 )
 
-                # Show export dialog with CSV data
-                self.combine_export_dialog_csv(header, combined_rows, summary)
+                # Show export dialog with raw text data
+                self.combine_export_dialog_raw(header_line, data_lines, summary)
 
             else:
                 # Excel files - use pandas method
@@ -1774,15 +1774,15 @@ class CleanSheetApp:
             logging.error(f"Export error: {e}", exc_info=True)
             messagebox.showerror("Export Error", f"Failed to export file:\n\n{str(e)}")
 
-    def combine_export_dialog_csv(self, header: list, rows: list, summary: dict):
+    def combine_export_dialog_raw(self, header_line: str, data_lines: list, summary: dict):
         """
-        Show export dialog for CSV combined data
+        Show export dialog for raw text combined data
 
-        COMBINE_CSV_FIX: Use csv.writer for text file export to preserve exact formatting
+        RAW TEXT EXPORT: Use raw text writing to preserve exact formatting
 
         Args:
-            header: Column headers
-            rows: Data rows (list of lists)
+            header_line: Header line from first file (as raw text)
+            data_lines: Data lines (list of strings)
             summary: Summary dict with file info
         """
         # Determine output file type based on input files
@@ -1810,25 +1810,24 @@ class CleanSheetApp:
             return
 
         try:
-            # COMBINE_CSV_FIX: Export using csv.writer
-            self.combine_mode_handler.export_csv_with_csv_module(
-                output_path, header, rows, delimiter
+            # RAW TEXT EXPORT: Write using raw text method
+            self.combine_mode_handler.export_text_file_raw(
+                output_path, header_line, data_lines
             )
 
             messagebox.showinfo(
                 "Export Successful",
                 f"Combined file saved successfully!\n\n"
                 f"Location: {output_path}\n"
-                f"Rows: {len(rows):,}\n"
-                f"Columns: {len(header)}\n\n"
-                f"CSV formatting preserved exactly.\n"
+                f"Data rows: {len(data_lines):,}\n\n"
+                f"Original formatting preserved exactly.\n"
                 f"Delimiter: {summary.get('delimiter', 'unknown')}"
             )
 
             self.status_var.set(f"Exported combined file: {Path(output_path).name}")
 
         except Exception as e:
-            logging.error(f"CSV export error: {e}", exc_info=True)
+            logging.error(f"Raw text export error: {e}", exc_info=True)
             messagebox.showerror("Export Error", f"Failed to export file:\n\n{str(e)}")
 
     # ==================== SPLIT PANE HELPER METHODS ====================
