@@ -1668,35 +1668,41 @@ class CleanSheetApp:
 
     def _show_single_column_dialog(self, operation, columns, edit_mode=False, edit_index=None, current_params=None):
         """Show dialog with smart single column selector"""
+        from ui.widgets.scrollable_frame import ScrollableOperationFrame
+
         dialog = tk.Toplevel(self.root)
         dialog.title(f"{'Edit' if edit_mode else 'Add'}: {operation.metadata.name}")
         dialog.geometry("600x500")
         dialog.transient(self.root)
         dialog.grab_set()
 
-        main_frame = ttk.Frame(dialog, padding=20)
-        main_frame.pack(fill='both', expand=True)
+        # Create scrollable content area
+        scrollable = ScrollableOperationFrame(dialog)
+        scrollable.pack(fill='both', expand=True, padx=10, pady=(10, 0))
+
+        # Use scroll_frame as the container for all content
+        main_frame = scrollable.scroll_frame
 
         # Title and description
         ttk.Label(
             main_frame,
             text=operation.metadata.name,
             font=('Segoe UI', 14, 'bold')
-        ).pack(pady=(0, 10))
+        ).pack(pady=(10, 10), padx=10)
 
         ttk.Label(
             main_frame,
             text=operation.metadata.description,
             wraplength=550,
             font=('Arial', 11)
-        ).pack(pady=(0, 5))
+        ).pack(pady=(0, 5), padx=10)
 
         ttk.Label(
             main_frame,
             text=f"Excel equivalent: {operation.metadata.excel_equivalent}",
             font=('Arial', 10),
             foreground='gray'
-        ).pack(pady=(0, 20))
+        ).pack(pady=(0, 20), padx=10)
 
         param_widgets = {}
 
@@ -1802,25 +1808,29 @@ class CleanSheetApp:
             self.refresh_queue_display()
             dialog.destroy()
 
-        # Buttons
-        btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(fill='x', pady=(20, 0))
+        # Fixed button frame at the bottom (NOT in scrollable area)
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill='x', pady=10, padx=10)
 
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
         button_text = "✓ Update" if edit_mode else "✓ Add to Queue"
         ttk.Button(btn_frame, text=button_text, command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
-    
+
 
     def _show_multi_column_dialog(self, operation, columns, edit_mode=False, edit_index=None, current_params=None):
         """Show dialog with smart multi-column selector"""
+        from ui.widgets.scrollable_frame import ScrollableOperationFrame
+
         dialog = tk.Toplevel(self.root)
         dialog.title(f"{'Edit' if edit_mode else 'Add'}: {operation.metadata.name}")
         dialog.geometry("600x600")
         dialog.transient(self.root)
         dialog.grab_set()
 
-        main_frame = ttk.Frame(dialog, padding=20)
-        main_frame.pack(fill='both', expand=True)
+        # Create scrollable container for all content
+        scrollable = ScrollableOperationFrame(dialog)
+        scrollable.pack(fill='both', expand=True, padx=10, pady=(10, 0))
+        main_frame = scrollable.scroll_frame
 
         # Title and description
         ttk.Label(
@@ -1948,9 +1958,9 @@ class CleanSheetApp:
             self.refresh_queue_display()
             dialog.destroy()
 
-        # Buttons
-        btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(fill='x', pady=(20, 0))
+        # Buttons (fixed at bottom, not in scrollable area)
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill='x', pady=10, padx=10)
 
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
         button_text = "✓ Update" if edit_mode else "✓ Add to Queue"
@@ -1959,41 +1969,47 @@ class CleanSheetApp:
 
     def _show_standard_parameter_dialog(self, operation, edit_mode=False, edit_index=None, current_params=None):
         """Standard parameter dialog for operations without column selection"""
+        from ui.widgets.scrollable_frame import ScrollableOperationFrame
+
         dialog = tk.Toplevel(self.root)
         dialog.title(f"{'Edit' if edit_mode else 'Add'}: {operation.metadata.name}")
         dialog.geometry("600x500")
         dialog.transient(self.root)
         dialog.grab_set()
 
-        main_frame = ttk.Frame(dialog, padding=20)
-        main_frame.pack(fill='both', expand=True)
+        # Create scrollable content area
+        scrollable = ScrollableOperationFrame(dialog)
+        scrollable.pack(fill='both', expand=True, padx=10, pady=(10, 0))
+
+        # Use scroll_frame as the container for all content
+        main_frame = scrollable.scroll_frame
 
         # Title and description
         ttk.Label(
             main_frame,
             text=operation.metadata.name,
             font=('Segoe UI', 14, 'bold')
-        ).pack(pady=(0, 10))
+        ).pack(pady=(10, 10), padx=10)
 
         ttk.Label(
             main_frame,
             text=operation.metadata.description,
             wraplength=550,
             font=('Arial', 11)
-        ).pack(pady=(0, 5))
+        ).pack(pady=(0, 5), padx=10)
 
         ttk.Label(
             main_frame,
             text=f"Excel equivalent: {operation.metadata.excel_equivalent}",
             font=('Arial', 10),
             foreground='gray'
-        ).pack(pady=(0, 20))
+        ).pack(pady=(0, 20), padx=10)
 
         param_widgets = {}
 
         for param in operation.metadata.parameters:
             frame = ttk.Frame(main_frame)
-            frame.pack(fill='x', pady=8)
+            frame.pack(fill='x', pady=8, padx=10)
 
             label_text = param.description
             if param.required:
@@ -2115,9 +2131,9 @@ class CleanSheetApp:
             self.refresh_queue_display()
             dialog.destroy()
 
-        # Buttons
-        btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(fill='x', pady=(20, 0))
+        # Fixed button frame at the bottom (NOT in scrollable area)
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill='x', pady=10, padx=10)
 
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
         button_text = "✓ Update" if edit_mode else "✓ Add to Queue"
@@ -2126,28 +2142,34 @@ class CleanSheetApp:
 
     def _show_reorder_columns_dialog(self, operation, columns):
         """Show specialized dialog for reordering columns"""
+        from ui.widgets.scrollable_frame import ScrollableOperationFrame
+
         dialog = tk.Toplevel(self.root)
         dialog.title("Reorder Columns")
         dialog.geometry("700x650")
         dialog.transient(self.root)
         dialog.grab_set()
 
-        main_frame = ttk.Frame(dialog, padding=20)
-        main_frame.pack(fill='both', expand=True)
+        # Create scrollable content area
+        scrollable = ScrollableOperationFrame(dialog)
+        scrollable.pack(fill='both', expand=True, padx=10, pady=(10, 0))
+
+        # Use scroll_frame as the container for all content
+        main_frame = scrollable.scroll_frame
 
         # Title and description
         ttk.Label(
             main_frame,
             text="Reorder Columns",
             font=('Segoe UI', 14, 'bold')
-        ).pack(pady=(0, 10))
+        ).pack(pady=(10, 10), padx=10)
 
         ttk.Label(
             main_frame,
             text="Arrange columns in desired order. Use arrow buttons to move selected column up/down.",
             wraplength=650,
             font=('Arial', 11)
-        ).pack(pady=(0, 10))
+        ).pack(pady=(0, 10), padx=10)
 
         # Current columns section
         ttk.Label(
@@ -2307,9 +2329,9 @@ class CleanSheetApp:
             self.status_var.set(f"Added: Reorder Columns ({len(column_order)} columns)")
             dialog.destroy()
 
-        # Buttons
-        btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(fill='x', pady=(10, 0))
+        # Fixed button frame at the bottom (NOT in scrollable area)
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill='x', pady=10, padx=10)
 
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="✓ Add to Queue", command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
