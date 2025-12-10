@@ -679,6 +679,11 @@ class CleanSheetApp:
         # Get current columns from dataframe
         columns = list(self.df.columns) if self.df is not None else []
 
+        # Check for special operations first
+        if operation.metadata.id == 'add_column_smart':
+            self._show_add_column_smart_dialog(operation, columns, edit_mode=True, edit_index=index, current_params=op_config['parameters'])
+            return
+
         # Determine which dialog to show
         needs_single_column = any(p.type == 'column' for p in operation.metadata.parameters)
         needs_multi_column = any(p.type == 'column_list' for p in operation.metadata.parameters)
@@ -1651,6 +1656,11 @@ class CleanSheetApp:
             self._show_reorder_columns_dialog(operation, columns)
             return
 
+        if operation.metadata.id == 'add_column_smart':
+            # Use specialized Add Column Smart dialog with conditional visibility
+            self._show_add_column_smart_dialog(operation, columns)
+            return
+
         # Determine if operation needs special column selection
         needs_single_column = any(p.type == 'column' for p in operation.metadata.parameters)
         needs_multi_column = any(p.type == 'column_list' for p in operation.metadata.parameters)
@@ -1664,7 +1674,290 @@ class CleanSheetApp:
         else:
             # Use standard parameter dialog for operations without column selection
             self._show_standard_parameter_dialog(operation)
-    
+
+    def _show_add_column_smart_dialog(self, operation, columns, edit_mode=False, edit_index=None, current_params=None):
+        """Custom dialog for Add Column Smart operation with conditional field visibility"""
+        from ui.widgets.scrollable_frame import ScrollableOperationFrame
+        from ui.widgets.column_selector import ColumnSelector
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"{'Edit' if edit_mode else 'Add'}: {operation.metadata.name}")
+        dialog.geometry("700x700")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Create scrollable content area
+        scrollable = ScrollableOperationFrame(dialog)
+        scrollable.pack(fill='both', expand=True, padx=10, pady=(10, 0))
+        main_frame = scrollable.scroll_frame
+
+        # Title and description
+        ttk.Label(
+            main_frame,
+            text=operation.metadata.name,
+            font=('Segoe UI', 14, 'bold')
+        ).pack(pady=(10, 10), padx=10)
+
+        ttk.Label(
+            main_frame,
+            text=operation.metadata.description,
+            wraplength=650,
+            font=('Arial', 11)
+        ).pack(pady=(0, 5), padx=10)
+
+        ttk.Label(
+            main_frame,
+            text=f"Excel equivalent: {operation.metadata.excel_equivalent}",
+            font=('Arial', 10),
+            foreground='gray'
+        ).pack(pady=(0, 20), padx=10)
+
+        param_widgets = {}
+        param_frames = {}  # Store frames for show/hide logic
+
+        # New column name (always visible)
+        name_frame = ttk.Frame(main_frame)
+        name_frame.pack(fill='x', pady=10, padx=10)
+        ttk.Label(name_frame, text="Name for the new column *", font=('Arial', 11, 'bold')).pack(anchor='w')
+        name_entry = ttk.Entry(name_frame, font=('Arial', 12))
+        if current_params and 'new_column_name' in current_params:
+            name_entry.insert(0, current_params['new_column_name'])
+        name_entry.pack(fill='x', pady=2)
+        param_widgets['new_column_name'] = name_entry
+
+        # Mode selector (always visible)
+        mode_frame = ttk.Frame(main_frame)
+        mode_frame.pack(fill='x', pady=10, padx=10)
+        ttk.Label(mode_frame, text="How to populate the column *", font=('Arial', 11, 'bold')).pack(anchor='w')
+        mode_var = tk.StringVar(value=current_params.get('mode', 'constant') if current_params else 'constant')
+        mode_combo = ttk.Combobox(mode_frame, textvariable=mode_var,
+                                  values=['constant', 'timestamp', 'smart'],
+                                  font=('Arial', 12), state='readonly')
+        mode_combo.pack(fill='x', pady=2)
+        param_widgets['mode'] = mode_var
+
+        # Constant mode fields
+        constant_frame = ttk.Frame(main_frame)
+        param_frames['constant'] = constant_frame
+        ttk.Label(constant_frame, text="Value to fill (for Constant mode) *", font=('Arial', 11, 'bold')).pack(anchor='w')
+        constant_entry = ttk.Entry(constant_frame, font=('Arial', 12))
+        if current_params and 'constant_value' in current_params:
+            constant_entry.insert(0, current_params['constant_value'])
+        constant_entry.pack(fill='x', pady=2)
+        param_widgets['constant_value'] = constant_entry
+
+        # Timestamp mode fields
+        timestamp_frame = ttk.Frame(main_frame)
+        param_frames['timestamp'] = timestamp_frame
+        ttk.Label(timestamp_frame, text="Date/time format (for Timestamp mode)", font=('Arial', 11, 'bold')).pack(anchor='w')
+        timestamp_var = tk.StringVar(value=current_params.get('timestamp_format', 'YYYY-MM-DD') if current_params else 'YYYY-MM-DD')
+        timestamp_combo = ttk.Combobox(timestamp_frame, textvariable=timestamp_var,
+                                      values=['YYYY-MM-DD', 'MM/DD/YYYY', 'ISO'],
+                                      font=('Arial', 12), state='readonly')
+        timestamp_combo.pack(fill='x', pady=2)
+        param_widgets['timestamp_format'] = timestamp_var
+
+        # Smart mode - rule selector
+        smart_rule_frame = ttk.Frame(main_frame)
+        param_frames['smart_rule'] = smart_rule_frame
+        ttk.Label(smart_rule_frame, text="Smart rule to apply (for Smart mode) *", font=('Arial', 11, 'bold')).pack(anchor='w')
+        smart_rule_var = tk.StringVar(value=current_params.get('smart_rule', 'country_from_location') if current_params else 'country_from_location')
+        smart_rule_combo = ttk.Combobox(smart_rule_frame, textvariable=smart_rule_var,
+                                       values=['country_from_location', 'email_domain', 'parse_name'],
+                                       font=('Arial', 12), state='readonly')
+        smart_rule_combo.pack(fill='x', pady=2)
+        param_widgets['smart_rule'] = smart_rule_var
+
+        # Country detection fields
+        city_frame = ttk.Frame(main_frame)
+        param_frames['city_column'] = city_frame
+        city_selector = ColumnSelector(city_frame, columns, "City column (for country detection) *")
+        city_selector.pack(fill='x')
+        if current_params and 'city_column' in current_params:
+            city_selector.set_value(current_params['city_column'])
+        param_widgets['city_column'] = city_selector
+
+        state_frame = ttk.Frame(main_frame)
+        param_frames['state_column'] = state_frame
+        state_selector = ColumnSelector(state_frame, columns, "State column (for country detection) *")
+        state_selector.pack(fill='x')
+        if current_params and 'state_column' in current_params:
+            state_selector.set_value(current_params['state_column'])
+        param_widgets['state_column'] = state_selector
+
+        zip_frame = ttk.Frame(main_frame)
+        param_frames['zip_column'] = zip_frame
+        zip_selector = ColumnSelector(zip_frame, columns, "ZIP code column (for country detection) *")
+        zip_selector.pack(fill='x')
+        if current_params and 'zip_column' in current_params:
+            zip_selector.set_value(current_params['zip_column'])
+        param_widgets['zip_column'] = zip_selector
+
+        # Email domain fields
+        email_frame = ttk.Frame(main_frame)
+        param_frames['email_column'] = email_frame
+        email_selector = ColumnSelector(email_frame, columns, "Email column (for domain extraction) *")
+        email_selector.pack(fill='x')
+        if current_params and 'email_column' in current_params:
+            email_selector.set_value(current_params['email_column'])
+        param_widgets['email_column'] = email_selector
+
+        # Name parsing fields
+        full_name_frame = ttk.Frame(main_frame)
+        param_frames['full_name_column'] = full_name_frame
+        full_name_selector = ColumnSelector(full_name_frame, columns, "Full name column (for name parsing) *")
+        full_name_selector.pack(fill='x')
+        if current_params and 'full_name_column' in current_params:
+            full_name_selector.set_value(current_params['full_name_column'])
+        param_widgets['full_name_column'] = full_name_selector
+
+        name_part_frame = ttk.Frame(main_frame)
+        param_frames['name_part'] = name_part_frame
+        ttk.Label(name_part_frame, text="Choose which name part to extract *", font=('Arial', 11, 'bold')).pack(anchor='w')
+        name_part_var = tk.StringVar(value=current_params.get('name_part', 'first') if current_params else 'first')
+        name_part_combo = ttk.Combobox(name_part_frame, textvariable=name_part_var,
+                                      values=['first', 'last'],
+                                      font=('Arial', 12), state='readonly')
+        name_part_combo.pack(fill='x', pady=2)
+        param_widgets['name_part'] = name_part_var
+
+        def update_visibility(*args):
+            """Update field visibility based on mode and smart_rule selection"""
+            mode = mode_var.get()
+            smart_rule = smart_rule_var.get()
+
+            # Hide all conditional frames first
+            for frame in param_frames.values():
+                frame.pack_forget()
+
+            # Show relevant frames based on mode
+            if mode == 'constant':
+                constant_frame.pack(fill='x', pady=10, padx=10)
+
+            elif mode == 'timestamp':
+                timestamp_frame.pack(fill='x', pady=10, padx=10)
+
+            elif mode == 'smart':
+                smart_rule_frame.pack(fill='x', pady=10, padx=10)
+
+                # Show fields based on smart rule
+                if smart_rule == 'country_from_location':
+                    city_frame.pack(fill='x', pady=10, padx=10)
+                    state_frame.pack(fill='x', pady=10, padx=10)
+                    zip_frame.pack(fill='x', pady=10, padx=10)
+
+                elif smart_rule == 'email_domain':
+                    email_frame.pack(fill='x', pady=10, padx=10)
+
+                elif smart_rule == 'parse_name':
+                    full_name_frame.pack(fill='x', pady=10, padx=10)
+                    name_part_frame.pack(fill='x', pady=10, padx=10)
+
+        # Bind visibility updates
+        mode_var.trace('w', update_visibility)
+        smart_rule_var.trace('w', update_visibility)
+
+        # Initialize visibility
+        update_visibility()
+
+        def on_add():
+            """Validate and add/update operation"""
+            params = {
+                'new_column_name': name_entry.get().strip(),
+                'mode': mode_var.get(),
+            }
+
+            # Validate new column name
+            if not params['new_column_name']:
+                messagebox.showerror("Validation Error", "Please enter a name for the new column.")
+                return
+
+            mode = params['mode']
+
+            # Collect mode-specific parameters and validate
+            if mode == 'constant':
+                params['constant_value'] = constant_entry.get()
+                if not params['constant_value']:
+                    messagebox.showerror("Validation Error", "Constant value is required for Constant mode.")
+                    return
+
+            elif mode == 'timestamp':
+                params['timestamp_format'] = timestamp_var.get()
+
+            elif mode == 'smart':
+                params['smart_rule'] = smart_rule_var.get()
+                smart_rule = params['smart_rule']
+
+                if smart_rule == 'country_from_location':
+                    params['city_column'] = city_selector.get_value()
+                    params['state_column'] = state_selector.get_value()
+                    params['zip_column'] = zip_selector.get_value()
+
+                    missing = []
+                    if not params['city_column'] or not params['city_column'].strip():
+                        missing.append('City')
+                    if not params['state_column'] or not params['state_column'].strip():
+                        missing.append('State')
+                    if not params['zip_column'] or not params['zip_column'].strip():
+                        missing.append('ZIP')
+
+                    if missing:
+                        messagebox.showerror(
+                            "Validation Error",
+                            f"Country detection requires City, State, and ZIP columns. Please select all three.\n\nMissing: {', '.join(missing)}"
+                        )
+                        return
+
+                elif smart_rule == 'email_domain':
+                    params['email_column'] = email_selector.get_value()
+                    if not params['email_column'] or not params['email_column'].strip():
+                        messagebox.showerror(
+                            "Validation Error",
+                            "Email domain extraction requires selecting an Email column."
+                        )
+                        return
+
+                elif smart_rule == 'parse_name':
+                    params['full_name_column'] = full_name_selector.get_value()
+                    params['name_part'] = name_part_var.get()
+
+                    if not params['full_name_column'] or not params['full_name_column'].strip():
+                        messagebox.showerror(
+                            "Validation Error",
+                            "Name parsing requires a Full Name column and selecting whether to extract 'first' or 'last'."
+                        )
+                        return
+
+            # All validation passed - add to queue
+            if edit_mode:
+                # Update existing operation in queue
+                self.operation_queue[edit_index] = {
+                    'operation_id': operation.metadata.id,
+                    'name': operation.metadata.name,
+                    'parameters': params,
+                    'enabled': self.operation_queue[edit_index]['enabled']
+                }
+                self.status_var.set(f"Updated: {operation.metadata.name}")
+            else:
+                # Add new operation to queue
+                self.operation_queue.append({
+                    'operation_id': operation.metadata.id,
+                    'name': operation.metadata.name,
+                    'parameters': params,
+                    'enabled': True
+                })
+                self.status_var.set(f"Added: {operation.metadata.name}")
+
+            self.refresh_queue_display()
+            dialog.destroy()
+
+        # Buttons (fixed at bottom)
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill='x', pady=10, padx=10)
+
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
+        button_text = "✓ Update" if edit_mode else "✓ Add to Queue"
+        ttk.Button(btn_frame, text=button_text, command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
 
     def _show_single_column_dialog(self, operation, columns, edit_mode=False, edit_index=None, current_params=None):
         """Show dialog with smart single column selector"""
