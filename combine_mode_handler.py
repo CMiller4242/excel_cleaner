@@ -485,6 +485,206 @@ class CombineModeHandler:
 
     # ==================== END CSV-AWARE METHODS ====================
 
+    # ==================== RAW TEXT LINE-BASED METHODS ====================
+
+    def combine_text_files_raw(self, file_paths: List[str], delimiter: str = ',') -> Tuple[str, List[str], int]:
+        """
+        Combine multiple text/CSV files using raw line-based processing
+
+        This method:
+        - Reads files as raw text lines (no CSV parsing)
+        - Keeps ONLY the header from the first file
+        - Removes ALL repeated headers from subsequent files
+        - Preserves exact formatting, quoting, whitespace, delimiters
+        - Handles BOM and Unicode normalization for header detection
+
+        Args:
+            file_paths: List of file paths to combine
+            delimiter: Delimiter character for detecting repeated headers
+
+        Returns:
+            Tuple of (master_header_line, all_data_lines, total_files_processed)
+        """
+        if not file_paths:
+            raise ValueError("No files provided to combine")
+
+        logger.info(f"[CombineMode] Starting raw text combine for {len(file_paths)} files")
+
+        master_header_line = None
+        master_header_fields = None
+        master_header_normalized = None
+        all_data_lines = []
+
+        for file_index, file_path in enumerate(file_paths):
+            try:
+                # Read file as raw text lines
+                with open(file_path, 'r', encoding='utf-8-sig', newline='') as f:
+                    lines = f.read().splitlines()
+
+                if not lines:
+                    logger.warning(f"[CombineMode] Skipping empty file: {os.path.basename(file_path)}")
+                    continue
+
+                # First file: extract and store header
+                if file_index == 0:
+                    master_header_line = lines[0]
+                    master_header_fields = self._parse_delimiter_fields(master_header_line, delimiter)
+                    master_header_normalized = self._normalize_header_line(master_header_line, delimiter)
+
+                    logger.info(f"[CombineMode] Using header from first file: {os.path.basename(file_path)}")
+                    logger.info(f"[CombineMode] Header fields: {master_header_fields[:3]}... ({len(master_header_fields)} total)")
+
+                    # Add all data lines (skip header)
+                    data_lines = lines[1:]
+                    all_data_lines.extend(data_lines)
+                    logger.info(f"[CombineMode] Added {len(data_lines)} data rows from first file")
+
+                # Subsequent files: remove repeated headers
+                else:
+                    current_file_name = os.path.basename(file_path)
+                    current_header_line = lines[0]
+                    current_header_normalized = self._normalize_header_line(current_header_line, delimiter)
+
+                    # Check if first line is a repeated header
+                    if current_header_normalized == master_header_normalized:
+                        logger.info(f"[CombineMode] Skipping repeated header in file: {current_file_name}")
+                        data_lines = lines[1:]  # Skip header
+                    else:
+                        # First line is not a header, keep all lines
+                        logger.info(f"[CombineMode] No header detected in file (keeping all rows): {current_file_name}")
+                        data_lines = lines
+
+                    # Filter out any additional repeated headers in the data
+                    filtered_lines = []
+                    for line_num, line in enumerate(data_lines, start=2 if current_header_normalized == master_header_normalized else 1):
+                        line_normalized = self._normalize_header_line(line, delimiter)
+
+                        # Check if this line matches the header
+                        if line_normalized == master_header_normalized:
+                            logger.info(f"[CombineMode] Skipping repeated header at line {line_num} in file: {current_file_name}")
+                            continue
+
+                        # Check if line starts with header prefix (for partial header detection)
+                        if self._line_starts_with_header_prefix(line, master_header_fields, delimiter):
+                            logger.info(f"[CombineMode] Skipping partial header match at line {line_num} in file: {current_file_name}")
+                            continue
+
+                        filtered_lines.append(line)
+
+                    all_data_lines.extend(filtered_lines)
+                    logger.info(f"[CombineMode] Added {len(filtered_lines)} data rows from {current_file_name}")
+
+            except Exception as e:
+                logger.error(f"[CombineMode] Error reading {os.path.basename(file_path)}: {e}")
+                raise
+
+        logger.info(f"[CombineMode] Raw text combine complete: {len(all_data_lines)} total data rows from {len(file_paths)} files")
+        return master_header_line, all_data_lines, len(file_paths)
+
+    def _parse_delimiter_fields(self, line: str, delimiter: str) -> List[str]:
+        """
+        Parse a line into fields based on delimiter
+
+        Simple split - does not handle quoted fields with embedded delimiters
+        This is intentional for header prefix matching
+
+        Args:
+            line: Text line
+            delimiter: Delimiter character
+
+        Returns:
+            List of field values
+        """
+        return [field.strip() for field in line.split(delimiter)]
+
+    def _normalize_header_line(self, line: str, delimiter: str) -> str:
+        """
+        Normalize a header line for comparison
+
+        Handles BOM, Unicode, quotes, whitespace, capitalization
+
+        Args:
+            line: Header line text
+            delimiter: Delimiter character
+
+        Returns:
+            Normalized line string for comparison
+        """
+        # Normalize unicode (BOM, non-breaking spaces, etc.)
+        normalized = unicodedata.normalize("NFKC", line)
+
+        # Strip whitespace
+        normalized = normalized.strip()
+
+        # Remove common quote variations
+        normalized = normalized.replace('"', '').replace("'", '')
+
+        # Collapse multiple spaces
+        normalized = re.sub(r'\s+', ' ', normalized)
+
+        # Lowercase for case-insensitive comparison
+        normalized = normalized.lower()
+
+        return normalized
+
+    def _line_starts_with_header_prefix(self, line: str, header_fields: List[str],
+                                        delimiter: str, prefix_count: int = 2) -> bool:
+        """
+        Check if a line starts with the same prefix as the header
+
+        This catches partial header fragments like:
+        "KC","Cust No",...  (repeated header start)
+
+        Args:
+            line: Line to check
+            header_fields: Master header fields
+            delimiter: Delimiter character
+            prefix_count: Number of fields to check (default 2)
+
+        Returns:
+            True if line starts with header prefix
+        """
+        if not header_fields or len(header_fields) < prefix_count:
+            return False
+
+        line_fields = self._parse_delimiter_fields(line, delimiter)
+
+        if len(line_fields) < prefix_count:
+            return False
+
+        # Normalize and compare first N fields
+        header_prefix_normalized = [self.normalize_header(f) for f in header_fields[:prefix_count]]
+        line_prefix_normalized = [self.normalize_header(f) for f in line_fields[:prefix_count]]
+
+        return header_prefix_normalized == line_prefix_normalized
+
+    def export_text_file_raw(self, output_path: str, header_line: str, data_lines: List[str]):
+        """
+        Export combined text file using raw text writing
+
+        NO formatting changes - exact preservation of original content
+
+        Args:
+            output_path: Output file path
+            header_line: Header line (from first file)
+            data_lines: All data lines
+        """
+        try:
+            # Combine header + data
+            all_lines = [header_line] + data_lines
+
+            # Write as raw text with \n line endings
+            with open(output_path, 'w', encoding='utf-8', newline='') as f:
+                f.write('\n'.join(all_lines))
+
+            logger.info(f"[CombineMode] Exported raw text file: {len(data_lines)} data rows to {os.path.basename(output_path)}")
+
+        except Exception as e:
+            logger.error(f"[CombineMode] Error exporting text file: {e}")
+            raise
+
+    # ==================== END RAW TEXT LINE-BASED METHODS ====================
+
     def add_file(self, file_path: str, delimiter: Optional[str] = None,
                  sheet_name: Optional[str] = None) -> Dict:
         """
