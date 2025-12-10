@@ -941,9 +941,12 @@ class CleanSheetApp:
 
         subtitle_label = ttk.Label(
             main_container,
-            text="Upload 2-50 files to combine vertically into a single file",
-            font=('Segoe UI', 11),
-            foreground='#666666'
+            text="Combine multiple CSV/TXT files into one properly structured file.\n"
+                 "Headers are validated and only written once. CSV parsing is used\n"
+                 "to prevent data loss or formatting corruption.",
+            font=('Segoe UI', 10),
+            foreground='#666666',
+            justify='center'
         )
         subtitle_label.pack(pady=(0, 20), padx=20)
 
@@ -1652,7 +1655,11 @@ class CleanSheetApp:
         self.combine_summary_text.config(state='disabled')
 
     def combine_files_execute(self):
-        """Execute file combination and export"""
+        """
+        Execute file combination and export
+
+        COMBINE_CSV_FIX: Use CSV-aware methods for text files to preserve exact formatting
+        """
         # Final validation
         is_valid, error_msg = self.combine_mode_handler.validate_files(
             self.combine_mode_handler.loaded_files
@@ -1663,24 +1670,50 @@ class CleanSheetApp:
             return
 
         try:
-            # Get all DataFrames
-            dataframes = [f['df'] for f in self.combine_mode_handler.loaded_files]
+            file_type = self.combine_mode_handler.detected_file_type
 
-            # Combine files
-            combined_df = self.combine_mode_handler.combine_dataframes(dataframes)
+            # COMBINE_CSV_FIX: Use CSV module for text files
+            if file_type == 'text':
+                # Use CSV-aware combining
+                file_paths = [f['path'] for f in self.combine_mode_handler.loaded_files]
+                delimiter = self.combine_mode_handler.detected_delimiter
 
-            # Show success message with details
-            summary = self.combine_mode_handler.get_summary()
-            messagebox.showinfo(
-                "Files Combined",
-                f"Successfully combined {summary['file_count']} files!\n\n"
-                f"Total rows: {len(combined_df):,}\n"
-                f"Total columns: {len(combined_df.columns)}\n\n"
-                "Click OK to select export location."
-            )
+                # Validate headers and combine
+                header, combined_rows = self.combine_mode_handler.combine_csv_files_with_csv_module(
+                    file_paths, delimiter
+                )
 
-            # Show export dialog
-            self.combine_export_dialog(combined_df, summary)
+                # Show success message
+                summary = self.combine_mode_handler.get_summary()
+                messagebox.showinfo(
+                    "Files Combined",
+                    f"Successfully combined {summary['file_count']} files!\n\n"
+                    f"Total rows: {len(combined_rows):,}\n"
+                    f"Total columns: {len(header)}\n\n"
+                    "CSV formatting preserved exactly.\n"
+                    "Click OK to select export location."
+                )
+
+                # Show export dialog with CSV data
+                self.combine_export_dialog_csv(header, combined_rows, summary)
+
+            else:
+                # Excel files - use pandas method
+                dataframes = [f['df'] for f in self.combine_mode_handler.loaded_files]
+                combined_df = self.combine_mode_handler.combine_dataframes(dataframes)
+
+                # Show success message
+                summary = self.combine_mode_handler.get_summary()
+                messagebox.showinfo(
+                    "Files Combined",
+                    f"Successfully combined {summary['file_count']} files!\n\n"
+                    f"Total rows: {len(combined_df):,}\n"
+                    f"Total columns: {len(combined_df.columns)}\n\n"
+                    "Click OK to select export location."
+                )
+
+                # Show export dialog with DataFrame
+                self.combine_export_dialog(combined_df, summary)
 
         except Exception as e:
             logging.error(f"Combine execution error: {e}", exc_info=True)
@@ -1739,6 +1772,63 @@ class CleanSheetApp:
 
         except Exception as e:
             logging.error(f"Export error: {e}", exc_info=True)
+            messagebox.showerror("Export Error", f"Failed to export file:\n\n{str(e)}")
+
+    def combine_export_dialog_csv(self, header: list, rows: list, summary: dict):
+        """
+        Show export dialog for CSV combined data
+
+        COMBINE_CSV_FIX: Use csv.writer for text file export to preserve exact formatting
+
+        Args:
+            header: Column headers
+            rows: Data rows (list of lists)
+            summary: Summary dict with file info
+        """
+        # Determine output file type based on input files
+        delimiter = self.combine_mode_handler.detected_delimiter
+
+        # Set default extension and filetypes
+        if delimiter == '\t':
+            default_ext = '.tsv'
+            filetypes = [("TSV files", "*.tsv"), ("CSV files", "*.csv"), ("Text files", "*.txt")]
+        elif delimiter == '|':
+            default_ext = '.txt'
+            filetypes = [("Text files", "*.txt"), ("CSV files", "*.csv")]
+        else:  # comma
+            default_ext = '.csv'
+            filetypes = [("CSV files", "*.csv"), ("Text files", "*.txt")]
+
+        # Ask for save location
+        output_path = filedialog.asksaveasfilename(
+            title="Save Combined File",
+            defaultextension=default_ext,
+            filetypes=filetypes
+        )
+
+        if not output_path:
+            return
+
+        try:
+            # COMBINE_CSV_FIX: Export using csv.writer
+            self.combine_mode_handler.export_csv_with_csv_module(
+                output_path, header, rows, delimiter
+            )
+
+            messagebox.showinfo(
+                "Export Successful",
+                f"Combined file saved successfully!\n\n"
+                f"Location: {output_path}\n"
+                f"Rows: {len(rows):,}\n"
+                f"Columns: {len(header)}\n\n"
+                f"CSV formatting preserved exactly.\n"
+                f"Delimiter: {summary.get('delimiter', 'unknown')}"
+            )
+
+            self.status_var.set(f"Exported combined file: {Path(output_path).name}")
+
+        except Exception as e:
+            logging.error(f"CSV export error: {e}", exc_info=True)
             messagebox.showerror("Export Error", f"Failed to export file:\n\n{str(e)}")
 
     # ==================== SPLIT PANE HELPER METHODS ====================
