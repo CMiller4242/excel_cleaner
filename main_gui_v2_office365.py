@@ -1678,7 +1678,6 @@ class CleanSheetApp:
     def _show_add_column_smart_dialog(self, operation, columns, edit_mode=False, edit_index=None, current_params=None):
         """Custom dialog for Add Column Smart operation with conditional field visibility"""
         from ui.widgets.scrollable_frame import ScrollableOperationFrame
-        from ui.widgets.column_selector import ColumnSelector
 
         dialog = tk.Toplevel(self.root)
         dialog.title(f"{'Edit' if edit_mode else 'Add'}: {operation.metadata.name}")
