@@ -534,10 +534,15 @@ class CombineModeHandler:
                     logger.info(f"[CombineMode] Using header from first file: {os.path.basename(file_path)}")
                     logger.info(f"[CombineMode] Header fields: {master_header_fields[:3]}... ({len(master_header_fields)} total)")
 
-                    # Add all data lines (skip header)
+                    # Add all data lines (skip header), filtering blank rows
                     data_lines = lines[1:]
-                    all_data_lines.extend(data_lines)
-                    logger.info(f"[CombineMode] Added {len(data_lines)} data rows from first file")
+                    non_blank_lines = [line for line in data_lines if not self.is_blank_record(line, delimiter)]
+                    all_data_lines.extend(non_blank_lines)
+
+                    blank_count = len(data_lines) - len(non_blank_lines)
+                    if blank_count > 0:
+                        logger.info(f"[CombineMode] Filtered {blank_count} blank rows from first file")
+                    logger.info(f"[CombineMode] Added {len(non_blank_lines)} data rows from first file")
 
                 # Subsequent files: remove repeated headers
                 else:
@@ -554,9 +559,15 @@ class CombineModeHandler:
                         logger.info(f"[CombineMode] No header detected in file (keeping all rows): {current_file_name}")
                         data_lines = lines
 
-                    # Filter out any additional repeated headers in the data
+                    # Filter out any additional repeated headers and blank rows in the data
                     filtered_lines = []
+                    blank_count = 0
                     for line_num, line in enumerate(data_lines, start=2 if current_header_normalized == master_header_normalized else 1):
+                        # Check if line is blank
+                        if self.is_blank_record(line, delimiter):
+                            blank_count += 1
+                            continue
+
                         line_normalized = self._normalize_header_line(line, delimiter)
 
                         # Check if this line matches the header
@@ -572,6 +583,8 @@ class CombineModeHandler:
                         filtered_lines.append(line)
 
                     all_data_lines.extend(filtered_lines)
+                    if blank_count > 0:
+                        logger.info(f"[CombineMode] Filtered {blank_count} blank rows from {current_file_name}")
                     logger.info(f"[CombineMode] Added {len(filtered_lines)} data rows from {current_file_name}")
 
             except Exception as e:
@@ -657,6 +670,30 @@ class CombineModeHandler:
         line_prefix_normalized = [self.normalize_header(f) for f in line_fields[:prefix_count]]
 
         return header_prefix_normalized == line_prefix_normalized
+
+    def is_blank_record(self, line: str, delimiter: str) -> bool:
+        """
+        Check if a line is a blank record
+
+        Detects:
+        - Empty or whitespace-only lines
+        - Lines with only delimiters (,,,,,)
+        - Lines with only empty quoted fields ("","","")
+
+        Args:
+            line: Text line to check
+            delimiter: Delimiter character
+
+        Returns:
+            True if line is blank, False otherwise
+        """
+        stripped = line.strip()
+        if stripped == "":
+            return True
+
+        # Split on delimiter and check if all fields are empty
+        fields = [f.strip().strip('"').strip("'") for f in stripped.split(delimiter)]
+        return all(f == "" for f in fields)
 
     def export_text_file_raw(self, output_path: str, header_line: str, data_lines: List[str]):
         """
