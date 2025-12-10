@@ -1,11 +1,14 @@
 """
 Combine Mode Handler for Universal Excel Tool
 Handles file type detection, delimiter detection, and combining multiple files
+
+COMBINE_CSV_FIX: Uses proper CSV parsing with csv module to preserve exact formatting
 """
 
 import pandas as pd
 import os
 import chardet
+import csv
 import logging
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
@@ -243,6 +246,150 @@ class CombineModeHandler:
         logger.info(f"Combined {len(dataframes)} files: {len(combined_df)} total rows × {len(combined_df.columns)} columns")
 
         return combined_df
+
+    # ==================== CSV-AWARE METHODS (COMBINE_CSV_FIX) ====================
+
+    def load_csv_with_csv_module(self, file_path: str, delimiter: str = ',') -> Tuple[List[str], List[List[str]]]:
+        """
+        Load CSV file using csv module for exact format preservation
+
+        COMBINE_CSV_FIX: Use csv.reader instead of pandas to preserve exact formatting
+
+        Args:
+            file_path: Path to CSV file
+            delimiter: CSV delimiter
+
+        Returns:
+            Tuple of (header, rows) where rows is list of lists
+        """
+        try:
+            with open(file_path, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.reader(f, delimiter=delimiter, quotechar='"')
+                rows = list(reader)
+
+            if not rows:
+                raise ValueError(f"File {os.path.basename(file_path)} is empty")
+
+            header = rows[0]
+            data_rows = rows[1:]
+
+            logger.info(f"CSV-parsed {os.path.basename(file_path)}: {len(data_rows)} rows, {len(header)} columns")
+            return header, data_rows
+
+        except Exception as e:
+            logger.error(f"Error reading CSV with csv module: {e}")
+            raise
+
+    def validate_csv_headers(self, file_paths: List[str], delimiter: str = ',') -> Tuple[bool, str, Optional[List[str]]]:
+        """
+        Validate that all CSV files have the same header structure
+
+        COMBINE_CSV_FIX: Ensure headers match across all files
+
+        Args:
+            file_paths: List of file paths
+            delimiter: CSV delimiter
+
+        Returns:
+            Tuple of (is_valid, error_message, master_header)
+        """
+        try:
+            # Read first file's header
+            with open(file_paths[0], 'r', newline='', encoding='utf-8') as f:
+                reader = csv.reader(f, delimiter=delimiter, quotechar='"')
+                master_header = next(reader)
+
+            # Validate all other files have the same header
+            for file_path in file_paths[1:]:
+                with open(file_path, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.reader(f, delimiter=delimiter, quotechar='"')
+                    current_header = next(reader)
+
+                if current_header != master_header:
+                    return False, (
+                        f"Header mismatch detected!\n\n"
+                        f"First file has: {', '.join(master_header[:5])}{'...' if len(master_header) > 5 else ''}\n"
+                        f"File '{os.path.basename(file_path)}' has: {', '.join(current_header[:5])}{'...' if len(current_header) > 5 else ''}\n\n"
+                        f"All files must have identical headers to combine."
+                    ), None
+
+            logger.info(f"Header validation passed: {len(file_paths)} files with {len(master_header)} columns")
+            return True, "", master_header
+
+        except Exception as e:
+            return False, f"Error validating headers: {str(e)}", None
+
+    def combine_csv_files_with_csv_module(self, file_paths: List[str], delimiter: str = ',') -> Tuple[List[str], List[List[str]]]:
+        """
+        Combine multiple CSV files using csv module for exact format preservation
+
+        COMBINE_CSV_FIX: Read all files with csv.reader, write header once, append all data rows
+
+        Args:
+            file_paths: List of CSV file paths
+            delimiter: CSV delimiter
+
+        Returns:
+            Tuple of (header, combined_rows)
+        """
+        # Validate headers first
+        is_valid, error_msg, master_header = self.validate_csv_headers(file_paths, delimiter)
+        if not is_valid:
+            raise ValueError(error_msg)
+
+        combined_rows = []
+        total_rows = 0
+
+        # Read all files and combine data rows (skip header for each file)
+        for file_path in file_paths:
+            try:
+                with open(file_path, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.reader(f, delimiter=delimiter, quotechar='"')
+                    next(reader)  # Skip header
+                    rows = list(reader)
+                    combined_rows.extend(rows)
+                    total_rows += len(rows)
+
+                logger.info(f"Added {len(rows)} rows from {os.path.basename(file_path)}")
+
+            except Exception as e:
+                logger.error(f"Error reading {file_path}: {e}")
+                raise
+
+        logger.info(f"Combined {len(file_paths)} files: {total_rows} total data rows")
+        return master_header, combined_rows
+
+    def export_csv_with_csv_module(self, output_path: str, header: List[str],
+                                    rows: List[List[str]], delimiter: str = ','):
+        """
+        Export combined data using csv.writer for exact format preservation
+
+        COMBINE_CSV_FIX: Use csv.writer to ensure proper quoting, escaping, and formatting
+
+        Args:
+            output_path: Output file path
+            header: Column headers
+            rows: Data rows
+            delimiter: CSV delimiter
+        """
+        try:
+            with open(output_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f, delimiter=delimiter, quotechar='"', quoting=csv.QUOTE_MINIMAL)
+
+                # Write header once
+                writer.writerow(header)
+
+                # Write all data rows
+                for row in rows:
+                    writer.writerow(row)
+
+            logger.info(f"Exported CSV with csv.writer: {len(rows)} rows to {os.path.basename(output_path)}")
+
+        except Exception as e:
+            logger.error(f"Error exporting CSV: {e}")
+            raise
+
+    # ==================== END CSV-AWARE METHODS ====================
 
     def add_file(self, file_path: str, delimiter: Optional[str] = None,
                  sheet_name: Optional[str] = None) -> Dict:
