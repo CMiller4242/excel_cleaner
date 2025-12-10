@@ -10,6 +10,8 @@ import os
 import chardet
 import csv
 import logging
+import re
+import unicodedata
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 
@@ -249,6 +251,36 @@ class CombineModeHandler:
 
     # ==================== CSV-AWARE METHODS (COMBINE_CSV_FIX) ====================
 
+    @staticmethod
+    def normalize_header(header_value: str) -> str:
+        """
+        Normalize header for comparison to handle formatting differences
+
+        Handles:
+        - Unicode normalization (BOM, non-breaking spaces)
+        - Whitespace trimming
+        - Quote removal
+        - Multiple spaces collapsed to single space
+        - Lowercase for case-insensitive comparison
+
+        Args:
+            header_value: Raw header string
+
+        Returns:
+            Normalized header string
+        """
+        # Normalize unicode (handles BOM, non-breaking spaces, etc.)
+        h = unicodedata.normalize("NFKC", header_value)
+
+        # Strip whitespace and quotes
+        h = h.strip().strip('"').strip("'")
+
+        # Collapse multiple spaces → single space
+        h = re.sub(r"\s+", " ", h)
+
+        # Lowercase for comparison
+        return h.lower()
+
     def load_csv_with_csv_module(self, file_path: str, delimiter: str = ',') -> Tuple[List[str], List[List[str]]]:
         """
         Load CSV file using csv module for exact format preservation
@@ -270,7 +302,11 @@ class CombineModeHandler:
             if not rows:
                 raise ValueError(f"File {os.path.basename(file_path)} is empty")
 
-            header = rows[0]
+            # Remove trailing empty fields (from trailing delimiters)
+            header = [h for h in rows[0] if h or h == '0']  # Keep '0' but remove ''
+            if not header and rows[0]:  # If all were empty, keep original
+                header = rows[0]
+
             data_rows = rows[1:]
 
             logger.info(f"CSV-parsed {os.path.basename(file_path)}: {len(data_rows)} rows, {len(header)} columns")
@@ -284,7 +320,10 @@ class CombineModeHandler:
         """
         Validate that all CSV files have the same header structure
 
-        COMBINE_CSV_FIX: Ensure headers match across all files
+        COMBINE_CSV_FIX: Ensure headers match across all files with normalization
+
+        Uses header normalization to handle formatting differences:
+        - Quotes, whitespace, BOM, Unicode variations, capitalization
 
         Args:
             file_paths: List of file paths
@@ -297,21 +336,63 @@ class CombineModeHandler:
             # Read first file's header
             with open(file_paths[0], 'r', newline='', encoding='utf-8') as f:
                 reader = csv.reader(f, delimiter=delimiter, quotechar='"')
-                master_header = next(reader)
+                master_header_raw = next(reader)
+
+            # Remove trailing empty fields from first file
+            master_header = [h for h in master_header_raw if h or h == '0']
+            if not master_header and master_header_raw:
+                master_header = master_header_raw
+
+            # Normalize master header for comparison
+            master_header_normalized = [self.normalize_header(h) for h in master_header]
 
             # Validate all other files have the same header
             for file_path in file_paths[1:]:
                 with open(file_path, 'r', newline='', encoding='utf-8') as f:
                     reader = csv.reader(f, delimiter=delimiter, quotechar='"')
-                    current_header = next(reader)
+                    current_header_raw = next(reader)
 
-                if current_header != master_header:
+                # Remove trailing empty fields
+                current_header = [h for h in current_header_raw if h or h == '0']
+                if not current_header and current_header_raw:
+                    current_header = current_header_raw
+
+                # Normalize current header
+                current_header_normalized = [self.normalize_header(h) for h in current_header]
+
+                # Check column count first
+                if len(current_header_normalized) != len(master_header_normalized):
+                    return False, (
+                        f"Column count mismatch detected!\n\n"
+                        f"First file has {len(master_header_normalized)} columns\n"
+                        f"File '{os.path.basename(file_path)}' has {len(current_header_normalized)} columns\n\n"
+                        f"All files must have the same number of columns to combine."
+                    ), None
+
+                # Compare normalized headers
+                if current_header_normalized != master_header_normalized:
+                    # Find which columns differ
+                    diff_indices = [i for i in range(len(master_header_normalized))
+                                   if master_header_normalized[i] != current_header_normalized[i]]
+
+                    diff_details = []
+                    for i in diff_indices[:3]:  # Show first 3 differences
+                        diff_details.append(
+                            f"  Column {i+1}: '{master_header[i]}' vs '{current_header[i]}'"
+                        )
+
                     return False, (
                         f"Header mismatch detected!\n\n"
                         f"First file has: {', '.join(master_header[:5])}{'...' if len(master_header) > 5 else ''}\n"
                         f"File '{os.path.basename(file_path)}' has: {', '.join(current_header[:5])}{'...' if len(current_header) > 5 else ''}\n\n"
-                        f"All files must have identical headers to combine."
+                        f"Differences:\n" + "\n".join(diff_details) +
+                        (f"\n  ...and {len(diff_indices) - 3} more" if len(diff_indices) > 3 else "") +
+                        f"\n\nAll files must have identical headers to combine."
                     ), None
+
+                # Check if headers differ visually but normalize to same values
+                if current_header != master_header:
+                    logger.info(f"[CombineMode] Header variation detected but normalized match. Accepting. File: {os.path.basename(file_path)}")
 
             logger.info(f"Header validation passed: {len(file_paths)} files with {len(master_header)} columns")
             return True, "", master_header
@@ -339,6 +420,7 @@ class CombineModeHandler:
 
         combined_rows = []
         total_rows = 0
+        expected_col_count = len(master_header)
 
         # Read all files and combine data rows (skip header for each file)
         for file_path in file_paths:
@@ -347,10 +429,22 @@ class CombineModeHandler:
                     reader = csv.reader(f, delimiter=delimiter, quotechar='"')
                     next(reader)  # Skip header
                     rows = list(reader)
-                    combined_rows.extend(rows)
-                    total_rows += len(rows)
 
-                logger.info(f"Added {len(rows)} rows from {os.path.basename(file_path)}")
+                    # Handle rows with trailing delimiters - trim to expected column count
+                    cleaned_rows = []
+                    for row in rows:
+                        # If row has trailing empty fields, trim to expected column count
+                        if len(row) > expected_col_count:
+                            # Check if extra fields are all empty
+                            extra_fields = row[expected_col_count:]
+                            if all(not field for field in extra_fields):
+                                row = row[:expected_col_count]
+                        cleaned_rows.append(row)
+
+                    combined_rows.extend(cleaned_rows)
+                    total_rows += len(cleaned_rows)
+
+                logger.info(f"Added {len(cleaned_rows)} rows from {os.path.basename(file_path)}")
 
             except Exception as e:
                 logger.error(f"Error reading {file_path}: {e}")
