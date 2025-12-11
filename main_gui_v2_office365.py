@@ -2097,8 +2097,9 @@ class CleanSheetApp:
         details_text = f"{file_info['rows']} rows × {file_info['columns']} columns"
         ttk.Label(details_frame, text=details_text, font=('Segoe UI', 9), foreground='#666').pack(side='left')
 
-        # Sheet selector for Excel files - EVERY Excel file gets its own dropdown
+        # Sheet selector for Excel files - EVERY Excel file gets its own dropdown + Apply button
         sheet_combo = None
+        apply_btn = None
         if file_type == 'excel':
             sheet_frame = ttk.Frame(file_frame)
             sheet_frame.pack(fill='x', padx=10, pady=(0, 8))
@@ -2107,7 +2108,9 @@ class CleanSheetApp:
 
             # Get all sheets for this specific file
             sheets = self.combine_pivot_engine.get_excel_sheets(file_path)
-            current_sheet = file_info.get('sheet', sheets[0] if sheets else '')
+
+            # Check if there's a previously selected sheet for this file, otherwise use current
+            current_sheet = self.combine_pivot_file_sheets.get(file_path, file_info.get('sheet', sheets[0] if sheets else ''))
             sheet_var = tk.StringVar(value=current_sheet)
 
             sheet_combo = ttk.Combobox(
@@ -2118,14 +2121,14 @@ class CleanSheetApp:
                 width=20,  # Per spec: 18-22 chars
                 font=('Segoe UI', 9)
             )
-            sheet_combo.pack(side='left')
+            sheet_combo.pack(side='left', padx=(0, 5))
 
-            # Store sheet selection
-            self.combine_pivot_file_sheets[file_path] = sheet_var.get()
-
-            # Update when sheet changes - reload file and re-validate
-            def on_sheet_change(event):
+            # Apply button - user must click to apply sheet selection
+            def on_apply_sheet():
+                """Apply the selected sheet for this specific file"""
                 new_sheet = sheet_var.get()
+
+                # Store the selection
                 self.combine_pivot_file_sheets[file_path] = new_sheet
 
                 # Reload file with new sheet
@@ -2151,19 +2154,26 @@ class CleanSheetApp:
                     # Re-run validation with new data
                     self.combine_pivot_update_summary()
 
-                    self.status_var.set(f"Reloaded {file_name} with sheet '{new_sheet}'")
+                    self.status_var.set(f"✓ Applied sheet '{new_sheet}' for {file_name}")
 
                 except Exception as e:
-                    logging.error(f"Error reloading sheet: {e}")
-                    messagebox.showerror("Error", f"Failed to load sheet '{new_sheet}':\n\n{str(e)}")
+                    logging.error(f"Error applying sheet: {e}")
+                    messagebox.showerror("Error", f"Failed to apply sheet '{new_sheet}':\n\n{str(e)}")
 
-            sheet_combo.bind('<<ComboboxSelected>>', on_sheet_change)
+            apply_btn = ttk.Button(
+                sheet_frame,
+                text="Apply Sheet",
+                command=on_apply_sheet,
+                width=12
+            )
+            apply_btn.pack(side='left', padx=(0, 5))
 
         # Store widget reference
         widget_info = {
             'file_path': file_path,
             'frame': file_frame,
             'sheet_combo': sheet_combo,
+            'apply_btn': apply_btn,
             'file_type': file_type
         }
         self.combine_pivot_file_widgets.append(widget_info)
