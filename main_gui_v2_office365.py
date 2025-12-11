@@ -51,6 +51,7 @@ from utils.export_helper import ExportHelper
 from batch_processor import BatchProcessor
 from file_combiner import FileCombiner
 from combine_mode_handler import CombineModeHandler
+from combine_pivot_engine import CombinePivotEngine
 from enhanced_preview import EnhancedDataPreview
 from smart_column_selector import ColumnSelector, MultiColumnSelector
 from analysis.data_quality_integration import DataQualityIntegration
@@ -117,6 +118,7 @@ class CleanSheetApp:
         self.batch_processor = BatchProcessor(progress_callback=self.on_batch_progress)
         self.file_combiner = FileCombiner()
         self.combine_mode_handler = CombineModeHandler()
+        self.combine_pivot_engine = CombinePivotEngine()
 
         # Data Quality Integration
         self.dq_integration = DataQualityIntegration(self)
@@ -253,8 +255,8 @@ class CleanSheetApp:
                  background='#F3F2F1').pack(side='left', padx=(0, 5))
 
         proc_mode_menu = ttk.Combobox(proc_mode_frame, textvariable=self.processing_mode,
-                                      values=["single", "batch", "compare", "combine"],
-                                      state='readonly', width=10,
+                                      values=["single", "batch", "compare", "combine", "combine_pivot"],
+                                      state='readonly', width=14,
                                       font=('Segoe UI', 9))
         proc_mode_menu.pack(side='left')
         proc_mode_menu.bind('<<ComboboxSelected>>', lambda e: self.on_processing_mode_change())
@@ -753,30 +755,40 @@ class CleanSheetApp:
         self.load_operations()
 
     def on_processing_mode_change(self):
-        """Handle processing mode toggle (single/batch/compare/combine)"""
+        """Handle processing mode toggle (single/batch/compare/combine/combine_pivot)"""
         mode = self.processing_mode.get()
-        self.status_var.set(f"Switched to {mode.title()} mode")
+        self.status_var.set(f"Switched to {mode.title().replace('_', ' ')} mode")
 
         if mode == "batch":
             # Show file management panel, hide others
             self.show_file_management_panel()
             self.hide_dedupe_panel()
             self.hide_combine_panel()
+            self.hide_combine_pivot_panel()
         elif mode == "compare":
             # Show compare panel, hide others
             self.hide_file_management_panel()
             self.show_dedupe_panel()
             self.hide_combine_panel()
+            self.hide_combine_pivot_panel()
         elif mode == "combine":
             # Show combine panel, hide others
             self.hide_file_management_panel()
             self.hide_dedupe_panel()
             self.show_combine_panel()
+            self.hide_combine_pivot_panel()
+        elif mode == "combine_pivot":
+            # Show combine pivot panel, hide others
+            self.hide_file_management_panel()
+            self.hide_dedupe_panel()
+            self.hide_combine_panel()
+            self.show_combine_pivot_panel()
         else:
             # Single file mode - hide all panels
             self.hide_file_management_panel()
             self.hide_dedupe_panel()
             self.hide_combine_panel()
+            self.hide_combine_pivot_panel()
 
         # Refresh ribbon to show/hide mode-specific operations
         if hasattr(self, 'excel_ribbon'):
@@ -1829,6 +1841,528 @@ class CleanSheetApp:
         except Exception as e:
             logging.error(f"Raw text export error: {e}", exc_info=True)
             messagebox.showerror("Export Error", f"Failed to export file:\n\n{str(e)}")
+
+    # ==================== COMBINE PIVOT MODE (CSV/XLSX) ====================
+
+    def show_combine_pivot_panel(self):
+        """Show combine pivot panel"""
+        # Hide single-file UI
+        if hasattr(self, 'main_paned'):
+            self.main_paned.pack_forget()
+
+        # Create combine pivot panel if it doesn't exist
+        if not hasattr(self, 'combine_pivot_panel') or self.combine_pivot_panel is None:
+            self._create_combine_pivot_panel()
+
+        # Show combine pivot panel
+        self.combine_pivot_panel.pack(fill='both', expand=True, padx=10, pady=5)
+        self.combine_pivot_panel_visible = True
+        self.status_var.set("Combine Pivot mode enabled - Upload CSV/XLSX files to combine into pivot-ready dataset")
+
+    def hide_combine_pivot_panel(self):
+        """Hide combine pivot panel"""
+        if not hasattr(self, 'combine_pivot_panel_visible') or not self.combine_pivot_panel_visible:
+            return
+
+        # Hide combine pivot panel
+        if hasattr(self, 'combine_pivot_panel') and self.combine_pivot_panel is not None:
+            self.combine_pivot_panel.pack_forget()
+
+        # Show single-file UI
+        if hasattr(self, 'main_paned'):
+            self.main_paned.pack(fill='both', expand=True, padx=10, pady=5)
+
+        self.combine_pivot_panel_visible = False
+        self.status_var.set("Single file mode enabled")
+
+    def _create_combine_pivot_panel(self):
+        """Create the Combine Pivot Mode UI panel"""
+        self.combine_pivot_panel = tk.Frame(self.root, bg='white')
+
+        # Main container with scrolling
+        main_container = ttk.Frame(self.combine_pivot_panel, style='Card.TFrame')
+        main_container.pack(fill='both', expand=True, padx=20, pady=20)
+
+        # Title
+        title_label = ttk.Label(
+            main_container,
+            text="Combine CSV/XLSX Files",
+            font=('Segoe UI', 18, 'bold'),
+            foreground='#0078D4'
+        )
+        title_label.pack(pady=(10, 5), padx=20)
+
+        subtitle_label = ttk.Label(
+            main_container,
+            text="Combine multiple CSV and Excel files into a unified pivot-ready dataset.\n"
+                 "All files must have identical headers and column counts.\n"
+                 "Output: Clean CSV or XLSX with no blank rows.",
+            font=('Segoe UI', 10),
+            foreground='#666666',
+            justify='center'
+        )
+        subtitle_label.pack(pady=(0, 20), padx=20)
+
+        # File Upload Section
+        upload_frame = ttk.LabelFrame(main_container, text="📁 File Upload (CSV/XLSX)", padding=15)
+        upload_frame.pack(fill='both', padx=20, pady=10)
+
+        btn_upload = ttk.Button(
+            upload_frame,
+            text="Browse Files...",
+            command=self.combine_pivot_browse_files,
+            style='Accent.TButton',
+            width=20
+        )
+        btn_upload.pack(pady=10)
+
+        # File list with scrollbar
+        list_frame = ttk.Frame(upload_frame)
+        list_frame.pack(fill='both', expand=True, pady=10)
+
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side='right', fill='y')
+
+        self.combine_pivot_file_listbox = tk.Listbox(
+            list_frame,
+            height=8,
+            font=('Consolas', 10),
+            yscrollcommand=scrollbar.set
+        )
+        self.combine_pivot_file_listbox.pack(side='left', fill='both', expand=True)
+        scrollbar.config(command=self.combine_pivot_file_listbox.yview)
+
+        # Buttons for file management
+        file_btn_frame = ttk.Frame(upload_frame)
+        file_btn_frame.pack(fill='x', pady=5)
+
+        ttk.Button(
+            file_btn_frame,
+            text="Remove Selected",
+            command=self.combine_pivot_remove_file,
+            width=15
+        ).pack(side='left', padx=5)
+
+        ttk.Button(
+            file_btn_frame,
+            text="Clear All",
+            command=self.combine_pivot_clear_files,
+            width=15
+        ).pack(side='left', padx=5)
+
+        # Summary Panel
+        summary_frame = ttk.LabelFrame(main_container, text="📊 Summary & Validation", padding=15)
+        summary_frame.pack(fill='x', padx=20, pady=10)
+
+        self.combine_pivot_summary_text = tk.Text(
+            summary_frame,
+            height=8,
+            font=('Consolas', 10),
+            wrap='word',
+            state='disabled'
+        )
+        self.combine_pivot_summary_text.pack(fill='x')
+
+        # Options Frame
+        options_frame = ttk.LabelFrame(main_container, text="⚙️ Header Normalization Options", padding=15)
+        options_frame.pack(fill='x', padx=20, pady=10)
+
+        self.normalize_lowercase_var = tk.BooleanVar(value=False)
+        self.normalize_whitespace_var = tk.BooleanVar(value=True)
+
+        ttk.Checkbutton(
+            options_frame,
+            text="Force lowercase comparison (allows 'Name' vs 'name')",
+            variable=self.normalize_lowercase_var,
+            command=self.combine_pivot_update_options
+        ).pack(anchor='w', pady=2)
+
+        ttk.Checkbutton(
+            options_frame,
+            text="Trim whitespace (allows ' Name ' vs 'Name')",
+            variable=self.normalize_whitespace_var,
+            command=self.combine_pivot_update_options
+        ).pack(anchor='w', pady=2)
+
+        # Action Buttons
+        action_frame = ttk.Frame(main_container)
+        action_frame.pack(fill='x', padx=20, pady=20)
+
+        self.combine_pivot_btn = ttk.Button(
+            action_frame,
+            text="🔗 Combine Files",
+            command=self.combine_pivot_execute,
+            style='Success.TButton',
+            width=25,
+            state='disabled'
+        )
+        self.combine_pivot_btn.pack(side='left', padx=5)
+
+        self.combine_pivot_preview_btn = ttk.Button(
+            action_frame,
+            text="👁️ Preview Combined Data",
+            command=self.combine_pivot_preview,
+            width=25,
+            state='disabled'
+        )
+        self.combine_pivot_preview_btn.pack(side='left', padx=5)
+
+        self.combine_pivot_panel_visible = False
+
+    def combine_pivot_browse_files(self):
+        """Browse and add CSV/XLSX files to combine queue"""
+        file_paths = filedialog.askopenfilenames(
+            title="Select CSV or Excel files to combine",
+            filetypes=[
+                ("Supported files", "*.csv *.txt *.xlsx *.xls *.xlsm"),
+                ("CSV files", "*.csv *.txt"),
+                ("Excel files", "*.xlsx *.xls *.xlsm"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if not file_paths:
+            return
+
+        for file_path in file_paths:
+            try:
+                ext = Path(file_path).suffix.lower()
+
+                # For Excel files, ask user to select sheet
+                sheet_name = None
+                if ext in ['.xlsx', '.xls', '.xlsm']:
+                    sheets = self.combine_pivot_engine.get_excel_sheets(file_path)
+                    if len(sheets) > 1:
+                        # Show dialog to select sheet
+                        sheet_name = self._ask_sheet_selection(file_path, sheets)
+                        if sheet_name is None:
+                            continue  # User cancelled
+
+                # Add file to engine
+                file_info = self.combine_pivot_engine.add_file(file_path, sheet_name)
+
+                # Add to listbox
+                display_name = f"{file_info['name']} ({file_info['rows']} rows, {file_info['columns']} cols)"
+                if sheet_name:
+                    display_name += f" [Sheet: {sheet_name}]"
+                self.combine_pivot_file_listbox.insert(tk.END, display_name)
+
+                self.status_var.set(f"Added {file_info['name']}")
+
+            except Exception as e:
+                logging.error(f"Error adding file {file_path}: {e}")
+                messagebox.showerror("Error", f"Failed to add file:\n\n{str(e)}")
+
+        # Update summary
+        self.combine_pivot_update_summary()
+
+    def _ask_sheet_selection(self, file_path, sheets):
+        """Ask user to select a sheet from an Excel file"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Select Sheet")
+        dialog.geometry("400x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        ttk.Label(
+            dialog,
+            text=f"Select sheet from:\n{os.path.basename(file_path)}",
+            font=('Segoe UI', 11, 'bold')
+        ).pack(pady=15)
+
+        # Sheet listbox
+        list_frame = ttk.Frame(dialog)
+        list_frame.pack(fill='both', expand=True, padx=20, pady=10)
+
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side='right', fill='y')
+
+        sheet_listbox = tk.Listbox(list_frame, font=('Segoe UI', 10), yscrollcommand=scrollbar.set)
+        sheet_listbox.pack(side='left', fill='both', expand=True)
+        scrollbar.config(command=sheet_listbox.yview)
+
+        for sheet in sheets:
+            sheet_listbox.insert(tk.END, sheet)
+
+        # Select first sheet by default
+        sheet_listbox.selection_set(0)
+
+        selected_sheet = [None]
+
+        def on_ok():
+            selection = sheet_listbox.curselection()
+            if selection:
+                selected_sheet[0] = sheets[selection[0]]
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy()
+
+        # Buttons
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=10)
+
+        ttk.Button(btn_frame, text="OK", command=on_ok, width=10).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=on_cancel, width=10).pack(side='left', padx=5)
+
+        dialog.wait_window()
+        return selected_sheet[0]
+
+    def combine_pivot_update_options(self):
+        """Update normalization options in engine"""
+        self.combine_pivot_engine.normalize_lowercase = self.normalize_lowercase_var.get()
+        self.combine_pivot_engine.normalize_whitespace = self.normalize_whitespace_var.get()
+
+        # Re-validate if files are loaded
+        if len(self.combine_pivot_engine.loaded_files) >= 2:
+            self.combine_pivot_update_summary()
+
+    def combine_pivot_update_summary(self):
+        """Update summary panel with file info and validation status"""
+        self.combine_pivot_summary_text.config(state='normal')
+        self.combine_pivot_summary_text.delete('1.0', tk.END)
+
+        if not self.combine_pivot_engine.loaded_files:
+            self.combine_pivot_summary_text.insert('1.0', "No files loaded")
+            self.combine_pivot_summary_text.config(state='disabled')
+            self.combine_pivot_btn.config(state='disabled')
+            self.combine_pivot_preview_btn.config(state='disabled')
+            return
+
+        summary = self.combine_pivot_engine.get_summary()
+
+        # Display file count and summary
+        summary_text = f"📁 Files loaded: {summary['file_count']}\n"
+        summary_text += f"📊 Total rows (combined): {summary['total_rows']:,}\n"
+        summary_text += f"📋 Column count: {summary['column_count']}\n"
+        summary_text += f"📝 Headers: {', '.join([str(h) for h in summary['headers'][:5]])}{'...' if summary['column_count'] > 5 else ''}\n\n"
+
+        # Validate headers if 2+ files
+        if len(self.combine_pivot_engine.loaded_files) >= 2:
+            dataframes = [f['df'] for f in self.combine_pivot_engine.loaded_files]
+            is_valid, error_msg = self.combine_pivot_engine.validate_headers(dataframes)
+
+            if is_valid:
+                summary_text += "✅ VALIDATION PASSED\n"
+                summary_text += "All files have identical headers and column counts.\n"
+                summary_text += "Ready to combine!"
+
+                # Enable buttons
+                self.combine_pivot_btn.config(state='normal')
+                self.combine_pivot_preview_btn.config(state='normal')
+            else:
+                summary_text += "❌ VALIDATION FAILED\n"
+                summary_text += error_msg
+
+                # Disable buttons
+                self.combine_pivot_btn.config(state='disabled')
+                self.combine_pivot_preview_btn.config(state='disabled')
+        else:
+            summary_text += "⚠️ Add at least 2 files to combine"
+            self.combine_pivot_btn.config(state='disabled')
+            self.combine_pivot_preview_btn.config(state='disabled')
+
+        self.combine_pivot_summary_text.insert('1.0', summary_text)
+        self.combine_pivot_summary_text.config(state='disabled')
+
+    def combine_pivot_remove_file(self):
+        """Remove selected file from combine queue"""
+        selection = self.combine_pivot_file_listbox.curselection()
+        if not selection:
+            return
+
+        index = selection[0]
+
+        # Remove from engine
+        file_info = self.combine_pivot_engine.loaded_files[index]
+        self.combine_pivot_engine.remove_file(file_info['path'])
+
+        # Remove from listbox
+        self.combine_pivot_file_listbox.delete(index)
+
+        # Update summary
+        self.combine_pivot_update_summary()
+
+    def combine_pivot_clear_files(self):
+        """Clear all files from combine queue"""
+        self.combine_pivot_engine.clear_files()
+        self.combine_pivot_file_listbox.delete(0, tk.END)
+        self.combine_pivot_update_summary()
+        self.status_var.set("Cleared all files")
+
+    def combine_pivot_execute(self):
+        """Execute file combination"""
+        if len(self.combine_pivot_engine.loaded_files) < 2:
+            messagebox.showwarning("Not Enough Files", "Please add at least 2 files to combine")
+            return
+
+        try:
+            # Get all dataframes
+            dataframes = [f['df'] for f in self.combine_pivot_engine.loaded_files]
+
+            # Validate headers
+            is_valid, error_msg = self.combine_pivot_engine.validate_headers(dataframes)
+            if not is_valid:
+                messagebox.showerror("Validation Error", error_msg)
+                return
+
+            # Combine dataframes
+            combined_df = self.combine_pivot_engine.combine_dataframes(dataframes)
+
+            # Show success message
+            summary = self.combine_pivot_engine.get_summary()
+            messagebox.showinfo(
+                "Files Combined",
+                f"Successfully combined {summary['file_count']} files!\n\n"
+                f"Total rows: {len(combined_df):,}\n"
+                f"Columns: {len(combined_df.columns)}\n\n"
+                "Click OK to select export location."
+            )
+
+            # Show export dialog
+            self.combine_pivot_export_dialog(combined_df, summary)
+
+        except Exception as e:
+            logging.error(f"Combine pivot execution error: {e}", exc_info=True)
+            messagebox.showerror("Combine Error", f"Failed to combine files:\n\n{str(e)}")
+
+    def combine_pivot_export_dialog(self, combined_df, summary):
+        """Show export dialog for combined pivot data"""
+        # Ask for output format
+        format_dialog = tk.Toplevel(self.root)
+        format_dialog.title("Select Output Format")
+        format_dialog.geometry("400x200")
+        format_dialog.transient(self.root)
+        format_dialog.grab_set()
+
+        ttk.Label(
+            format_dialog,
+            text="Select output format:",
+            font=('Segoe UI', 11, 'bold')
+        ).pack(pady=20)
+
+        format_var = tk.StringVar(value='csv')
+
+        ttk.Radiobutton(format_dialog, text="CSV (UTF-8)", variable=format_var, value='csv').pack(pady=5)
+        ttk.Radiobutton(format_dialog, text="Excel (.xlsx)", variable=format_var, value='xlsx').pack(pady=5)
+
+        selected_format = [None]
+
+        def on_ok():
+            selected_format[0] = format_var.get()
+            format_dialog.destroy()
+
+        ttk.Button(format_dialog, text="OK", command=on_ok, width=15).pack(pady=15)
+
+        format_dialog.wait_window()
+
+        if not selected_format[0]:
+            return
+
+        # Ask for save location
+        if selected_format[0] == 'csv':
+            output_path = filedialog.asksaveasfilename(
+                title="Save Combined CSV",
+                defaultextension='.csv',
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            )
+        else:
+            output_path = filedialog.asksaveasfilename(
+                title="Save Combined Excel",
+                defaultextension='.xlsx',
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+            )
+
+        if not output_path:
+            return
+
+        try:
+            # Export
+            if selected_format[0] == 'csv':
+                self.combine_pivot_engine.export_csv(combined_df, output_path)
+            else:
+                self.combine_pivot_engine.export_excel(combined_df, output_path)
+
+            messagebox.showinfo(
+                "Export Successful",
+                f"Combined file saved successfully!\n\n"
+                f"Location: {output_path}\n"
+                f"Rows: {len(combined_df):,}\n"
+                f"Columns: {len(combined_df.columns)}\n\n"
+                f"Format: {selected_format[0].upper()}"
+            )
+
+            self.status_var.set(f"Exported combined file: {Path(output_path).name}")
+
+        except Exception as e:
+            logging.error(f"Export error: {e}", exc_info=True)
+            messagebox.showerror("Export Error", f"Failed to export file:\n\n{str(e)}")
+
+    def combine_pivot_preview(self):
+        """Preview combined dataset"""
+        if len(self.combine_pivot_engine.loaded_files) < 2:
+            messagebox.showwarning("Not Enough Files", "Please add at least 2 files to combine")
+            return
+
+        try:
+            # Get all dataframes
+            dataframes = [f['df'] for f in self.combine_pivot_engine.loaded_files]
+
+            # Validate headers
+            is_valid, error_msg = self.combine_pivot_engine.validate_headers(dataframes)
+            if not is_valid:
+                messagebox.showerror("Validation Error", error_msg)
+                return
+
+            # Combine dataframes
+            combined_df = self.combine_pivot_engine.combine_dataframes(dataframes)
+
+            # Show preview dialog
+            preview_dialog = tk.Toplevel(self.root)
+            preview_dialog.title("Preview Combined Dataset")
+            preview_dialog.geometry("1000x600")
+            preview_dialog.transient(self.root)
+
+            ttk.Label(
+                preview_dialog,
+                text=f"Preview: First 200 rows of {len(combined_df):,} total rows",
+                font=('Segoe UI', 11, 'bold')
+            ).pack(pady=10)
+
+            # Create preview area
+            preview_frame = ttk.Frame(preview_dialog)
+            preview_frame.pack(fill='both', expand=True, padx=10, pady=10)
+
+            # Scrollbars
+            x_scrollbar = ttk.Scrollbar(preview_frame, orient='horizontal')
+            y_scrollbar = ttk.Scrollbar(preview_frame, orient='vertical')
+
+            # Text widget for preview
+            preview_text = tk.Text(
+                preview_frame,
+                font=('Consolas', 9),
+                wrap='none',
+                xscrollcommand=x_scrollbar.set,
+                yscrollcommand=y_scrollbar.set
+            )
+
+            x_scrollbar.config(command=preview_text.xview)
+            y_scrollbar.config(command=preview_text.yview)
+
+            x_scrollbar.pack(side='bottom', fill='x')
+            y_scrollbar.pack(side='right', fill='y')
+            preview_text.pack(side='left', fill='both', expand=True)
+
+            # Show first 200 rows
+            preview_df = combined_df.head(200)
+            preview_text.insert('1.0', preview_df.to_string(index=False))
+            preview_text.config(state='disabled')
+
+            ttk.Button(preview_dialog, text="Close", command=preview_dialog.destroy).pack(pady=10)
+
+        except Exception as e:
+            logging.error(f"Preview error: {e}", exc_info=True)
+            messagebox.showerror("Preview Error", f"Failed to preview data:\n\n{str(e)}")
 
     # ==================== SPLIT PANE HELPER METHODS ====================
 
