@@ -51,7 +51,8 @@ from utils.export_helper import ExportHelper
 from batch_processor import BatchProcessor
 from file_combiner import FileCombiner
 from combine_mode_handler import CombineModeHandler
-from combine_pivot_engine import CombinePivotEngine
+# DISABLED: combine_pivot mode temporarily disabled for redevelopment
+# from combine_pivot_engine import CombinePivotEngine
 from enhanced_preview import EnhancedDataPreview
 from smart_column_selector import ColumnSelector, MultiColumnSelector
 from analysis.data_quality_integration import DataQualityIntegration
@@ -118,7 +119,8 @@ class CleanSheetApp:
         self.batch_processor = BatchProcessor(progress_callback=self.on_batch_progress)
         self.file_combiner = FileCombiner()
         self.combine_mode_handler = CombineModeHandler()
-        self.combine_pivot_engine = CombinePivotEngine()
+        # DISABLED: combine_pivot mode temporarily disabled for redevelopment
+        # self.combine_pivot_engine = CombinePivotEngine()
 
         # Data Quality Integration
         self.dq_integration = DataQualityIntegration(self)
@@ -254,8 +256,9 @@ class CleanSheetApp:
                  foreground='#666666',
                  background='#F3F2F1').pack(side='left', padx=(0, 5))
 
+        # DISABLED: "combine_pivot" mode temporarily disabled for redevelopment
         proc_mode_menu = ttk.Combobox(proc_mode_frame, textvariable=self.processing_mode,
-                                      values=["single", "batch", "compare", "combine", "combine_pivot"],
+                                      values=["single", "batch", "compare", "combine"],
                                       state='readonly', width=14,
                                       font=('Segoe UI', 9))
         proc_mode_menu.pack(side='left')
@@ -755,7 +758,7 @@ class CleanSheetApp:
         self.load_operations()
 
     def on_processing_mode_change(self):
-        """Handle processing mode toggle (single/batch/compare/combine/combine_pivot)"""
+        """Handle processing mode toggle (single/batch/compare/combine)"""
         mode = self.processing_mode.get()
         self.status_var.set(f"Switched to {mode.title().replace('_', ' ')} mode")
 
@@ -764,31 +767,32 @@ class CleanSheetApp:
             self.show_file_management_panel()
             self.hide_dedupe_panel()
             self.hide_combine_panel()
-            self.hide_combine_pivot_panel()
+            # self.hide_combine_pivot_panel()  # DISABLED: combine_pivot temporarily disabled
         elif mode == "compare":
             # Show compare panel, hide others
             self.hide_file_management_panel()
             self.show_dedupe_panel()
             self.hide_combine_panel()
-            self.hide_combine_pivot_panel()
+            # self.hide_combine_pivot_panel()  # DISABLED: combine_pivot temporarily disabled
         elif mode == "combine":
             # Show combine panel, hide others
             self.hide_file_management_panel()
             self.hide_dedupe_panel()
             self.show_combine_panel()
-            self.hide_combine_pivot_panel()
-        elif mode == "combine_pivot":
-            # Show combine pivot panel, hide others
-            self.hide_file_management_panel()
-            self.hide_dedupe_panel()
-            self.hide_combine_panel()
-            self.show_combine_pivot_panel()
+            # self.hide_combine_pivot_panel()  # DISABLED: combine_pivot temporarily disabled
+        # DISABLED: combine_pivot mode temporarily disabled for redevelopment
+        # elif mode == "combine_pivot":
+        #     # Show combine pivot panel, hide others
+        #     self.hide_file_management_panel()
+        #     self.hide_dedupe_panel()
+        #     self.hide_combine_panel()
+        #     self.show_combine_pivot_panel()
         else:
             # Single file mode - hide all panels
             self.hide_file_management_panel()
             self.hide_dedupe_panel()
             self.hide_combine_panel()
-            self.hide_combine_pivot_panel()
+            # self.hide_combine_pivot_panel()  # DISABLED: combine_pivot temporarily disabled
 
         # Refresh ribbon to show/hide mode-specific operations
         if hasattr(self, 'excel_ribbon'):
@@ -1843,9 +1847,15 @@ class CleanSheetApp:
             messagebox.showerror("Export Error", f"Failed to export file:\n\n{str(e)}")
 
     # ==================== COMBINE PIVOT MODE (CSV/XLSX) ====================
+    # DISABLED: All combine_pivot methods below are temporarily disabled for redevelopment.
+    # The mode has been removed from the UI dropdown and cannot be selected.
+    # Implementation files (combine_pivot_engine.py) are preserved for future reference.
+    # ===========================================================================
 
     def show_combine_pivot_panel(self):
-        """Show combine pivot panel"""
+        """Show combine pivot panel - DISABLED"""
+        # DISABLED: This method is not called as combine_pivot is disabled
+        return
         # Hide single-file UI
         if hasattr(self, 'main_paned'):
             self.main_paned.pack_forget()
@@ -1860,20 +1870,22 @@ class CleanSheetApp:
         self.status_var.set("Combine Pivot mode enabled - Upload CSV/XLSX files to combine into pivot-ready dataset")
 
     def hide_combine_pivot_panel(self):
-        """Hide combine pivot panel"""
-        if not hasattr(self, 'combine_pivot_panel_visible') or not self.combine_pivot_panel_visible:
-            return
-
-        # Hide combine pivot panel
-        if hasattr(self, 'combine_pivot_panel') and self.combine_pivot_panel is not None:
-            self.combine_pivot_panel.pack_forget()
-
-        # Show single-file UI
-        if hasattr(self, 'main_paned'):
-            self.main_paned.pack(fill='both', expand=True, padx=10, pady=5)
-
-        self.combine_pivot_panel_visible = False
-        self.status_var.set("Single file mode enabled")
+        """Hide combine pivot panel - DISABLED"""
+        # DISABLED: This method is safe to call but does nothing as combine_pivot is disabled
+        return
+        # if not hasattr(self, 'combine_pivot_panel_visible') or not self.combine_pivot_panel_visible:
+        #     return
+        #
+        # # Hide combine pivot panel
+        # if hasattr(self, 'combine_pivot_panel') and self.combine_pivot_panel is not None:
+        #     self.combine_pivot_panel.pack_forget()
+        #
+        # # Show single-file UI
+        # if hasattr(self, 'main_paned'):
+        #     self.main_paned.pack(fill='both', expand=True, padx=10, pady=5)
+        #
+        # self.combine_pivot_panel_visible = False
+        # self.status_var.set("Single file mode enabled")
 
     def _create_combine_pivot_panel(self):
         """Create the Combine Pivot Mode UI panel"""
