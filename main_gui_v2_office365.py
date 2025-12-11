@@ -1883,9 +1883,52 @@ class CleanSheetApp:
         self.combine_pivot_file_widgets = []  # List of dicts with file info and widgets
         self.combine_pivot_file_sheets = {}  # {file_path: selected_sheet}
 
-        # Main container (same structure as other modes)
-        main_container = ttk.Frame(self.combine_pivot_panel, style='Card.TFrame')
-        main_container.pack(fill='both', expand=True, padx=20, pady=20)
+        # Create scrollable container
+        # Canvas for scrolling
+        canvas = tk.Canvas(self.combine_pivot_panel, bg='white', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.combine_pivot_panel, orient='vertical', command=canvas.yview)
+
+        # Scrollable frame inside canvas
+        scrollable_frame = ttk.Frame(canvas, style='Card.TFrame')
+
+        # Configure canvas scrolling
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        # Create window in canvas
+        canvas.create_window((0, 0), window=scrollable_frame, anchor='nw', tags='scrollable_frame')
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Pack canvas and scrollbar
+        canvas.pack(side='left', fill='both', expand=True, padx=20, pady=20)
+        scrollbar.pack(side='right', fill='y', pady=20)
+
+        # Enable mousewheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _bind_mousewheel(event):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_mousewheel(event):
+            canvas.unbind_all("<MouseWheel>")
+
+        canvas.bind("<Enter>", _bind_mousewheel)
+        canvas.bind("<Leave>", _unbind_mousewheel)
+
+        # Also make canvas width adapt to window
+        def _on_canvas_configure(event):
+            canvas.itemconfig('scrollable_frame', width=event.width)
+
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        # Store canvas reference for later updates
+        self.combine_pivot_canvas = canvas
+
+        # Main container is now the scrollable_frame
+        main_container = scrollable_frame
 
         # Title
         title_label = ttk.Label(
@@ -1982,7 +2025,7 @@ class CleanSheetApp:
 
         # ==================== SECTION 4: COMBINE ACTION ====================
         action_section = ttk.LabelFrame(main_container, text="🚀 Combine Action", padding=15)
-        action_section.pack(fill='x', padx=10, pady=8)
+        action_section.pack(fill='x', padx=10, pady=(8, 20))
 
         action_frame = ttk.Frame(action_section)
         action_frame.pack(fill='x')
