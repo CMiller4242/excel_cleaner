@@ -1883,9 +1883,18 @@ class CleanSheetApp:
         self.combine_pivot_file_widgets = []  # List of dicts with file info and widgets
         self.combine_pivot_file_sheets = {}  # {file_path: selected_sheet}
 
+        # ==================== CENTERED CONTAINER ====================
+        # Outer container for centering
+        center_container = tk.Frame(self.combine_pivot_panel, bg='white')
+        center_container.pack(anchor='n', expand=True, fill='both')
+
+        # Inner container with fixed width for content
+        inner_container = tk.Frame(center_container, bg='white')
+        inner_container.pack(anchor='n', pady=10)
+
         # Main container with scrolling
-        canvas = tk.Canvas(self.combine_pivot_panel, bg='white', highlightthickness=0)
-        scrollbar = ttk.Scrollbar(self.combine_pivot_panel, orient='vertical', command=canvas.yview)
+        canvas = tk.Canvas(inner_container, bg='white', highlightthickness=0, width=900)
+        scrollbar = ttk.Scrollbar(inner_container, orient='vertical', command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas, style='Card.TFrame')
 
         scrollable_frame.bind(
@@ -1893,7 +1902,7 @@ class CleanSheetApp:
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
 
-        canvas.create_window((0, 0), window=scrollable_frame, anchor='nw')
+        canvas.create_window((450, 0), window=scrollable_frame, anchor='n')  # Center at x=450
         canvas.configure(yscrollcommand=scrollbar.set)
 
         canvas.pack(side='left', fill='both', expand=True)
@@ -2026,7 +2035,11 @@ class CleanSheetApp:
         self.combine_pivot_panel_visible = False
 
     def combine_pivot_add_file_widget(self, file_info):
-        """Add a file entry with sheet selector to the files container"""
+        """Add a file entry with sheet selector to the files container
+
+        IMPORTANT: This creates an independent widget for EACH file.
+        Excel files get their own sheet selector dropdown.
+        """
         file_path = file_info['path']
         file_name = file_info['name']
         file_type = file_info['type']
@@ -2064,7 +2077,7 @@ class CleanSheetApp:
         details_text = f"{file_info['rows']} rows × {file_info['columns']} columns"
         ttk.Label(details_frame, text=details_text, font=('Segoe UI', 9), foreground='#666').pack(side='left')
 
-        # Sheet selector for Excel files
+        # Sheet selector for Excel files - EVERY Excel file gets its own dropdown
         sheet_combo = None
         if file_type == 'excel':
             sheet_frame = ttk.Frame(file_frame)
@@ -2072,15 +2085,17 @@ class CleanSheetApp:
 
             ttk.Label(sheet_frame, text="Sheet:", font=('Segoe UI', 9)).pack(side='left', padx=(0, 5))
 
+            # Get all sheets for this specific file
             sheets = self.combine_pivot_engine.get_excel_sheets(file_path)
-            sheet_var = tk.StringVar(value=file_info.get('sheet', sheets[0] if sheets else ''))
+            current_sheet = file_info.get('sheet', sheets[0] if sheets else '')
+            sheet_var = tk.StringVar(value=current_sheet)
 
             sheet_combo = ttk.Combobox(
                 sheet_frame,
                 textvariable=sheet_var,
                 values=sheets,
                 state='readonly',
-                width=25,
+                width=20,  # Per spec: 18-22 chars
                 font=('Segoe UI', 9)
             )
             sheet_combo.pack(side='left')
@@ -2088,25 +2103,39 @@ class CleanSheetApp:
             # Store sheet selection
             self.combine_pivot_file_sheets[file_path] = sheet_var.get()
 
-            # Update when sheet changes
+            # Update when sheet changes - reload file and re-validate
             def on_sheet_change(event):
-                self.combine_pivot_file_sheets[file_path] = sheet_var.get()
+                new_sheet = sheet_var.get()
+                self.combine_pivot_file_sheets[file_path] = new_sheet
+
                 # Reload file with new sheet
                 try:
-                    new_df = self.combine_pivot_engine.load_excel(file_path, sheet_var.get())
+                    new_df = self.combine_pivot_engine.load_excel(file_path, new_sheet)
+
                     # Update file info in engine
                     for f in self.combine_pivot_engine.loaded_files:
                         if f['path'] == file_path:
                             f['df'] = new_df
-                            f['sheet'] = sheet_var.get()
+                            f['sheet'] = new_sheet
                             f['rows'] = len(new_df)
                             f['columns'] = len(new_df.columns)
                             f['headers'] = new_df.columns.tolist()
+
+                            # Update UI details display
+                            details_text = f"{f['rows']} rows × {f['columns']} columns"
+                            for widget in details_frame.winfo_children():
+                                widget.destroy()
+                            ttk.Label(details_frame, text=details_text, font=('Segoe UI', 9), foreground='#666').pack(side='left')
                             break
+
+                    # Re-run validation with new data
                     self.combine_pivot_update_summary()
+
+                    self.status_var.set(f"Reloaded {file_name} with sheet '{new_sheet}'")
+
                 except Exception as e:
                     logging.error(f"Error reloading sheet: {e}")
-                    messagebox.showerror("Error", f"Failed to load sheet:\n\n{str(e)}")
+                    messagebox.showerror("Error", f"Failed to load sheet '{new_sheet}':\n\n{str(e)}")
 
             sheet_combo.bind('<<ComboboxSelected>>', on_sheet_change)
 
@@ -2114,7 +2143,8 @@ class CleanSheetApp:
         widget_info = {
             'file_path': file_path,
             'frame': file_frame,
-            'sheet_combo': sheet_combo
+            'sheet_combo': sheet_combo,
+            'file_type': file_type
         }
         self.combine_pivot_file_widgets.append(widget_info)
 
