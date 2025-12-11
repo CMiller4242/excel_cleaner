@@ -1879,135 +1879,244 @@ class CleanSheetApp:
         """Create the Combine Pivot Mode UI panel"""
         self.combine_pivot_panel = tk.Frame(self.root, bg='white')
 
+        # Initialize storage for file-specific data
+        self.combine_pivot_file_widgets = []  # List of dicts with file info and widgets
+        self.combine_pivot_file_sheets = {}  # {file_path: selected_sheet}
+
         # Main container with scrolling
-        main_container = ttk.Frame(self.combine_pivot_panel, style='Card.TFrame')
-        main_container.pack(fill='both', expand=True, padx=20, pady=20)
+        canvas = tk.Canvas(self.combine_pivot_panel, bg='white', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.combine_pivot_panel, orient='vertical', command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas, style='Card.TFrame')
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor='nw')
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+
+        main_container = scrollable_frame
 
         # Title
         title_label = ttk.Label(
             main_container,
-            text="Combine CSV/XLSX Files",
+            text="Combine CSV/XLSX Files (Pivot Mode)",
             font=('Segoe UI', 18, 'bold'),
             foreground='#0078D4'
         )
-        title_label.pack(pady=(10, 5), padx=20)
+        title_label.pack(pady=(15, 5), padx=20)
 
         subtitle_label = ttk.Label(
             main_container,
             text="Combine multiple CSV and Excel files into a unified pivot-ready dataset.\n"
-                 "All files must have identical headers and column counts.\n"
-                 "Output: Clean CSV or XLSX with no blank rows.",
+                 "All files must have identical headers and column counts.",
             font=('Segoe UI', 10),
             foreground='#666666',
             justify='center'
         )
-        subtitle_label.pack(pady=(0, 20), padx=20)
+        subtitle_label.pack(pady=(0, 15), padx=20)
 
-        # File Upload Section
-        upload_frame = ttk.LabelFrame(main_container, text="📁 File Upload (CSV/XLSX)", padding=15)
-        upload_frame.pack(fill='both', padx=20, pady=10)
+        # ==================== SECTION 1: FILE UPLOAD ====================
+        upload_section = ttk.LabelFrame(main_container, text="📁 File Upload", padding=15)
+        upload_section.pack(fill='x', padx=20, pady=(0, 10))
 
         btn_upload = ttk.Button(
-            upload_frame,
-            text="Browse Files...",
+            upload_section,
+            text="+ Add Files (CSV/XLSX)",
             command=self.combine_pivot_browse_files,
             style='Accent.TButton',
-            width=20
+            width=25
         )
-        btn_upload.pack(pady=10)
+        btn_upload.pack(pady=(0, 10))
 
-        # File list with scrollbar
-        list_frame = ttk.Frame(upload_frame)
-        list_frame.pack(fill='both', expand=True, pady=10)
-
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side='right', fill='y')
-
-        self.combine_pivot_file_listbox = tk.Listbox(
-            list_frame,
-            height=8,
-            font=('Consolas', 10),
-            yscrollcommand=scrollbar.set
-        )
-        self.combine_pivot_file_listbox.pack(side='left', fill='both', expand=True)
-        scrollbar.config(command=self.combine_pivot_file_listbox.yview)
+        # File list container
+        self.combine_pivot_files_container = ttk.Frame(upload_section)
+        self.combine_pivot_files_container.pack(fill='both', expand=True)
 
         # Buttons for file management
-        file_btn_frame = ttk.Frame(upload_frame)
-        file_btn_frame.pack(fill='x', pady=5)
+        file_btn_frame = ttk.Frame(upload_section)
+        file_btn_frame.pack(fill='x', pady=(10, 0))
 
         ttk.Button(
             file_btn_frame,
-            text="Remove Selected",
-            command=self.combine_pivot_remove_file,
-            width=15
-        ).pack(side='left', padx=5)
-
-        ttk.Button(
-            file_btn_frame,
-            text="Clear All",
+            text="Clear All Files",
             command=self.combine_pivot_clear_files,
-            width=15
+            width=18
         ).pack(side='left', padx=5)
 
-        # Summary Panel
-        summary_frame = ttk.LabelFrame(main_container, text="📊 Summary & Validation", padding=15)
-        summary_frame.pack(fill='x', padx=20, pady=10)
+        # ==================== SECTION 2: HEADER NORMALIZATION OPTIONS ====================
+        norm_section = ttk.LabelFrame(main_container, text="⚙️ Header Normalization Options", padding=15)
+        norm_section.pack(fill='x', padx=20, pady=(0, 10))
 
-        self.combine_pivot_summary_text = tk.Text(
-            summary_frame,
-            height=8,
-            font=('Consolas', 10),
-            wrap='word',
-            state='disabled'
-        )
-        self.combine_pivot_summary_text.pack(fill='x')
-
-        # Options Frame
-        options_frame = ttk.LabelFrame(main_container, text="⚙️ Header Normalization Options", padding=15)
-        options_frame.pack(fill='x', padx=20, pady=10)
+        ttk.Label(
+            norm_section,
+            text="Allow minor header differences:",
+            font=('Segoe UI', 10, 'bold')
+        ).pack(anchor='w', pady=(0, 8))
 
         self.normalize_lowercase_var = tk.BooleanVar(value=False)
         self.normalize_whitespace_var = tk.BooleanVar(value=True)
+        self.normalize_special_chars_var = tk.BooleanVar(value=False)
+        self.normalize_underscores_var = tk.BooleanVar(value=False)
 
-        ttk.Checkbutton(
-            options_frame,
-            text="Force lowercase comparison (allows 'Name' vs 'name')",
-            variable=self.normalize_lowercase_var,
-            command=self.combine_pivot_update_options
-        ).pack(anchor='w', pady=2)
+        # Normalization option checkboxes
+        options = [
+            (self.normalize_lowercase_var, "Lowercase headers (allows 'Name' vs 'name')"),
+            (self.normalize_whitespace_var, "Trim whitespace (allows ' Name ' vs 'Name')"),
+            (self.normalize_special_chars_var, "Remove special characters (allows 'Name!' vs 'Name')"),
+            (self.normalize_underscores_var, "Normalize underscores/spaces (allows 'first_name' vs 'first name')")
+        ]
 
-        ttk.Checkbutton(
-            options_frame,
-            text="Trim whitespace (allows ' Name ' vs 'Name')",
-            variable=self.normalize_whitespace_var,
-            command=self.combine_pivot_update_options
-        ).pack(anchor='w', pady=2)
+        for var, text in options:
+            chk = ttk.Checkbutton(
+                norm_section,
+                text=text,
+                variable=var,
+                command=self.combine_pivot_update_options
+            )
+            chk.pack(anchor='w', pady=3, padx=20)
 
-        # Action Buttons
-        action_frame = ttk.Frame(main_container)
-        action_frame.pack(fill='x', padx=20, pady=20)
+        # ==================== SECTION 3: SUMMARY & VALIDATION ====================
+        summary_section = ttk.LabelFrame(main_container, text="📊 Summary & Validation", padding=15)
+        summary_section.pack(fill='x', padx=20, pady=(0, 10))
+
+        self.combine_pivot_summary_text = tk.Text(
+            summary_section,
+            height=7,
+            font=('Consolas', 9),
+            wrap='word',
+            state='disabled',
+            bg='#FAFAFA'
+        )
+        self.combine_pivot_summary_text.pack(fill='x')
+
+        # ==================== SECTION 4: COMBINE ACTION ====================
+        action_section = ttk.LabelFrame(main_container, text="🚀 Combine Action", padding=15)
+        action_section.pack(fill='x', padx=20, pady=(0, 10))
+
+        action_frame = ttk.Frame(action_section)
+        action_frame.pack(fill='x')
 
         self.combine_pivot_btn = ttk.Button(
             action_frame,
-            text="🔗 Combine Files",
+            text="▶ Combine Files",
             command=self.combine_pivot_execute,
             style='Success.TButton',
-            width=25,
+            width=30,
             state='disabled'
         )
-        self.combine_pivot_btn.pack(side='left', padx=5)
+        self.combine_pivot_btn.pack(side='left', padx=(0, 10))
 
         self.combine_pivot_preview_btn = ttk.Button(
             action_frame,
             text="👁️ Preview Combined Data",
             command=self.combine_pivot_preview,
-            width=25,
+            width=30,
             state='disabled'
         )
-        self.combine_pivot_preview_btn.pack(side='left', padx=5)
+        self.combine_pivot_preview_btn.pack(side='left')
+
+        # Initialize summary
+        self.combine_pivot_update_summary()
 
         self.combine_pivot_panel_visible = False
+
+    def combine_pivot_add_file_widget(self, file_info):
+        """Add a file entry with sheet selector to the files container"""
+        file_path = file_info['path']
+        file_name = file_info['name']
+        file_type = file_info['type']
+
+        # Create frame for this file
+        file_frame = ttk.Frame(self.combine_pivot_files_container, relief='solid', borderwidth=1)
+        file_frame.pack(fill='x', pady=5, padx=5)
+
+        # File info row
+        info_frame = ttk.Frame(file_frame)
+        info_frame.pack(fill='x', padx=10, pady=8)
+
+        # File icon and name
+        icon = "📊" if file_type == 'excel' else "📄"
+        file_label = ttk.Label(
+            info_frame,
+            text=f"{icon} {file_name}",
+            font=('Segoe UI', 10, 'bold')
+        )
+        file_label.pack(side='left')
+
+        # Remove button
+        remove_btn = ttk.Button(
+            info_frame,
+            text="✕",
+            command=lambda: self.combine_pivot_remove_file_by_path(file_path),
+            width=3
+        )
+        remove_btn.pack(side='right')
+
+        # Details row
+        details_frame = ttk.Frame(file_frame)
+        details_frame.pack(fill='x', padx=10, pady=(0, 8))
+
+        details_text = f"{file_info['rows']} rows × {file_info['columns']} columns"
+        ttk.Label(details_frame, text=details_text, font=('Segoe UI', 9), foreground='#666').pack(side='left')
+
+        # Sheet selector for Excel files
+        sheet_combo = None
+        if file_type == 'excel':
+            sheet_frame = ttk.Frame(file_frame)
+            sheet_frame.pack(fill='x', padx=10, pady=(0, 8))
+
+            ttk.Label(sheet_frame, text="Sheet:", font=('Segoe UI', 9)).pack(side='left', padx=(0, 5))
+
+            sheets = self.combine_pivot_engine.get_excel_sheets(file_path)
+            sheet_var = tk.StringVar(value=file_info.get('sheet', sheets[0] if sheets else ''))
+
+            sheet_combo = ttk.Combobox(
+                sheet_frame,
+                textvariable=sheet_var,
+                values=sheets,
+                state='readonly',
+                width=25,
+                font=('Segoe UI', 9)
+            )
+            sheet_combo.pack(side='left')
+
+            # Store sheet selection
+            self.combine_pivot_file_sheets[file_path] = sheet_var.get()
+
+            # Update when sheet changes
+            def on_sheet_change(event):
+                self.combine_pivot_file_sheets[file_path] = sheet_var.get()
+                # Reload file with new sheet
+                try:
+                    new_df = self.combine_pivot_engine.load_excel(file_path, sheet_var.get())
+                    # Update file info in engine
+                    for f in self.combine_pivot_engine.loaded_files:
+                        if f['path'] == file_path:
+                            f['df'] = new_df
+                            f['sheet'] = sheet_var.get()
+                            f['rows'] = len(new_df)
+                            f['columns'] = len(new_df.columns)
+                            f['headers'] = new_df.columns.tolist()
+                            break
+                    self.combine_pivot_update_summary()
+                except Exception as e:
+                    logging.error(f"Error reloading sheet: {e}")
+                    messagebox.showerror("Error", f"Failed to load sheet:\n\n{str(e)}")
+
+            sheet_combo.bind('<<ComboboxSelected>>', on_sheet_change)
+
+        # Store widget reference
+        widget_info = {
+            'file_path': file_path,
+            'frame': file_frame,
+            'sheet_combo': sheet_combo
+        }
+        self.combine_pivot_file_widgets.append(widget_info)
 
     def combine_pivot_browse_files(self):
         """Browse and add CSV/XLSX files to combine queue"""
@@ -2028,24 +2137,17 @@ class CleanSheetApp:
             try:
                 ext = Path(file_path).suffix.lower()
 
-                # For Excel files, ask user to select sheet
+                # For Excel files, use first sheet by default (user can change it in the dropdown)
                 sheet_name = None
                 if ext in ['.xlsx', '.xls', '.xlsm']:
                     sheets = self.combine_pivot_engine.get_excel_sheets(file_path)
-                    if len(sheets) > 1:
-                        # Show dialog to select sheet
-                        sheet_name = self._ask_sheet_selection(file_path, sheets)
-                        if sheet_name is None:
-                            continue  # User cancelled
+                    sheet_name = sheets[0] if sheets else None
 
                 # Add file to engine
                 file_info = self.combine_pivot_engine.add_file(file_path, sheet_name)
 
-                # Add to listbox
-                display_name = f"{file_info['name']} ({file_info['rows']} rows, {file_info['columns']} cols)"
-                if sheet_name:
-                    display_name += f" [Sheet: {sheet_name}]"
-                self.combine_pivot_file_listbox.insert(tk.END, display_name)
+                # Add file widget to UI
+                self.combine_pivot_add_file_widget(file_info)
 
                 self.status_var.set(f"Added {file_info['name']}")
 
@@ -2056,62 +2158,14 @@ class CleanSheetApp:
         # Update summary
         self.combine_pivot_update_summary()
 
-    def _ask_sheet_selection(self, file_path, sheets):
-        """Ask user to select a sheet from an Excel file"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Select Sheet")
-        dialog.geometry("400x300")
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        ttk.Label(
-            dialog,
-            text=f"Select sheet from:\n{os.path.basename(file_path)}",
-            font=('Segoe UI', 11, 'bold')
-        ).pack(pady=15)
-
-        # Sheet listbox
-        list_frame = ttk.Frame(dialog)
-        list_frame.pack(fill='both', expand=True, padx=20, pady=10)
-
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side='right', fill='y')
-
-        sheet_listbox = tk.Listbox(list_frame, font=('Segoe UI', 10), yscrollcommand=scrollbar.set)
-        sheet_listbox.pack(side='left', fill='both', expand=True)
-        scrollbar.config(command=sheet_listbox.yview)
-
-        for sheet in sheets:
-            sheet_listbox.insert(tk.END, sheet)
-
-        # Select first sheet by default
-        sheet_listbox.selection_set(0)
-
-        selected_sheet = [None]
-
-        def on_ok():
-            selection = sheet_listbox.curselection()
-            if selection:
-                selected_sheet[0] = sheets[selection[0]]
-            dialog.destroy()
-
-        def on_cancel():
-            dialog.destroy()
-
-        # Buttons
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(pady=10)
-
-        ttk.Button(btn_frame, text="OK", command=on_ok, width=10).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="Cancel", command=on_cancel, width=10).pack(side='left', padx=5)
-
-        dialog.wait_window()
-        return selected_sheet[0]
-
     def combine_pivot_update_options(self):
         """Update normalization options in engine"""
+        # Update engine normalization settings
         self.combine_pivot_engine.normalize_lowercase = self.normalize_lowercase_var.get()
         self.combine_pivot_engine.normalize_whitespace = self.normalize_whitespace_var.get()
+
+        # Note: special_chars and underscores normalization will be added to engine later if needed
+        # For now, just track them in the UI
 
         # Re-validate if files are loaded
         if len(self.combine_pivot_engine.loaded_files) >= 2:
@@ -2165,28 +2219,42 @@ class CleanSheetApp:
         self.combine_pivot_summary_text.insert('1.0', summary_text)
         self.combine_pivot_summary_text.config(state='disabled')
 
-    def combine_pivot_remove_file(self):
-        """Remove selected file from combine queue"""
-        selection = self.combine_pivot_file_listbox.curselection()
-        if not selection:
-            return
-
-        index = selection[0]
-
+    def combine_pivot_remove_file_by_path(self, file_path):
+        """Remove a specific file from combine queue by path"""
         # Remove from engine
-        file_info = self.combine_pivot_engine.loaded_files[index]
-        self.combine_pivot_engine.remove_file(file_info['path'])
+        self.combine_pivot_engine.remove_file(file_path)
 
-        # Remove from listbox
-        self.combine_pivot_file_listbox.delete(index)
+        # Remove from file sheets dict
+        self.combine_pivot_file_sheets.pop(file_path, None)
+
+        # Find and remove widget
+        widget_to_remove = None
+        for widget_info in self.combine_pivot_file_widgets:
+            if widget_info['file_path'] == file_path:
+                widget_to_remove = widget_info
+                break
+
+        if widget_to_remove:
+            widget_to_remove['frame'].destroy()
+            self.combine_pivot_file_widgets.remove(widget_to_remove)
 
         # Update summary
         self.combine_pivot_update_summary()
 
     def combine_pivot_clear_files(self):
         """Clear all files from combine queue"""
+        # Clear engine
         self.combine_pivot_engine.clear_files()
-        self.combine_pivot_file_listbox.delete(0, tk.END)
+
+        # Clear file sheets dict
+        self.combine_pivot_file_sheets.clear()
+
+        # Destroy all file widgets
+        for widget_info in self.combine_pivot_file_widgets:
+            widget_info['frame'].destroy()
+        self.combine_pivot_file_widgets.clear()
+
+        # Update summary
         self.combine_pivot_update_summary()
         self.status_var.set("Cleared all files")
 
