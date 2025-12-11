@@ -1883,32 +1883,9 @@ class CleanSheetApp:
         self.combine_pivot_file_widgets = []  # List of dicts with file info and widgets
         self.combine_pivot_file_sheets = {}  # {file_path: selected_sheet}
 
-        # ==================== CENTERED CONTAINER ====================
-        # Outer container for centering
-        center_container = tk.Frame(self.combine_pivot_panel, bg='white')
-        center_container.pack(anchor='n', expand=True, fill='both')
-
-        # Inner container with fixed width for content
-        inner_container = tk.Frame(center_container, bg='white')
-        inner_container.pack(anchor='n', pady=10)
-
-        # Main container with scrolling
-        canvas = tk.Canvas(inner_container, bg='white', highlightthickness=0, width=900)
-        scrollbar = ttk.Scrollbar(inner_container, orient='vertical', command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas, style='Card.TFrame')
-
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-
-        canvas.create_window((450, 0), window=scrollable_frame, anchor='n')  # Center at x=450
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side='left', fill='both', expand=True)
-        scrollbar.pack(side='right', fill='y')
-
-        main_container = scrollable_frame
+        # Main container (same structure as other modes)
+        main_container = ttk.Frame(self.combine_pivot_panel, style='Card.TFrame')
+        main_container.pack(fill='both', expand=True, padx=20, pady=20)
 
         # Title
         title_label = ttk.Label(
@@ -1917,7 +1894,7 @@ class CleanSheetApp:
             font=('Segoe UI', 18, 'bold'),
             foreground='#0078D4'
         )
-        title_label.pack(pady=(15, 5), padx=20)
+        title_label.pack(pady=(10, 5), padx=20)
 
         subtitle_label = ttk.Label(
             main_container,
@@ -1927,11 +1904,11 @@ class CleanSheetApp:
             foreground='#666666',
             justify='center'
         )
-        subtitle_label.pack(pady=(0, 15), padx=20)
+        subtitle_label.pack(pady=(0, 20), padx=20)
 
         # ==================== SECTION 1: FILE UPLOAD ====================
         upload_section = ttk.LabelFrame(main_container, text="📁 File Upload", padding=15)
-        upload_section.pack(fill='x', padx=20, pady=(0, 10))
+        upload_section.pack(fill='x', padx=10, pady=8)
 
         btn_upload = ttk.Button(
             upload_section,
@@ -1959,7 +1936,7 @@ class CleanSheetApp:
 
         # ==================== SECTION 2: HEADER NORMALIZATION OPTIONS ====================
         norm_section = ttk.LabelFrame(main_container, text="⚙️ Header Normalization Options", padding=15)
-        norm_section.pack(fill='x', padx=20, pady=(0, 10))
+        norm_section.pack(fill='x', padx=10, pady=8)
 
         ttk.Label(
             norm_section,
@@ -1991,7 +1968,7 @@ class CleanSheetApp:
 
         # ==================== SECTION 3: SUMMARY & VALIDATION ====================
         summary_section = ttk.LabelFrame(main_container, text="📊 Summary & Validation", padding=15)
-        summary_section.pack(fill='x', padx=20, pady=(0, 10))
+        summary_section.pack(fill='x', padx=10, pady=8)
 
         self.combine_pivot_summary_text = tk.Text(
             summary_section,
@@ -2005,7 +1982,7 @@ class CleanSheetApp:
 
         # ==================== SECTION 4: COMBINE ACTION ====================
         action_section = ttk.LabelFrame(main_container, text="🚀 Combine Action", padding=15)
-        action_section.pack(fill='x', padx=20, pady=(0, 10))
+        action_section.pack(fill='x', padx=10, pady=8)
 
         action_frame = ttk.Frame(action_section)
         action_frame.pack(fill='x')
