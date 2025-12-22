@@ -41,6 +41,7 @@ from engine.validator import Validator
 from presets.preset_manager import PresetManager, Preset, OperationConfig
 from ui.themes.accessible_theme import AccessibleTheme
 from ui.dedupe_panel import DedupePanel
+from ui.sheet_selection_dialog import select_sheet_from_file, SheetSelectionDialog
 
 # Authentication imports
 from auth.login_window import LoginWindow
@@ -94,6 +95,10 @@ class CleanSheetApp:
         self.removed_df = None
         self.current_file = None
         self.operation_queue = []
+
+        # Sheet selection tracking (for multi-sheet Excel files)
+        self.current_sheet_name = None  # Currently selected sheet name
+        self.available_sheets = []  # List of all sheets in current file
 
         # Data - Multi-File Mode
         self.loaded_files = []  # List of {'name': str, 'path': str, 'df': DataFrame}
@@ -335,6 +340,16 @@ class CleanSheetApp:
         ttk.Label(header_frame, textvariable=self.file_info_var,
                  font=('Segoe UI', 12, 'bold'),
                  foreground='#323130').pack(side='left')
+
+        # Change Sheet button (right side, initially hidden)
+        self.change_sheet_btn = ttk.Button(
+            header_frame,
+            text="📑 Change Sheet",
+            command=self.change_sheet,
+            style='RibbonButton.TButton',
+            width=15
+        )
+        # Button will be shown/hidden dynamically based on file type
 
         # Reorder Columns button (right side)
         ttk.Button(
@@ -3777,10 +3792,68 @@ class CleanSheetApp:
         if messagebox.askyesno("Confirm", "Clear all operations from queue?"):
             self.operation_queue = []
             self.refresh_queue_display()
-    
+
+    def change_sheet(self):
+        """Allow user to change the active sheet for the current Excel file"""
+        if not self.current_file or not self.available_sheets:
+            messagebox.showwarning("Warning", "No Excel file with multiple sheets loaded")
+            return
+
+        if len(self.available_sheets) <= 1:
+            messagebox.showinfo("Info", "This file only has one sheet")
+            return
+
+        # Show sheet selection dialog with current sheet highlighted
+        file_name = Path(self.current_file).name
+        dialog = SheetSelectionDialog(self.root, self.available_sheets, file_name)
+
+        # Pre-select current sheet if known
+        if self.current_sheet_name:
+            try:
+                current_index = self.available_sheets.index(self.current_sheet_name)
+                dialog.sheet_listbox.selection_clear(0, tk.END)
+                dialog.sheet_listbox.selection_set(current_index)
+                dialog.sheet_listbox.see(current_index)
+            except (ValueError, AttributeError):
+                pass
+
+        selected_sheet = dialog.show()
+
+        if selected_sheet and selected_sheet != self.current_sheet_name:
+            # Load new sheet
+            try:
+                logging.info(f"[SHEET CHANGE] Changing from '{self.current_sheet_name}' to '{selected_sheet}'")
+                self.df = pd.read_excel(self.current_file, sheet_name=selected_sheet)
+                self.current_sheet_name = selected_sheet
+
+                # Clear result data when switching sheets
+                self.result_df = None
+                self.removed_df = None
+
+                # Update file info with new sheet name
+                self.file_info_var.set(
+                    f"📁 {Path(self.current_file).name} | Sheet: {selected_sheet} • {len(self.df):,} rows × {len(self.df.columns)} columns"
+                )
+
+                # Refresh preview
+                self.enhanced_preview.load_dataframe(self.df, is_result=False)
+
+                # Update status
+                self.status_var.set(f"Switched to sheet: {selected_sheet}")
+
+                # Update Excel status bar if present
+                if hasattr(self, 'excel_status_bar'):
+                    self.excel_status_bar.update_row_count(len(self.df))
+
+                messagebox.showinfo("Sheet Changed", f"Now viewing sheet: {selected_sheet}\n\n{len(self.df):,} rows × {len(self.df.columns)} columns")
+
+            except Exception as e:
+                logging.error(f"[SHEET CHANGE ERROR] {str(e)}")
+                messagebox.showerror("Error", f"Failed to load sheet:\n{str(e)}")
+
 
     def load_file(self):
-        """Load data file with smart header detection"""
+        """Load data file with smart header detection and sheet selection"""
         filename = filedialog.askopenfilename(
             title="Select Data File",
             filetypes=[
@@ -3794,11 +3867,51 @@ class CleanSheetApp:
             return
 
         try:
-            # Initial load to detect headers
+            # Reset sheet tracking
+            self.current_sheet_name = None
+            self.available_sheets = []
+            self.change_sheet_btn.pack_forget()  # Hide by default
+
+            # === STEP 1: SHEET SELECTION (for Excel files only) ===
+            selected_sheet = None
+            if not filename.endswith('.csv'):
+                logging.info(f"[FILE LOAD] Loading Excel file: {filename}")
+
+                # Detect available sheets BEFORE loading any data
+                excel_file = pd.ExcelFile(filename)
+                sheet_names = excel_file.sheet_names
+                self.available_sheets = sheet_names
+
+                logging.info(f"[FILE LOAD] Detected {len(sheet_names)} sheets: {sheet_names}")
+
+                # If only one sheet, use it automatically
+                if len(sheet_names) == 1:
+                    selected_sheet = sheet_names[0]
+                    logging.info(f"[FILE LOAD] Single sheet detected, auto-loading: {selected_sheet}")
+
+                # Multiple sheets - MUST show selection dialog
+                else:
+                    logging.info(f"[FILE LOAD] Multiple sheets detected, showing dialog...")
+                    selected_sheet = select_sheet_from_file(self.root, filename, sheet_names)
+                    logging.info(f"[FILE LOAD] Dialog returned: {selected_sheet}")
+
+                    # User cancelled sheet selection
+                    if selected_sheet is None:
+                        self.status_var.set("File load cancelled - no sheet selected")
+                        logging.info("[FILE LOAD] User cancelled sheet selection")
+                        return
+
+                # Store selected sheet
+                self.current_sheet_name = selected_sheet
+                logging.info(f"[FILE LOAD] Will load sheet: {selected_sheet}")
+
+            # === STEP 2: HEADER DETECTION (test load with selected sheet) ===
             if filename.endswith('.csv'):
                 df_test = self._load_csv_with_encoding_detection(filename, nrows=5)
             else:
-                df_test = pd.read_excel(filename, nrows=5)
+                # CRITICAL: Pass sheet_name parameter
+                df_test = pd.read_excel(filename, sheet_name=selected_sheet, nrows=5)
+                logging.info(f"[FILE LOAD] Test load completed for sheet '{selected_sheet}'")
 
             # Check if first row has mostly "Unnamed" columns
             unnamed_count = sum(1 for col in df_test.columns if str(col).startswith('Unnamed'))
@@ -3806,7 +3919,7 @@ class CleanSheetApp:
 
             # If >50% columns are "Unnamed", headers are probably in row 1
             if unnamed_ratio > 0.5:
-                logging.info(f"Detected {unnamed_ratio:.0%} unnamed columns - headers likely in row 1")
+                logging.info(f"[FILE LOAD] Detected {unnamed_ratio:.0%} unnamed columns - headers likely in row 1")
 
                 # Ask user for confirmation
                 response = messagebox.askyesno(
@@ -3820,27 +3933,38 @@ class CleanSheetApp:
                 )
 
                 if response:
-                    # Load with header in row 1 (0-indexed)
                     header_row = 1
                 else:
-                    # Use default (row 0)
                     header_row = 0
             else:
-                # Looks good, use row 0 as headers
                 header_row = 0
 
-            # Load file with correct header row
+            # === STEP 3: FULL LOAD with selected sheet and header row ===
             if filename.endswith('.csv'):
                 self.df = self._load_csv_with_encoding_detection(filename, header=header_row)
             else:
-                self.df = pd.read_excel(filename, header=header_row)
+                # CRITICAL: Pass sheet_name parameter
+                self.df = pd.read_excel(filename, sheet_name=selected_sheet, header=header_row)
+                logging.info(f"[FILE LOAD] Full load completed for sheet '{selected_sheet}': {len(self.df):,} rows")
 
             self.current_file = filename
 
-            # Update UI
-            self.file_info_var.set(
-                f"📁 {Path(filename).name} • {len(self.df):,} rows × {len(self.df.columns)} columns"
-            )
+            # === STEP 4: UPDATE UI ===
+            # Update file info header (include sheet name for Excel)
+            if self.current_sheet_name:
+                self.file_info_var.set(
+                    f"📁 {Path(filename).name} | Sheet: {self.current_sheet_name} • {len(self.df):,} rows × {len(self.df.columns)} columns"
+                )
+            else:
+                # CSV file - no sheet name
+                self.file_info_var.set(
+                    f"📁 {Path(filename).name} • {len(self.df):,} rows × {len(self.df.columns)} columns"
+                )
+
+            # Show "Change Sheet" button ONLY for multi-sheet Excel files
+            if len(self.available_sheets) > 1:
+                self.change_sheet_btn.pack(side='right', padx=5)
+                logging.info("[FILE LOAD] Showing 'Change Sheet' button (multi-sheet file)")
 
             # Use enhanced preview
             self.enhanced_preview.load_dataframe(self.df, is_result=False)
@@ -3851,11 +3975,17 @@ class CleanSheetApp:
             if hasattr(self, 'excel_status_bar'):
                 self.excel_status_bar.update_row_count(len(self.df))
 
-            messagebox.showinfo("Success",
-                              f"Loaded {len(self.df):,} records with {len(self.df.columns)} columns\n\n"
-                              f"Header row: {header_row + 1}")
+            # Build success message
+            success_msg = f"Loaded {len(self.df):,} records with {len(self.df.columns)} columns\n\nHeader row: {header_row + 1}"
+            if self.current_sheet_name:
+                success_msg += f"\n\nSheet: {self.current_sheet_name}"
+                if len(self.available_sheets) > 1:
+                    success_msg += f" (of {len(self.available_sheets)} sheets)"
+
+            messagebox.showinfo("Success", success_msg)
 
         except Exception as e:
+            logging.error(f"[FILE LOAD ERROR] {str(e)}")
             messagebox.showerror("Error", f"Failed to load file:\n{str(e)}")
     
 
