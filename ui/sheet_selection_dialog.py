@@ -42,7 +42,6 @@ class SheetSelectionDialog:
         self.dialog.title("Select Sheet to Load")
         self.dialog.geometry("500x400")
         self.dialog.transient(parent)
-        self.dialog.grab_set()
 
         # Center the dialog
         self.dialog.update_idletasks()
@@ -50,10 +49,15 @@ class SheetSelectionDialog:
         y = (self.dialog.winfo_screenheight() // 2) - (400 // 2)
         self.dialog.geometry(f"500x400+{x}+{y}")
 
-        # Make dialog modal
+        # Make dialog modal and ensure visibility
         self.dialog.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
         self._create_widgets()
+
+        # Ensure dialog is visible and has focus (after widgets are created)
+        self.dialog.lift()  # Bring to front
+        self.dialog.focus_force()  # Force focus
+        self.dialog.grab_set()  # Make modal (after lift and focus)
 
     def _create_widgets(self):
         """Create dialog UI components"""
@@ -213,33 +217,45 @@ class SheetSelectionDialog:
         return self.result
 
 
-def select_sheet_from_file(parent, file_path: str) -> Optional[str]:
+def select_sheet_from_file(parent, file_path: str, sheet_names: Optional[list] = None) -> Optional[str]:
     """
-    Convenience function to show sheet selection dialog for an Excel file.
+    Show sheet selection dialog for an Excel file with multiple sheets.
 
     Args:
         parent: Parent tkinter window
         file_path: Path to Excel file
+        sheet_names: Optional list of sheet names (if already known, avoids re-reading file)
 
     Returns:
         Selected sheet name, or None if cancelled or error
     """
     try:
-        # Get sheet names from file
-        excel_file = pd.ExcelFile(file_path)
-        sheet_names = excel_file.sheet_names
+        # Get sheet names if not provided
+        if sheet_names is None:
+            print(f"DEBUG: select_sheet_from_file reading sheets from {file_path}")
+            excel_file = pd.ExcelFile(file_path)
+            sheet_names = excel_file.sheet_names
+        else:
+            print(f"DEBUG: select_sheet_from_file using provided sheet names: {sheet_names}")
 
-        # If only one sheet, return it directly
+        # If only one sheet, return it directly (shouldn't happen if called correctly)
         if len(sheet_names) == 1:
+            print(f"DEBUG: Only one sheet found, returning: {sheet_names[0]}")
             return sheet_names[0]
 
         # Show dialog for multiple sheets
         import os
         file_name = os.path.basename(file_path)
+        print(f"DEBUG: Creating SheetSelectionDialog for {file_name} with {len(sheet_names)} sheets")
         dialog = SheetSelectionDialog(parent, sheet_names, file_name)
-        return dialog.show()
+        result = dialog.show()
+        print(f"DEBUG: SheetSelectionDialog result: {result}")
+        return result
 
     except Exception as e:
+        print(f"DEBUG ERROR: select_sheet_from_file failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
         messagebox.showerror(
             "Error",
             f"Failed to read Excel file:\n{str(e)}",

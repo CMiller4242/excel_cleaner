@@ -290,10 +290,20 @@ class UniversalExcelToolV2Enhanced:
         # File info header
         header_frame = ttk.Frame(right_frame)
         header_frame.pack(fill='x', pady=5)
-        
+
+        # Left side: file info label
         self.file_info_var = tk.StringVar(value="No file loaded")
         ttk.Label(header_frame, textvariable=self.file_info_var,
-                 font=('Arial', 11, 'bold')).pack(pady=5)
+                 font=('Arial', 11, 'bold')).pack(side='left', pady=5, padx=10)
+
+        # Right side: Change Sheet button (initially hidden)
+        self.change_sheet_btn = ttk.Button(
+            header_frame,
+            text="📑 Change Sheet",
+            command=self.change_sheet,
+            style='Primary.TButton'
+        )
+        # Button will be shown/hidden dynamically based on file type
         
         # ENHANCED PREVIEW - Replace old preview with new component
         self.enhanced_preview = EnhancedDataPreview(right_frame)
@@ -1097,6 +1107,58 @@ class UniversalExcelToolV2Enhanced:
             self.operation_queue = []
             self.refresh_queue_display()
     
+    def change_sheet(self):
+        """Allow user to change the active sheet for the current Excel file"""
+        if not self.current_file or not self.available_sheets:
+            messagebox.showwarning("Warning", "No Excel file with multiple sheets loaded")
+            return
+
+        if len(self.available_sheets) <= 1:
+            messagebox.showinfo("Info", "This file only has one sheet")
+            return
+
+        # Show sheet selection dialog with current sheet highlighted
+        from ui.sheet_selection_dialog import SheetSelectionDialog
+        file_name = Path(self.current_file).name
+        dialog = SheetSelectionDialog(self.root, self.available_sheets, file_name)
+
+        # Pre-select current sheet if known
+        if self.current_sheet_name:
+            try:
+                current_index = self.available_sheets.index(self.current_sheet_name)
+                dialog.sheet_listbox.selection_clear(0, tk.END)
+                dialog.sheet_listbox.selection_set(current_index)
+                dialog.sheet_listbox.see(current_index)
+            except (ValueError, AttributeError):
+                pass
+
+        selected_sheet = dialog.show()
+
+        if selected_sheet and selected_sheet != self.current_sheet_name:
+            # Load new sheet
+            try:
+                print(f"DEBUG: Changing sheet from {self.current_sheet_name} to {selected_sheet}")
+                self.df = pd.read_excel(self.current_file, sheet_name=selected_sheet)
+                self.current_sheet_name = selected_sheet
+
+                # Clear result data when switching sheets
+                self.result_df = None
+                self.removed_df = None
+
+                # Update file info
+                self.file_info_var.set(
+                    f"📁 {Path(self.current_file).name} | Sheet: {selected_sheet} • {len(self.df):,} rows × {len(self.df.columns)} columns"
+                )
+
+                # Refresh preview
+                self.enhanced_preview.load_dataframe(self.df, is_result=False)
+
+                self.status_var.set(f"Switched to sheet: {selected_sheet}")
+                messagebox.showinfo("Sheet Changed", f"Now viewing sheet: {selected_sheet}")
+
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load sheet:\n{str(e)}")
+
     def load_file(self):
         """Load data file with enhanced preview and sheet selection"""
         filename = filedialog.askopenfilename(
@@ -1116,6 +1178,9 @@ class UniversalExcelToolV2Enhanced:
             self.current_sheet_name = None
             self.available_sheets = []
 
+            # Hide change sheet button by default
+            self.change_sheet_btn.pack_forget()
+
             # Handle CSV files (no sheet selection needed)
             if filename.endswith('.csv'):
                 self.df = pd.read_csv(filename)
@@ -1129,13 +1194,16 @@ class UniversalExcelToolV2Enhanced:
             # Handle Excel files (with sheet selection)
             else:
                 # Detect available sheets
+                print(f"DEBUG: Loading Excel file: {filename}")  # Debug logging
                 excel_file = pd.ExcelFile(filename)
                 sheet_names = excel_file.sheet_names
                 self.available_sheets = sheet_names
+                print(f"DEBUG: Detected {len(sheet_names)} sheets: {sheet_names}")  # Debug logging
 
                 # If only one sheet, load it automatically
                 if len(sheet_names) == 1:
                     selected_sheet = sheet_names[0]
+                    print(f"DEBUG: Single sheet detected, auto-loading: {selected_sheet}")  # Debug
                     self.current_sheet_name = selected_sheet
                     self.df = pd.read_excel(filename, sheet_name=selected_sheet)
                     self.current_file = filename
@@ -1144,17 +1212,22 @@ class UniversalExcelToolV2Enhanced:
                     self.file_info_var.set(
                         f"📁 {Path(filename).name} | Sheet: {selected_sheet} • {len(self.df):,} rows × {len(self.df.columns)} columns"
                     )
+                    # No need for change sheet button with single sheet
 
                 # Multiple sheets - show selection dialog
                 else:
-                    selected_sheet = select_sheet_from_file(self.root, filename)
+                    print(f"DEBUG: Multiple sheets detected, showing dialog...")  # Debug logging
+                    selected_sheet = select_sheet_from_file(self.root, filename, sheet_names)
+                    print(f"DEBUG: Dialog returned: {selected_sheet}")  # Debug logging
 
                     # User cancelled sheet selection
                     if selected_sheet is None:
                         self.status_var.set("File load cancelled - no sheet selected")
+                        print("DEBUG: User cancelled sheet selection")  # Debug
                         return
 
                     # Load selected sheet
+                    print(f"DEBUG: Loading selected sheet: {selected_sheet}")  # Debug
                     self.current_sheet_name = selected_sheet
                     self.df = pd.read_excel(filename, sheet_name=selected_sheet)
                     self.current_file = filename
@@ -1163,6 +1236,9 @@ class UniversalExcelToolV2Enhanced:
                     self.file_info_var.set(
                         f"📁 {Path(filename).name} | Sheet: {selected_sheet} • {len(self.df):,} rows × {len(self.df.columns)} columns"
                     )
+
+                    # Show "Change Sheet" button for multi-sheet files
+                    self.change_sheet_btn.pack(side='right', padx=10)
 
             # Use enhanced preview
             self.enhanced_preview.load_dataframe(self.df, is_result=False)
