@@ -34,6 +34,7 @@ from datetime import datetime
 # Import enhanced components
 from enhanced_preview import EnhancedDataPreview
 from smart_column_selector import ColumnSelector, MultiColumnSelector, SmartColumnDialog
+from ui.sheet_selection_dialog import select_sheet_from_file
 
 
 class UniversalExcelToolV2Enhanced:
@@ -50,6 +51,10 @@ class UniversalExcelToolV2Enhanced:
         self.removed_df = None  # Track removed rows for multi-sheet export
         self.current_file = None
         self.operation_queue = []
+
+        # Sheet selection tracking
+        self.current_sheet_name = None  # Selected sheet name
+        self.available_sheets = []  # List of all sheets in current file
         
         # Mode: simple or advanced
         self.mode = tk.StringVar(value="simple")
@@ -1093,7 +1098,7 @@ class UniversalExcelToolV2Enhanced:
             self.refresh_queue_display()
     
     def load_file(self):
-        """Load data file with enhanced preview"""
+        """Load data file with enhanced preview and sheet selection"""
         filename = filedialog.askopenfilename(
             title="Select Data File",
             filetypes=[
@@ -1102,29 +1107,77 @@ class UniversalExcelToolV2Enhanced:
                 ("All files", "*.*")
             ]
         )
-        
+
         if not filename:
             return
-        
+
         try:
+            # Reset sheet tracking
+            self.current_sheet_name = None
+            self.available_sheets = []
+
+            # Handle CSV files (no sheet selection needed)
             if filename.endswith('.csv'):
                 self.df = pd.read_csv(filename)
+                self.current_file = filename
+
+                # Update file info (no sheet name for CSV)
+                self.file_info_var.set(
+                    f"📁 {Path(filename).name} • {len(self.df):,} rows × {len(self.df.columns)} columns"
+                )
+
+            # Handle Excel files (with sheet selection)
             else:
-                self.df = pd.read_excel(filename)
-            
-            self.current_file = filename
-            self.file_info_var.set(
-                f"📁 {Path(filename).name} • {len(self.df):,} rows × {len(self.df.columns)} columns"
-            )
-            
+                # Detect available sheets
+                excel_file = pd.ExcelFile(filename)
+                sheet_names = excel_file.sheet_names
+                self.available_sheets = sheet_names
+
+                # If only one sheet, load it automatically
+                if len(sheet_names) == 1:
+                    selected_sheet = sheet_names[0]
+                    self.current_sheet_name = selected_sheet
+                    self.df = pd.read_excel(filename, sheet_name=selected_sheet)
+                    self.current_file = filename
+
+                    # Update file info with sheet name
+                    self.file_info_var.set(
+                        f"📁 {Path(filename).name} | Sheet: {selected_sheet} • {len(self.df):,} rows × {len(self.df.columns)} columns"
+                    )
+
+                # Multiple sheets - show selection dialog
+                else:
+                    selected_sheet = select_sheet_from_file(self.root, filename)
+
+                    # User cancelled sheet selection
+                    if selected_sheet is None:
+                        self.status_var.set("File load cancelled - no sheet selected")
+                        return
+
+                    # Load selected sheet
+                    self.current_sheet_name = selected_sheet
+                    self.df = pd.read_excel(filename, sheet_name=selected_sheet)
+                    self.current_file = filename
+
+                    # Update file info with sheet name
+                    self.file_info_var.set(
+                        f"📁 {Path(filename).name} | Sheet: {selected_sheet} • {len(self.df):,} rows × {len(self.df.columns)} columns"
+                    )
+
             # Use enhanced preview
             self.enhanced_preview.load_dataframe(self.df, is_result=False)
-            
+
+            # Build success message
+            success_msg = f"Loaded {len(self.df):,} records with {len(self.df.columns)} columns"
+            if self.current_sheet_name:
+                success_msg += f"\n\nSheet: {self.current_sheet_name}"
+                if len(self.available_sheets) > 1:
+                    success_msg += f" (of {len(self.available_sheets)} sheets)"
+
             self.status_var.set(f"Loaded {len(self.df):,} records successfully")
-            
-            messagebox.showinfo("Success",
-                              f"Loaded {len(self.df):,} records with {len(self.df.columns)} columns")
-            
+
+            messagebox.showinfo("Success", success_msg)
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load file:\n{str(e)}")
     
