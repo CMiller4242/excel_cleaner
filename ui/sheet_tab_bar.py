@@ -40,6 +40,7 @@ class SheetTabBar(ttk.Frame):
         self.sheet_names: List[str] = []
         self.active_sheet: Optional[str] = None
         self.tab_buttons: dict[str, tk.Label] = {}
+        self.sheets_with_issues: set = set()  # Track which sheets have validation issues
 
         # Configure the frame
         self.configure(style='SheetTabBar.TFrame')
@@ -125,11 +126,15 @@ class SheetTabBar(ttk.Frame):
             index: Index position of the tab
         """
         is_active = (sheet_name == self.active_sheet)
+        has_issues = (sheet_name in self.sheets_with_issues)
+
+        # Add warning icon if sheet has issues
+        display_text = f"{sheet_name} ⚠" if has_issues else sheet_name
 
         # Create tab as a Label (acts like a button)
         tab = tk.Label(
             self.tabs_frame,
-            text=sheet_name,
+            text=display_text,
             bg=self.ACTIVE_BG if is_active else self.INACTIVE_BG,
             fg=self.ACTIVE_FG if is_active else self.INACTIVE_FG,
             font=('Segoe UI', 10, 'bold' if is_active else 'normal'),
@@ -231,7 +236,49 @@ class SheetTabBar(ttk.Frame):
         self.tab_buttons.clear()
         self.sheet_names = []
         self.active_sheet = None
+        self.sheets_with_issues.clear()
         logging.info("[SHEET TAB BAR] Cleared")
+
+    def mark_sheet_issues(self, sheet_name: str, has_issues: bool = True):
+        """
+        Mark or unmark a sheet as having validation issues
+
+        Args:
+            sheet_name: Name of the sheet
+            has_issues: True to mark with warning icon, False to remove
+        """
+        if has_issues:
+            self.sheets_with_issues.add(sheet_name)
+        else:
+            self.sheets_with_issues.discard(sheet_name)
+
+        # Update tab display if it exists
+        if sheet_name in self.tab_buttons:
+            tab = self.tab_buttons[sheet_name]
+            is_active = (sheet_name == self.active_sheet)
+            display_text = f"{sheet_name} ⚠" if has_issues else sheet_name
+            tab.configure(text=display_text)
+            logging.info(f"[SHEET TAB BAR] Sheet '{sheet_name}' {'marked' if has_issues else 'unmarked'} with issues")
+
+    def update_all_issue_indicators(self, sheets_with_issues: set):
+        """
+        Update issue indicators for all sheets at once
+
+        Args:
+            sheets_with_issues: Set of sheet names that have issues
+        """
+        self.sheets_with_issues = sheets_with_issues.copy()
+
+        # Update all tabs
+        for sheet_name in self.sheet_names:
+            if sheet_name in self.tab_buttons:
+                tab = self.tab_buttons[sheet_name]
+                has_issues = (sheet_name in self.sheets_with_issues)
+                display_text = f"{sheet_name} ⚠" if has_issues else sheet_name
+                tab.configure(text=display_text)
+
+        if sheets_with_issues:
+            logging.info(f"[SHEET TAB BAR] Updated issue indicators for {len(sheets_with_issues)} sheets")
 
 
 # Example usage and testing

@@ -4197,14 +4197,56 @@ class CleanSheetApp:
             return
         
         try:
-            # Validate
-            is_valid, errors = Validator.validate_queue(self.df, self.operation_queue)
-            if not is_valid:
-                error_msg = "\n".join(errors)
-                messagebox.showerror("Validation Error",
-                                   f"Cannot execute:\n{error_msg}")
-                return
-            
+            # Determine validation mode
+            use_non_fatal = (self.workbook_session and
+                           self.workbook_session.is_excel and
+                           len(self.workbook_session.sheet_names) > 1)
+
+            validation_issues = []
+
+            if use_non_fatal:
+                # MULTI-SHEET MODE: Use non-fatal validation
+                logging.info("[VALIDATION] Using non-fatal validation for multi-sheet mode")
+                validation_issues = Validator.validate_queue_non_fatal(
+                    self.df,
+                    self.operation_queue,
+                    self.current_sheet_name or "Sheet"
+                )
+
+                if validation_issues:
+                    # Show issues but allow user to continue
+                    issue_summary = f"Found {len(validation_issues)} validation issue(s):\n\n"
+                    for issue in validation_issues[:5]:  # Show first 5
+                        issue_summary += f"• {issue.op_label}: {issue.message}\n"
+                    if len(validation_issues) > 5:
+                        issue_summary += f"\n... and {len(validation_issues) - 5} more"
+
+                    response = messagebox.askyesnocancel(
+                        "Validation Issues Found",
+                        f"{issue_summary}\n\n"
+                        f"Continue anyway?\n\n"
+                        f"Yes = Continue execution (issues will be recorded)\n"
+                        f"No = Cancel execution\n",
+                        icon='warning'
+                    )
+
+                    if response is None or response is False:
+                        # User cancelled
+                        logging.info("[VALIDATION] User cancelled due to validation issues")
+                        return
+
+                    logging.info(f"[VALIDATION] User chose to continue despite {len(validation_issues)} issue(s)")
+
+            else:
+                # SINGLE-SHEET MODE: Use fatal validation (backward compatible)
+                logging.info("[VALIDATION] Using fatal validation for single-sheet mode")
+                is_valid, errors = Validator.validate_queue(self.df, self.operation_queue)
+                if not is_valid:
+                    error_msg = "\n".join(errors)
+                    messagebox.showerror("Validation Error",
+                                       f"Cannot execute:\n{error_msg}")
+                    return
+
             # Execute
             self.status_var.set("Executing operations...")
             self.root.update()
@@ -4219,6 +4261,17 @@ class CleanSheetApp:
                     active_sheet.df_result = self.result_df
                     active_sheet.removed_rows = self.removed_df
                     active_sheet.is_dirty = True
+
+                    # Store validation issues
+                    active_sheet.issues = validation_issues
+
+                    if validation_issues:
+                        logging.warning(f"[VALIDATION] Recorded {len(validation_issues)} issue(s) for sheet '{active_sheet.sheet_name_display}'")
+
+                        # Mark sheet tab with warning indicator
+                        if self.sheet_tab_bar and self.current_sheet_name:
+                            self.sheet_tab_bar.mark_sheet_issues(self.current_sheet_name, has_issues=True)
+
                     logging.info(f"[WORKFLOW] Saved results to sheet '{active_sheet.sheet_name_display}': {len(self.result_df):,} rows")
 
             # Display in enhanced preview
@@ -4230,13 +4283,24 @@ class CleanSheetApp:
             if removed_count > 0:
                 success_msg += f"\nRemoved: {removed_count:,} rows"
 
+            # Add validation issues warning if any
+            if validation_issues:
+                success_msg += f"\n\n⚠️ {len(validation_issues)} validation issue(s) recorded"
+                if len(validation_issues) <= 3:
+                    success_msg += ":\n"
+                    for issue in validation_issues:
+                        success_msg += f"  • {issue.op_label}: {issue.message}\n"
+
             self.status_var.set(f"✅ Complete! {len(self.result_df):,} rows in results")
 
             # Update Excel status bar
             if hasattr(self, 'excel_status_bar'):
                 self.excel_status_bar.update_row_count(len(self.result_df))
 
-            messagebox.showinfo("Success", success_msg)
+            if validation_issues:
+                messagebox.showwarning("Success with Issues", success_msg)
+            else:
+                messagebox.showinfo("Success", success_msg)
             
         except Exception as e:
             messagebox.showerror("Error", f"Execution failed:\n{str(e)}")
