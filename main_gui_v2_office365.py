@@ -4243,8 +4243,20 @@ class CleanSheetApp:
 
     def save_results(self):
         """Save results to file with multi-sheet export"""
-        if self.result_df is None:
-            messagebox.showwarning("Warning", "No results to save")
+        # Check if we have any results to save
+        has_results = False
+        if self.workbook_session:
+            # Multi-sheet mode: Check if any sheet has results
+            for sheet_state in self.workbook_session.sheets.values():
+                if sheet_state.has_results():
+                    has_results = True
+                    break
+        else:
+            # Single-sheet mode: Check active result
+            has_results = (self.result_df is not None)
+
+        if not has_results:
+            messagebox.showwarning("Warning", "No results to save. Run operations first.")
             return
 
         filename = filedialog.asksaveasfilename(
@@ -4262,44 +4274,96 @@ class CleanSheetApp:
 
         try:
             if filename.endswith('.csv'):
-                # CSV can only save one sheet - save results only
-                ExportHelper.export_to_csv(self.result_df, filename)
-                success_msg = f"Results saved to:\n{filename}\n\nNote: CSV format only saves Results sheet."
+                # CSV can only save one sheet - save active sheet results only
+                if self.result_df is not None:
+                    ExportHelper.export_to_csv(self.result_df, filename)
+                    if self.workbook_session:
+                        success_msg = f"Results saved to:\n{filename}\n\nNote: CSV format only saves active sheet '{self.current_sheet_name}' results."
+                    else:
+                        success_msg = f"Results saved to:\n{filename}"
+                else:
+                    messagebox.showwarning("Warning", "Active sheet has no results")
+                    return
+
             elif filename.endswith('.txt'):
                 # TXT format - comma-delimited with quotes
-                ExportHelper.export_to_txt(self.result_df, filename, include_header=True)
-                success_msg = f"Results saved to:\n{filename}\n\nFormat: Comma-delimited with quoted fields\nNote: TXT format only saves Results sheet."
+                if self.result_df is not None:
+                    ExportHelper.export_to_txt(self.result_df, filename, include_header=True)
+                    if self.workbook_session:
+                        success_msg = f"Results saved to:\n{filename}\n\nFormat: Comma-delimited with quoted fields\nNote: TXT format only saves active sheet '{self.current_sheet_name}' results."
+                    else:
+                        success_msg = f"Results saved to:\n{filename}\n\nFormat: Comma-delimited with quoted fields"
+                else:
+                    messagebox.showwarning("Warning", "Active sheet has no results")
+                    return
+
             else:
                 # Excel - export multi-sheet workbook
-                sheets = {}
+                if self.workbook_session and self.workbook_session.is_excel:
+                    # MULTI-SHEET MODE: Use WorkbookSession to export all sheets
+                    logging.info("[EXPORT] Multi-sheet mode - exporting all sheets via WorkbookSession")
 
-                # Sheet 1: Original data
-                if self.df is not None:
-                    sheets['Original'] = self.df
+                    # Get all export data from WorkbookSession
+                    export_sheets = self.workbook_session.get_export_data()
 
-                # Sheet 2: Results
-                sheets['Results'] = self.result_df
+                    if not export_sheets:
+                        messagebox.showwarning("Warning", "No sheets to export")
+                        return
 
-                # Sheet 3: Removed (if any rows were removed)
-                if self.removed_df is not None and not self.removed_df.empty:
-                    sheets['Removed'] = self.removed_df
+                    ExportHelper.export_multiple_sheets(export_sheets, filename)
 
-                ExportHelper.export_multiple_sheets(sheets, filename)
+                    # Build success message
+                    sheet_info = []
+                    removed_count = 0
+                    for sheet_name, df in export_sheets.items():
+                        if sheet_name == 'REMOVED_ROWS':
+                            removed_count = len(df)
+                            sheet_info.append(f"• REMOVED_ROWS: {removed_count:,} rows (combined from all sheets)")
+                        else:
+                            sheet_info.append(f"• {sheet_name}: {len(df):,} rows")
 
-                # Build success message
-                sheet_info = []
-                if 'Original' in sheets:
-                    sheet_info.append(f"• Original: {len(sheets['Original']):,} rows")
-                sheet_info.append(f"• Results: {len(sheets['Results']):,} rows")
-                if 'Removed' in sheets:
-                    sheet_info.append(f"• Removed: {len(sheets['Removed']):,} rows")
+                    success_msg = f"Multi-sheet workbook saved to:\n{filename}\n\n"
+                    success_msg += f"Exported {len(export_sheets)} sheets:\n" + "\n".join(sheet_info)
+                    success_msg += f"\n\n💡 All sheets preserved (processed + unprocessed)"
 
-                success_msg = f"Workbook saved to:\n{filename}\n\nSheets:\n" + "\n".join(sheet_info)
+                    logging.info(f"[EXPORT] Exported {len(export_sheets)} sheets to {filename}")
+
+                else:
+                    # SINGLE-SHEET MODE: Export as before (Original, Results, Removed)
+                    logging.info("[EXPORT] Single-sheet mode - exporting Original/Results/Removed")
+
+                    sheets = {}
+
+                    # Sheet 1: Original data
+                    if self.df is not None:
+                        sheets['Original'] = self.df
+
+                    # Sheet 2: Results
+                    if self.result_df is not None:
+                        sheets['Results'] = self.result_df
+
+                    # Sheet 3: Removed (if any rows were removed)
+                    if self.removed_df is not None and not self.removed_df.empty:
+                        sheets['Removed'] = self.removed_df
+
+                    ExportHelper.export_multiple_sheets(sheets, filename)
+
+                    # Build success message
+                    sheet_info = []
+                    if 'Original' in sheets:
+                        sheet_info.append(f"• Original: {len(sheets['Original']):,} rows")
+                    if 'Results' in sheets:
+                        sheet_info.append(f"• Results: {len(sheets['Results']):,} rows")
+                    if 'Removed' in sheets:
+                        sheet_info.append(f"• Removed: {len(sheets['Removed']):,} rows")
+
+                    success_msg = f"Workbook saved to:\n{filename}\n\nSheets:\n" + "\n".join(sheet_info)
 
             messagebox.showinfo("Success", success_msg)
             self.status_var.set(f"Saved to {Path(filename).name}")
 
         except Exception as e:
+            logging.error(f"[EXPORT ERROR] {str(e)}")
             messagebox.showerror("Error", f"Failed to save:\n{str(e)}")
     
 
