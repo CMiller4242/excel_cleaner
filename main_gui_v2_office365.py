@@ -44,6 +44,7 @@ from ui.themes.accessible_theme import AccessibleTheme
 from ui.dedupe_panel import DedupePanel
 from ui.sheet_selection_dialog import select_sheet_from_file, SheetSelectionDialog
 from ui.sheet_tab_bar import SheetTabBar
+from ui.multi_sheet_preset_dialog import MultiSheetPresetDialog
 from workbook_session import WorkbookSession, SheetState, Issue
 
 # Authentication imports
@@ -4409,25 +4410,78 @@ class CleanSheetApp:
             selection = listbox.curselection()
             if selection:
                 preset = preset_map[selection[0]]
-                self.operation_queue = []
 
-                for op_config in preset.operations:
-                    operation = registry.get_by_id(op_config.operation_id)
-                    if operation:
-                        self.operation_queue.append({
-                            'operation_id': op_config.operation_id,
-                            'name': operation.metadata.name,
-                            'parameters': op_config.parameters,
-                            'enabled': op_config.enabled
-                        })
+                # Check if multi-sheet mode
+                if self.workbook_session and self.workbook_session.is_excel and len(self.workbook_session.sheet_names) > 1:
+                    # MULTI-SHEET MODE: Show sheet selector dialog
+                    logging.info(f"[PRESET] Multi-sheet mode - showing sheet selector for preset '{preset.name}'")
 
-                self.refresh_queue_display()
-                # Save loaded preset workflow to active sheet
-                self._save_current_workflow()
-                self.status_var.set(f"Loaded preset: {preset.name}")
-                dialog.destroy()
-                messagebox.showinfo("Success",
-                                  f"Loaded '{preset.name}' with {len(preset.operations)} operations")
+                    sheet_selector = MultiSheetPresetDialog(
+                        self.root,
+                        self.workbook_session.sheet_names,
+                        preset.name,
+                        len(preset.operations)
+                    )
+                    selected_sheets = sheet_selector.show()
+
+                    if not selected_sheets:
+                        # User cancelled
+                        logging.info("[PRESET] User cancelled multi-sheet preset application")
+                        return
+
+                    # Build preset operations list
+                    preset_operations = []
+                    for op_config in preset.operations:
+                        operation = registry.get_by_id(op_config.operation_id)
+                        if operation:
+                            preset_operations.append({
+                                'operation_id': op_config.operation_id,
+                                'name': operation.metadata.name,
+                                'parameters': op_config.parameters,
+                                'enabled': op_config.enabled
+                            })
+
+                    # Apply to selected sheets via WorkbookSession
+                    self.workbook_session.apply_preset_to_sheets(preset_operations, selected_sheets)
+
+                    # If current sheet was selected, refresh UI
+                    if self.current_sheet_name in selected_sheets:
+                        self._load_sheet_workflow(self.current_sheet_name)
+                        logging.info(f"[PRESET] Refreshed current sheet '{self.current_sheet_name}' workflow")
+
+                    dialog.destroy()
+                    messagebox.showinfo(
+                        "Success",
+                        f"Applied preset '{preset.name}' to {len(selected_sheets)} sheet(s):\n\n" +
+                        "\n".join([f"  • {s}" for s in selected_sheets]) +
+                        f"\n\n{len(preset.operations)} operation(s) per sheet"
+                    )
+                    self.status_var.set(f"Preset '{preset.name}' applied to {len(selected_sheets)} sheets")
+                    logging.info(f"[PRESET] Applied to {len(selected_sheets)} sheets: {selected_sheets}")
+
+                else:
+                    # SINGLE-SHEET MODE: Apply to active sheet only
+                    logging.info(f"[PRESET] Single-sheet mode - applying preset '{preset.name}' to current sheet")
+
+                    self.operation_queue = []
+
+                    for op_config in preset.operations:
+                        operation = registry.get_by_id(op_config.operation_id)
+                        if operation:
+                            self.operation_queue.append({
+                                'operation_id': op_config.operation_id,
+                                'name': operation.metadata.name,
+                                'parameters': op_config.parameters,
+                                'enabled': op_config.enabled
+                            })
+
+                    self.refresh_queue_display()
+                    # Save loaded preset workflow to active sheet
+                    self._save_current_workflow()
+                    self.status_var.set(f"Loaded preset: {preset.name}")
+                    dialog.destroy()
+                    messagebox.showinfo("Success",
+                                      f"Loaded '{preset.name}' with {len(preset.operations)} operations")
 
         def on_delete_preset():
             """Delete selected preset"""
