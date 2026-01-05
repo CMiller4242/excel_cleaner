@@ -25,6 +25,7 @@ import os
 import logging
 import threading
 import copy
+from typing import Optional
 
 # Add to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -42,6 +43,7 @@ from presets.preset_manager import PresetManager, Preset, OperationConfig
 from ui.themes.accessible_theme import AccessibleTheme
 from ui.dedupe_panel import DedupePanel
 from ui.sheet_selection_dialog import select_sheet_from_file, SheetSelectionDialog
+from workbook_session import WorkbookSession, SheetState, Issue
 
 # Authentication imports
 from auth.login_window import LoginWindow
@@ -99,6 +101,9 @@ class CleanSheetApp:
         # Sheet selection tracking (for multi-sheet Excel files)
         self.current_sheet_name = None  # Currently selected sheet name
         self.available_sheets = []  # List of all sheets in current file
+
+        # Workbook session for multi-sheet Excel support
+        self.workbook_session: Optional[WorkbookSession] = None
 
         # Data - Multi-File Mode
         self.loaded_files = []  # List of {'name': str, 'path': str, 'df': DataFrame}
@@ -3794,8 +3799,8 @@ class CleanSheetApp:
             self.refresh_queue_display()
 
     def change_sheet(self):
-        """Allow user to change the active sheet for the current Excel file"""
-        if not self.current_file or not self.available_sheets:
+        """Allow user to change the active sheet for the current Excel file (with lazy loading)"""
+        if not self.workbook_session or not self.available_sheets:
             messagebox.showwarning("Warning", "No Excel file with multiple sheets loaded")
             return
 
@@ -3820,17 +3825,40 @@ class CleanSheetApp:
         selected_sheet = dialog.show()
 
         if selected_sheet and selected_sheet != self.current_sheet_name:
-            # Load new sheet
+            # Switch to new sheet (with lazy loading)
             try:
-                logging.info(f"[SHEET CHANGE] Changing from '{self.current_sheet_name}' to '{selected_sheet}'")
-                self.df = pd.read_excel(self.current_file, sheet_name=selected_sheet)
+                logging.info(f"[WORKBOOK] Switching from '{self.current_sheet_name}' to '{selected_sheet}'")
+
+                # Switch active sheet in workbook session
+                self.workbook_session.switch_to_sheet(selected_sheet)
+                sheet_state = self.workbook_session.get_active_sheet()
+
+                if not sheet_state:
+                    raise ValueError(f"Sheet '{selected_sheet}' not found in workbook")
+
+                # LAZY LOAD: Load sheet data if not already loaded
+                if not sheet_state.is_loaded:
+                    logging.info(f"[WORKBOOK] Lazy loading sheet '{selected_sheet}'...")
+                    self.df = pd.read_excel(self.current_file, sheet_name=selected_sheet)
+                    self.workbook_session.load_sheet_data(selected_sheet, self.df)
+                    logging.info(f"[WORKBOOK] Sheet loaded: {len(self.df):,} rows")
+                else:
+                    # Sheet already loaded - retrieve from session
+                    self.df = sheet_state.df_original
+                    logging.info(f"[WORKBOOK] Sheet retrieved from cache: {len(self.df):,} rows")
+
                 self.current_sheet_name = selected_sheet
 
-                # Clear result data when switching sheets
-                self.result_df = None
-                self.removed_df = None
+                # Load results if available
+                if sheet_state.has_results():
+                    self.result_df = sheet_state.df_result
+                    self.removed_df = sheet_state.removed_rows
+                    logging.info(f"[WORKBOOK] Restored results for sheet '{selected_sheet}'")
+                else:
+                    self.result_df = None
+                    self.removed_df = None
 
-                # Update file info with new sheet name
+                # Update file info
                 self.file_info_var.set(
                     f"📁 {Path(self.current_file).name} | Sheet: {selected_sheet} • {len(self.df):,} rows × {len(self.df.columns)} columns"
                 )
@@ -3848,12 +3876,12 @@ class CleanSheetApp:
                 messagebox.showinfo("Sheet Changed", f"Now viewing sheet: {selected_sheet}\n\n{len(self.df):,} rows × {len(self.df.columns)} columns")
 
             except Exception as e:
-                logging.error(f"[SHEET CHANGE ERROR] {str(e)}")
+                logging.error(f"[WORKBOOK ERROR] Sheet change failed: {str(e)}")
                 messagebox.showerror("Error", f"Failed to load sheet:\n{str(e)}")
 
 
     def load_file(self):
-        """Load data file with smart header detection and sheet selection"""
+        """Load data file with smart header detection, sheet selection, and lazy loading"""
         filename = filedialog.askopenfilename(
             title="Select Data File",
             filetypes=[
@@ -3867,51 +3895,53 @@ class CleanSheetApp:
             return
 
         try:
-            # Reset sheet tracking
+            # Reset state
             self.current_sheet_name = None
             self.available_sheets = []
             self.change_sheet_btn.pack_forget()  # Hide by default
+            self.workbook_session = None
 
-            # === STEP 1: SHEET SELECTION (for Excel files only) ===
-            selected_sheet = None
-            if not filename.endswith('.csv'):
-                logging.info(f"[FILE LOAD] Loading Excel file: {filename}")
+            # === STEP 1: INITIALIZE WORKBOOK SESSION ===
+            is_excel = not filename.endswith('.csv')
 
-                # Detect available sheets BEFORE loading any data
+            if is_excel:
+                logging.info(f"[WORKBOOK] Creating WorkbookSession for: {filename}")
+                self.workbook_session = WorkbookSession(filename, is_excel=True)
+
+                # Detect available sheets (lazy loading - don't load data yet)
                 excel_file = pd.ExcelFile(filename)
                 sheet_names = excel_file.sheet_names
+                self.workbook_session.initialize_from_excel(sheet_names)
                 self.available_sheets = sheet_names
 
-                logging.info(f"[FILE LOAD] Detected {len(sheet_names)} sheets: {sheet_names}")
+                logging.info(f"[WORKBOOK] Detected {len(sheet_names)} sheets: {sheet_names}")
 
-                # If only one sheet, use it automatically
+                # Select initial sheet
                 if len(sheet_names) == 1:
                     selected_sheet = sheet_names[0]
-                    logging.info(f"[FILE LOAD] Single sheet detected, auto-loading: {selected_sheet}")
-
-                # Multiple sheets - MUST show selection dialog
+                    logging.info(f"[WORKBOOK] Single sheet - auto-selecting: {selected_sheet}")
                 else:
-                    logging.info(f"[FILE LOAD] Multiple sheets detected, showing dialog...")
+                    logging.info(f"[WORKBOOK] Multiple sheets - showing selection dialog...")
                     selected_sheet = select_sheet_from_file(self.root, filename, sheet_names)
-                    logging.info(f"[FILE LOAD] Dialog returned: {selected_sheet}")
 
-                    # User cancelled sheet selection
                     if selected_sheet is None:
                         self.status_var.set("File load cancelled - no sheet selected")
-                        logging.info("[FILE LOAD] User cancelled sheet selection")
+                        logging.info("[WORKBOOK] User cancelled sheet selection")
                         return
 
-                # Store selected sheet
+                self.workbook_session.switch_to_sheet(selected_sheet)
                 self.current_sheet_name = selected_sheet
-                logging.info(f"[FILE LOAD] Will load sheet: {selected_sheet}")
+                logging.info(f"[WORKBOOK] Active sheet: {selected_sheet}")
 
             # === STEP 2: HEADER DETECTION (test load with selected sheet) ===
-            if filename.endswith('.csv'):
+            selected_sheet = self.current_sheet_name if is_excel else None
+
+            if not is_excel:
                 df_test = self._load_csv_with_encoding_detection(filename, nrows=5)
             else:
-                # CRITICAL: Pass sheet_name parameter
+                # LAZY LOAD: Test load first 5 rows to detect headers
                 df_test = pd.read_excel(filename, sheet_name=selected_sheet, nrows=5)
-                logging.info(f"[FILE LOAD] Test load completed for sheet '{selected_sheet}'")
+                logging.info(f"[WORKBOOK] Test load completed for sheet '{selected_sheet}'")
 
             # Check if first row has mostly "Unnamed" columns
             unnamed_count = sum(1 for col in df_test.columns if str(col).startswith('Unnamed'))
@@ -3940,12 +3970,22 @@ class CleanSheetApp:
                 header_row = 0
 
             # === STEP 3: FULL LOAD with selected sheet and header row ===
-            if filename.endswith('.csv'):
+            if not is_excel:
+                # CSV: Load data and create simple workbook session
                 self.df = self._load_csv_with_encoding_detection(filename, header=header_row)
+                self.workbook_session = WorkbookSession(filename, is_excel=False)
+                self.workbook_session.initialize_from_csv(self.df)
+                logging.info(f"[WORKBOOK] CSV loaded: {len(self.df):,} rows")
             else:
-                # CRITICAL: Pass sheet_name parameter
+                # Excel: LAZY LOAD - Load only the active sheet
                 self.df = pd.read_excel(filename, sheet_name=selected_sheet, header=header_row)
-                logging.info(f"[FILE LOAD] Full load completed for sheet '{selected_sheet}': {len(self.df):,} rows")
+
+                # Store in WorkbookSession
+                active_sheet = self.workbook_session.get_active_sheet()
+                if active_sheet:
+                    self.workbook_session.load_sheet_data(selected_sheet, self.df)
+                    logging.info(f"[WORKBOOK] Loaded sheet '{selected_sheet}': {len(self.df):,} rows")
+                    logging.info(f"[WORKBOOK] Other sheets remain lazy (not loaded yet)")
 
             self.current_file = filename
 
