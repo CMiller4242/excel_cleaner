@@ -43,6 +43,7 @@ from presets.preset_manager import PresetManager, Preset, OperationConfig
 from ui.themes.accessible_theme import AccessibleTheme
 from ui.dedupe_panel import DedupePanel
 from ui.sheet_selection_dialog import select_sheet_from_file, SheetSelectionDialog
+from ui.sheet_tab_bar import SheetTabBar
 from workbook_session import WorkbookSession, SheetState, Issue
 
 # Authentication imports
@@ -104,6 +105,7 @@ class CleanSheetApp:
 
         # Workbook session for multi-sheet Excel support
         self.workbook_session: Optional[WorkbookSession] = None
+        self.sheet_tab_bar: Optional[SheetTabBar] = None  # Excel-like sheet tabs
 
         # Data - Multi-File Mode
         self.loaded_files = []  # List of {'name': str, 'path': str, 'df': DataFrame}
@@ -368,6 +370,10 @@ class CleanSheetApp:
         # Enhanced data preview - LARGE and spacious
         self.enhanced_preview = EnhancedDataPreview(data_frame)
         self.enhanced_preview.pack(fill='both', expand=True, padx=20, pady=(0, 10))
+
+        # Sheet tab bar (Excel-like, initially hidden)
+        self.sheet_tab_bar = SheetTabBar(data_frame, on_sheet_change=self.on_tab_click)
+        # Tab bar will be shown/hidden dynamically based on file type
 
         # -------- WORKFLOW QUEUE (Bottom panel, compact 20%) --------
         queue_frame = ttk.Frame(self.main_paned, style='WorkflowCompact.TFrame')
@@ -3798,6 +3804,69 @@ class CleanSheetApp:
             self.operation_queue = []
             self.refresh_queue_display()
 
+    def on_tab_click(self, sheet_name: str):
+        """
+        Handle sheet tab click from SheetTabBar
+
+        Args:
+            sheet_name: Name of the clicked sheet tab
+        """
+        if not self.workbook_session or sheet_name == self.current_sheet_name:
+            return  # Already on this sheet or no workbook loaded
+
+        try:
+            logging.info(f"[SHEET TAB] Tab clicked: {sheet_name}")
+
+            # Switch active sheet in workbook session
+            self.workbook_session.switch_to_sheet(sheet_name)
+            sheet_state = self.workbook_session.get_active_sheet()
+
+            if not sheet_state:
+                raise ValueError(f"Sheet '{sheet_name}' not found in workbook")
+
+            # LAZY LOAD: Load sheet data if not already loaded
+            if not sheet_state.is_loaded:
+                logging.info(f"[SHEET TAB] Lazy loading sheet '{sheet_name}'...")
+                self.df = pd.read_excel(self.current_file, sheet_name=sheet_name)
+                self.workbook_session.load_sheet_data(sheet_name, self.df)
+                logging.info(f"[SHEET TAB] Sheet loaded: {len(self.df):,} rows")
+            else:
+                # Sheet already loaded - retrieve from session
+                self.df = sheet_state.df_original
+                logging.info(f"[SHEET TAB] Sheet retrieved from cache: {len(self.df):,} rows")
+
+            self.current_sheet_name = sheet_name
+
+            # Load results if available
+            if sheet_state.has_results():
+                self.result_df = sheet_state.df_result
+                self.removed_df = sheet_state.removed_rows
+                logging.info(f"[SHEET TAB] Restored results for sheet '{sheet_name}'")
+            else:
+                self.result_df = None
+                self.removed_df = None
+
+            # Update file info
+            self.file_info_var.set(
+                f"📁 {Path(self.current_file).name} | Sheet: {sheet_name} • {len(self.df):,} rows × {len(self.df.columns)} columns"
+            )
+
+            # Refresh preview
+            self.enhanced_preview.load_dataframe(self.df, is_result=False)
+
+            # Update status
+            self.status_var.set(f"Switched to sheet: {sheet_name}")
+
+            # Update Excel status bar if present
+            if hasattr(self, 'excel_status_bar'):
+                self.excel_status_bar.update_row_count(len(self.df))
+
+            # Note: Sheet tab bar already updated via its own internal logic in set_active_sheet()
+
+        except Exception as e:
+            logging.error(f"[SHEET TAB ERROR] Failed to switch sheet: {str(e)}")
+            messagebox.showerror("Error", f"Failed to load sheet:\n{str(e)}")
+
     def change_sheet(self):
         """Allow user to change the active sheet for the current Excel file (with lazy loading)"""
         if not self.workbook_session or not self.available_sheets:
@@ -3872,6 +3941,11 @@ class CleanSheetApp:
                 # Update Excel status bar if present
                 if hasattr(self, 'excel_status_bar'):
                     self.excel_status_bar.update_row_count(len(self.df))
+
+                # Update sheet tab bar to show new active sheet
+                if self.sheet_tab_bar and len(self.available_sheets) > 1:
+                    self.sheet_tab_bar.set_active_sheet(selected_sheet)
+                    logging.info(f"[SHEET TAB BAR] Updated active sheet to: {selected_sheet}")
 
                 messagebox.showinfo("Sheet Changed", f"Now viewing sheet: {selected_sheet}\n\n{len(self.df):,} rows × {len(self.df.columns)} columns")
 
@@ -4005,6 +4079,16 @@ class CleanSheetApp:
             if len(self.available_sheets) > 1:
                 self.change_sheet_btn.pack(side='right', padx=5)
                 logging.info("[FILE LOAD] Showing 'Change Sheet' button (multi-sheet file)")
+
+                # Show and populate sheet tab bar for multi-sheet Excel files
+                if self.sheet_tab_bar:
+                    self.sheet_tab_bar.set_sheets(self.available_sheets, self.current_sheet_name)
+                    self.sheet_tab_bar.show()
+                    logging.info(f"[SHEET TAB BAR] Displaying {len(self.available_sheets)} sheet tabs")
+            else:
+                # Hide sheet tab bar for single-sheet/CSV files
+                if self.sheet_tab_bar:
+                    self.sheet_tab_bar.hide()
 
             # Use enhanced preview
             self.enhanced_preview.load_dataframe(self.df, is_result=False)
