@@ -25,6 +25,7 @@ import os
 import logging
 import threading
 import copy
+from typing import Optional
 
 # Add to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -42,6 +43,8 @@ from presets.preset_manager import PresetManager, Preset, OperationConfig
 from ui.themes.accessible_theme import AccessibleTheme
 from ui.dedupe_panel import DedupePanel
 from ui.sheet_selection_dialog import select_sheet_from_file, SheetSelectionDialog
+from ui.sheet_tab_bar import SheetTabBar
+from workbook_session import WorkbookSession, SheetState, Issue
 
 # Authentication imports
 from auth.login_window import LoginWindow
@@ -99,6 +102,10 @@ class CleanSheetApp:
         # Sheet selection tracking (for multi-sheet Excel files)
         self.current_sheet_name = None  # Currently selected sheet name
         self.available_sheets = []  # List of all sheets in current file
+
+        # Workbook session for multi-sheet Excel support
+        self.workbook_session: Optional[WorkbookSession] = None
+        self.sheet_tab_bar: Optional[SheetTabBar] = None  # Excel-like sheet tabs
 
         # Data - Multi-File Mode
         self.loaded_files = []  # List of {'name': str, 'path': str, 'df': DataFrame}
@@ -363,6 +370,10 @@ class CleanSheetApp:
         # Enhanced data preview - LARGE and spacious
         self.enhanced_preview = EnhancedDataPreview(data_frame)
         self.enhanced_preview.pack(fill='both', expand=True, padx=20, pady=(0, 10))
+
+        # Sheet tab bar (Excel-like, initially hidden)
+        self.sheet_tab_bar = SheetTabBar(data_frame, on_sheet_change=self.on_tab_click)
+        # Tab bar will be shown/hidden dynamically based on file type
 
         # -------- WORKFLOW QUEUE (Bottom panel, compact 20%) --------
         queue_frame = ttk.Frame(self.main_paned, style='WorkflowCompact.TFrame')
@@ -724,6 +735,8 @@ class CleanSheetApp:
         """Remove operation at specific index"""
         del self.operation_queue[index]
         self.refresh_queue_display()
+        # Save workflow changes to active sheet
+        self._save_current_workflow()
 
     def move_operation(self, index, direction):
         """Move operation up (-1) or down (+1)"""
@@ -732,6 +745,8 @@ class CleanSheetApp:
             self.operation_queue[index], self.operation_queue[new_index] = \
                 self.operation_queue[new_index], self.operation_queue[index]
             self.refresh_queue_display()
+            # Save workflow changes to active sheet
+            self._save_current_workflow()
 
     # ==================== EXISTING METHODS FROM ORIGINAL FILE ====================
     # NOTE: All other methods from the original main_gui_v2.py should be copied here
@@ -3106,6 +3121,8 @@ class CleanSheetApp:
                 self.status_var.set(f"Added: {operation.metadata.name}")
 
             self.refresh_queue_display()
+            # Save workflow changes to active sheet
+            self._save_current_workflow()
             dialog.destroy()
 
         # Buttons (fixed at bottom)
@@ -3256,6 +3273,8 @@ class CleanSheetApp:
                 self.status_var.set(f"Added: {operation.metadata.name}")
 
             self.refresh_queue_display()
+            # Save workflow changes to active sheet
+            self._save_current_workflow()
             dialog.destroy()
 
         # Fixed button frame at the bottom (NOT in scrollable area)
@@ -3406,6 +3425,8 @@ class CleanSheetApp:
                 self.status_var.set(f"Added: {operation.metadata.name}")
 
             self.refresh_queue_display()
+            # Save workflow changes to active sheet
+            self._save_current_workflow()
             dialog.destroy()
 
         # Buttons (fixed at bottom, not in scrollable area)
@@ -3579,6 +3600,8 @@ class CleanSheetApp:
                 self.status_var.set(f"Added: {operation.metadata.name}")
 
             self.refresh_queue_display()
+            # Save workflow changes to active sheet
+            self._save_current_workflow()
             dialog.destroy()
 
         # Fixed button frame at the bottom (NOT in scrollable area)
@@ -3787,15 +3810,128 @@ class CleanSheetApp:
         ttk.Button(btn_frame, text="✓ Add to Queue", command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
 
 
+    def _save_current_workflow(self):
+        """
+        Save current operation queue to active sheet's state
+
+        This preserves the workflow when switching sheets, enabling per-sheet workflows
+        """
+        if not self.workbook_session:
+            return
+
+        active_sheet = self.workbook_session.get_active_sheet()
+        if active_sheet:
+            # Save current operation queue to sheet state
+            active_sheet.operations = copy.deepcopy(self.operation_queue)
+            logging.info(f"[WORKFLOW] Saved {len(self.operation_queue)} operations to sheet '{active_sheet.sheet_name_display}'")
+
+    def _load_sheet_workflow(self, sheet_name: str):
+        """
+        Load workflow from sheet state into operation queue
+
+        Args:
+            sheet_name: Name of the sheet to load workflow from
+
+        This restores the per-sheet workflow when switching sheets
+        """
+        if not self.workbook_session:
+            self.operation_queue = []
+            return
+
+        sheet_state = self.workbook_session.get_sheet(sheet_name)
+        if sheet_state and sheet_state.operations:
+            # Load sheet's operations into operation queue
+            self.operation_queue = copy.deepcopy(sheet_state.operations)
+            logging.info(f"[WORKFLOW] Loaded {len(self.operation_queue)} operations from sheet '{sheet_name}'")
+        else:
+            # No operations for this sheet - start with empty queue
+            self.operation_queue = []
+            logging.info(f"[WORKFLOW] Sheet '{sheet_name}' has no operations - starting with empty queue")
+
+        # Refresh UI to show loaded operations
+        self.refresh_queue_display()
+
     def clear_queue(self):
         """Clear all operations"""
         if messagebox.askyesno("Confirm", "Clear all operations from queue?"):
             self.operation_queue = []
             self.refresh_queue_display()
 
+            # Save cleared queue to active sheet
+            self._save_current_workflow()
+
+    def on_tab_click(self, sheet_name: str):
+        """
+        Handle sheet tab click from SheetTabBar
+
+        Args:
+            sheet_name: Name of the clicked sheet tab
+        """
+        if not self.workbook_session or sheet_name == self.current_sheet_name:
+            return  # Already on this sheet or no workbook loaded
+
+        try:
+            logging.info(f"[SHEET TAB] Tab clicked: {sheet_name}")
+
+            # STEP 1: Save current sheet's workflow before switching
+            self._save_current_workflow()
+
+            # STEP 2: Switch active sheet in workbook session
+            self.workbook_session.switch_to_sheet(sheet_name)
+            sheet_state = self.workbook_session.get_active_sheet()
+
+            if not sheet_state:
+                raise ValueError(f"Sheet '{sheet_name}' not found in workbook")
+
+            # STEP 3: LAZY LOAD - Load sheet data if not already loaded
+            if not sheet_state.is_loaded:
+                logging.info(f"[SHEET TAB] Lazy loading sheet '{sheet_name}'...")
+                self.df = pd.read_excel(self.current_file, sheet_name=sheet_name)
+                self.workbook_session.load_sheet_data(sheet_name, self.df)
+                logging.info(f"[SHEET TAB] Sheet loaded: {len(self.df):,} rows")
+            else:
+                # Sheet already loaded - retrieve from session
+                self.df = sheet_state.df_original
+                logging.info(f"[SHEET TAB] Sheet retrieved from cache: {len(self.df):,} rows")
+
+            self.current_sheet_name = sheet_name
+
+            # STEP 4: Load results if available
+            if sheet_state.has_results():
+                self.result_df = sheet_state.df_result
+                self.removed_df = sheet_state.removed_rows
+                logging.info(f"[SHEET TAB] Restored results for sheet '{sheet_name}'")
+            else:
+                self.result_df = None
+                self.removed_df = None
+
+            # STEP 5: Load new sheet's workflow into operation queue
+            self._load_sheet_workflow(sheet_name)
+
+            # Update file info
+            self.file_info_var.set(
+                f"📁 {Path(self.current_file).name} | Sheet: {sheet_name} • {len(self.df):,} rows × {len(self.df.columns)} columns"
+            )
+
+            # Refresh preview
+            self.enhanced_preview.load_dataframe(self.df, is_result=False)
+
+            # Update status
+            self.status_var.set(f"Switched to sheet: {sheet_name}")
+
+            # Update Excel status bar if present
+            if hasattr(self, 'excel_status_bar'):
+                self.excel_status_bar.update_row_count(len(self.df))
+
+            # Note: Sheet tab bar already updated via its own internal logic in set_active_sheet()
+
+        except Exception as e:
+            logging.error(f"[SHEET TAB ERROR] Failed to switch sheet: {str(e)}")
+            messagebox.showerror("Error", f"Failed to load sheet:\n{str(e)}")
+
     def change_sheet(self):
-        """Allow user to change the active sheet for the current Excel file"""
-        if not self.current_file or not self.available_sheets:
+        """Allow user to change the active sheet for the current Excel file (with lazy loading)"""
+        if not self.workbook_session or not self.available_sheets:
             messagebox.showwarning("Warning", "No Excel file with multiple sheets loaded")
             return
 
@@ -3820,17 +3956,46 @@ class CleanSheetApp:
         selected_sheet = dialog.show()
 
         if selected_sheet and selected_sheet != self.current_sheet_name:
-            # Load new sheet
+            # Switch to new sheet (with lazy loading)
             try:
-                logging.info(f"[SHEET CHANGE] Changing from '{self.current_sheet_name}' to '{selected_sheet}'")
-                self.df = pd.read_excel(self.current_file, sheet_name=selected_sheet)
+                logging.info(f"[WORKBOOK] Switching from '{self.current_sheet_name}' to '{selected_sheet}'")
+
+                # STEP 1: Save current sheet's workflow before switching
+                self._save_current_workflow()
+
+                # STEP 2: Switch active sheet in workbook session
+                self.workbook_session.switch_to_sheet(selected_sheet)
+                sheet_state = self.workbook_session.get_active_sheet()
+
+                if not sheet_state:
+                    raise ValueError(f"Sheet '{selected_sheet}' not found in workbook")
+
+                # STEP 3: LAZY LOAD - Load sheet data if not already loaded
+                if not sheet_state.is_loaded:
+                    logging.info(f"[WORKBOOK] Lazy loading sheet '{selected_sheet}'...")
+                    self.df = pd.read_excel(self.current_file, sheet_name=selected_sheet)
+                    self.workbook_session.load_sheet_data(selected_sheet, self.df)
+                    logging.info(f"[WORKBOOK] Sheet loaded: {len(self.df):,} rows")
+                else:
+                    # Sheet already loaded - retrieve from session
+                    self.df = sheet_state.df_original
+                    logging.info(f"[WORKBOOK] Sheet retrieved from cache: {len(self.df):,} rows")
+
                 self.current_sheet_name = selected_sheet
 
-                # Clear result data when switching sheets
-                self.result_df = None
-                self.removed_df = None
+                # STEP 4: Load results if available
+                if sheet_state.has_results():
+                    self.result_df = sheet_state.df_result
+                    self.removed_df = sheet_state.removed_rows
+                    logging.info(f"[WORKBOOK] Restored results for sheet '{selected_sheet}'")
+                else:
+                    self.result_df = None
+                    self.removed_df = None
 
-                # Update file info with new sheet name
+                # STEP 5: Load new sheet's workflow into operation queue
+                self._load_sheet_workflow(selected_sheet)
+
+                # Update file info
                 self.file_info_var.set(
                     f"📁 {Path(self.current_file).name} | Sheet: {selected_sheet} • {len(self.df):,} rows × {len(self.df.columns)} columns"
                 )
@@ -3845,15 +4010,20 @@ class CleanSheetApp:
                 if hasattr(self, 'excel_status_bar'):
                     self.excel_status_bar.update_row_count(len(self.df))
 
+                # Update sheet tab bar to show new active sheet
+                if self.sheet_tab_bar and len(self.available_sheets) > 1:
+                    self.sheet_tab_bar.set_active_sheet(selected_sheet)
+                    logging.info(f"[SHEET TAB BAR] Updated active sheet to: {selected_sheet}")
+
                 messagebox.showinfo("Sheet Changed", f"Now viewing sheet: {selected_sheet}\n\n{len(self.df):,} rows × {len(self.df.columns)} columns")
 
             except Exception as e:
-                logging.error(f"[SHEET CHANGE ERROR] {str(e)}")
+                logging.error(f"[WORKBOOK ERROR] Sheet change failed: {str(e)}")
                 messagebox.showerror("Error", f"Failed to load sheet:\n{str(e)}")
 
 
     def load_file(self):
-        """Load data file with smart header detection and sheet selection"""
+        """Load data file with smart header detection, sheet selection, and lazy loading"""
         filename = filedialog.askopenfilename(
             title="Select Data File",
             filetypes=[
@@ -3867,51 +4037,53 @@ class CleanSheetApp:
             return
 
         try:
-            # Reset sheet tracking
+            # Reset state
             self.current_sheet_name = None
             self.available_sheets = []
             self.change_sheet_btn.pack_forget()  # Hide by default
+            self.workbook_session = None
 
-            # === STEP 1: SHEET SELECTION (for Excel files only) ===
-            selected_sheet = None
-            if not filename.endswith('.csv'):
-                logging.info(f"[FILE LOAD] Loading Excel file: {filename}")
+            # === STEP 1: INITIALIZE WORKBOOK SESSION ===
+            is_excel = not filename.endswith('.csv')
 
-                # Detect available sheets BEFORE loading any data
+            if is_excel:
+                logging.info(f"[WORKBOOK] Creating WorkbookSession for: {filename}")
+                self.workbook_session = WorkbookSession(filename, is_excel=True)
+
+                # Detect available sheets (lazy loading - don't load data yet)
                 excel_file = pd.ExcelFile(filename)
                 sheet_names = excel_file.sheet_names
+                self.workbook_session.initialize_from_excel(sheet_names)
                 self.available_sheets = sheet_names
 
-                logging.info(f"[FILE LOAD] Detected {len(sheet_names)} sheets: {sheet_names}")
+                logging.info(f"[WORKBOOK] Detected {len(sheet_names)} sheets: {sheet_names}")
 
-                # If only one sheet, use it automatically
+                # Select initial sheet
                 if len(sheet_names) == 1:
                     selected_sheet = sheet_names[0]
-                    logging.info(f"[FILE LOAD] Single sheet detected, auto-loading: {selected_sheet}")
-
-                # Multiple sheets - MUST show selection dialog
+                    logging.info(f"[WORKBOOK] Single sheet - auto-selecting: {selected_sheet}")
                 else:
-                    logging.info(f"[FILE LOAD] Multiple sheets detected, showing dialog...")
+                    logging.info(f"[WORKBOOK] Multiple sheets - showing selection dialog...")
                     selected_sheet = select_sheet_from_file(self.root, filename, sheet_names)
-                    logging.info(f"[FILE LOAD] Dialog returned: {selected_sheet}")
 
-                    # User cancelled sheet selection
                     if selected_sheet is None:
                         self.status_var.set("File load cancelled - no sheet selected")
-                        logging.info("[FILE LOAD] User cancelled sheet selection")
+                        logging.info("[WORKBOOK] User cancelled sheet selection")
                         return
 
-                # Store selected sheet
+                self.workbook_session.switch_to_sheet(selected_sheet)
                 self.current_sheet_name = selected_sheet
-                logging.info(f"[FILE LOAD] Will load sheet: {selected_sheet}")
+                logging.info(f"[WORKBOOK] Active sheet: {selected_sheet}")
 
             # === STEP 2: HEADER DETECTION (test load with selected sheet) ===
-            if filename.endswith('.csv'):
+            selected_sheet = self.current_sheet_name if is_excel else None
+
+            if not is_excel:
                 df_test = self._load_csv_with_encoding_detection(filename, nrows=5)
             else:
-                # CRITICAL: Pass sheet_name parameter
+                # LAZY LOAD: Test load first 5 rows to detect headers
                 df_test = pd.read_excel(filename, sheet_name=selected_sheet, nrows=5)
-                logging.info(f"[FILE LOAD] Test load completed for sheet '{selected_sheet}'")
+                logging.info(f"[WORKBOOK] Test load completed for sheet '{selected_sheet}'")
 
             # Check if first row has mostly "Unnamed" columns
             unnamed_count = sum(1 for col in df_test.columns if str(col).startswith('Unnamed'))
@@ -3940,12 +4112,22 @@ class CleanSheetApp:
                 header_row = 0
 
             # === STEP 3: FULL LOAD with selected sheet and header row ===
-            if filename.endswith('.csv'):
+            if not is_excel:
+                # CSV: Load data and create simple workbook session
                 self.df = self._load_csv_with_encoding_detection(filename, header=header_row)
+                self.workbook_session = WorkbookSession(filename, is_excel=False)
+                self.workbook_session.initialize_from_csv(self.df)
+                logging.info(f"[WORKBOOK] CSV loaded: {len(self.df):,} rows")
             else:
-                # CRITICAL: Pass sheet_name parameter
+                # Excel: LAZY LOAD - Load only the active sheet
                 self.df = pd.read_excel(filename, sheet_name=selected_sheet, header=header_row)
-                logging.info(f"[FILE LOAD] Full load completed for sheet '{selected_sheet}': {len(self.df):,} rows")
+
+                # Store in WorkbookSession
+                active_sheet = self.workbook_session.get_active_sheet()
+                if active_sheet:
+                    self.workbook_session.load_sheet_data(selected_sheet, self.df)
+                    logging.info(f"[WORKBOOK] Loaded sheet '{selected_sheet}': {len(self.df):,} rows")
+                    logging.info(f"[WORKBOOK] Other sheets remain lazy (not loaded yet)")
 
             self.current_file = filename
 
@@ -3965,6 +4147,16 @@ class CleanSheetApp:
             if len(self.available_sheets) > 1:
                 self.change_sheet_btn.pack(side='right', padx=5)
                 logging.info("[FILE LOAD] Showing 'Change Sheet' button (multi-sheet file)")
+
+                # Show and populate sheet tab bar for multi-sheet Excel files
+                if self.sheet_tab_bar:
+                    self.sheet_tab_bar.set_sheets(self.available_sheets, self.current_sheet_name)
+                    self.sheet_tab_bar.show()
+                    logging.info(f"[SHEET TAB BAR] Displaying {len(self.available_sheets)} sheet tabs")
+            else:
+                # Hide sheet tab bar for single-sheet/CSV files
+                if self.sheet_tab_bar:
+                    self.sheet_tab_bar.hide()
 
             # Use enhanced preview
             self.enhanced_preview.load_dataframe(self.df, is_result=False)
@@ -4019,6 +4211,15 @@ class CleanSheetApp:
             # Use execute_queue_with_tracking to capture removed rows
             self.result_df, self.removed_df = self.executor.execute_queue_with_tracking(self.df, self.operation_queue)
 
+            # Save results to active sheet state
+            if self.workbook_session:
+                active_sheet = self.workbook_session.get_active_sheet()
+                if active_sheet:
+                    active_sheet.df_result = self.result_df
+                    active_sheet.removed_rows = self.removed_df
+                    active_sheet.is_dirty = True
+                    logging.info(f"[WORKFLOW] Saved results to sheet '{active_sheet.sheet_name_display}': {len(self.result_df):,} rows")
+
             # Display in enhanced preview
             self.enhanced_preview.load_dataframe(self.result_df, is_result=True)
 
@@ -4042,8 +4243,20 @@ class CleanSheetApp:
 
     def save_results(self):
         """Save results to file with multi-sheet export"""
-        if self.result_df is None:
-            messagebox.showwarning("Warning", "No results to save")
+        # Check if we have any results to save
+        has_results = False
+        if self.workbook_session:
+            # Multi-sheet mode: Check if any sheet has results
+            for sheet_state in self.workbook_session.sheets.values():
+                if sheet_state.has_results():
+                    has_results = True
+                    break
+        else:
+            # Single-sheet mode: Check active result
+            has_results = (self.result_df is not None)
+
+        if not has_results:
+            messagebox.showwarning("Warning", "No results to save. Run operations first.")
             return
 
         filename = filedialog.asksaveasfilename(
@@ -4061,44 +4274,96 @@ class CleanSheetApp:
 
         try:
             if filename.endswith('.csv'):
-                # CSV can only save one sheet - save results only
-                ExportHelper.export_to_csv(self.result_df, filename)
-                success_msg = f"Results saved to:\n{filename}\n\nNote: CSV format only saves Results sheet."
+                # CSV can only save one sheet - save active sheet results only
+                if self.result_df is not None:
+                    ExportHelper.export_to_csv(self.result_df, filename)
+                    if self.workbook_session:
+                        success_msg = f"Results saved to:\n{filename}\n\nNote: CSV format only saves active sheet '{self.current_sheet_name}' results."
+                    else:
+                        success_msg = f"Results saved to:\n{filename}"
+                else:
+                    messagebox.showwarning("Warning", "Active sheet has no results")
+                    return
+
             elif filename.endswith('.txt'):
                 # TXT format - comma-delimited with quotes
-                ExportHelper.export_to_txt(self.result_df, filename, include_header=True)
-                success_msg = f"Results saved to:\n{filename}\n\nFormat: Comma-delimited with quoted fields\nNote: TXT format only saves Results sheet."
+                if self.result_df is not None:
+                    ExportHelper.export_to_txt(self.result_df, filename, include_header=True)
+                    if self.workbook_session:
+                        success_msg = f"Results saved to:\n{filename}\n\nFormat: Comma-delimited with quoted fields\nNote: TXT format only saves active sheet '{self.current_sheet_name}' results."
+                    else:
+                        success_msg = f"Results saved to:\n{filename}\n\nFormat: Comma-delimited with quoted fields"
+                else:
+                    messagebox.showwarning("Warning", "Active sheet has no results")
+                    return
+
             else:
                 # Excel - export multi-sheet workbook
-                sheets = {}
+                if self.workbook_session and self.workbook_session.is_excel:
+                    # MULTI-SHEET MODE: Use WorkbookSession to export all sheets
+                    logging.info("[EXPORT] Multi-sheet mode - exporting all sheets via WorkbookSession")
 
-                # Sheet 1: Original data
-                if self.df is not None:
-                    sheets['Original'] = self.df
+                    # Get all export data from WorkbookSession
+                    export_sheets = self.workbook_session.get_export_data()
 
-                # Sheet 2: Results
-                sheets['Results'] = self.result_df
+                    if not export_sheets:
+                        messagebox.showwarning("Warning", "No sheets to export")
+                        return
 
-                # Sheet 3: Removed (if any rows were removed)
-                if self.removed_df is not None and not self.removed_df.empty:
-                    sheets['Removed'] = self.removed_df
+                    ExportHelper.export_multiple_sheets(export_sheets, filename)
 
-                ExportHelper.export_multiple_sheets(sheets, filename)
+                    # Build success message
+                    sheet_info = []
+                    removed_count = 0
+                    for sheet_name, df in export_sheets.items():
+                        if sheet_name == 'REMOVED_ROWS':
+                            removed_count = len(df)
+                            sheet_info.append(f"• REMOVED_ROWS: {removed_count:,} rows (combined from all sheets)")
+                        else:
+                            sheet_info.append(f"• {sheet_name}: {len(df):,} rows")
 
-                # Build success message
-                sheet_info = []
-                if 'Original' in sheets:
-                    sheet_info.append(f"• Original: {len(sheets['Original']):,} rows")
-                sheet_info.append(f"• Results: {len(sheets['Results']):,} rows")
-                if 'Removed' in sheets:
-                    sheet_info.append(f"• Removed: {len(sheets['Removed']):,} rows")
+                    success_msg = f"Multi-sheet workbook saved to:\n{filename}\n\n"
+                    success_msg += f"Exported {len(export_sheets)} sheets:\n" + "\n".join(sheet_info)
+                    success_msg += f"\n\n💡 All sheets preserved (processed + unprocessed)"
 
-                success_msg = f"Workbook saved to:\n{filename}\n\nSheets:\n" + "\n".join(sheet_info)
+                    logging.info(f"[EXPORT] Exported {len(export_sheets)} sheets to {filename}")
+
+                else:
+                    # SINGLE-SHEET MODE: Export as before (Original, Results, Removed)
+                    logging.info("[EXPORT] Single-sheet mode - exporting Original/Results/Removed")
+
+                    sheets = {}
+
+                    # Sheet 1: Original data
+                    if self.df is not None:
+                        sheets['Original'] = self.df
+
+                    # Sheet 2: Results
+                    if self.result_df is not None:
+                        sheets['Results'] = self.result_df
+
+                    # Sheet 3: Removed (if any rows were removed)
+                    if self.removed_df is not None and not self.removed_df.empty:
+                        sheets['Removed'] = self.removed_df
+
+                    ExportHelper.export_multiple_sheets(sheets, filename)
+
+                    # Build success message
+                    sheet_info = []
+                    if 'Original' in sheets:
+                        sheet_info.append(f"• Original: {len(sheets['Original']):,} rows")
+                    if 'Results' in sheets:
+                        sheet_info.append(f"• Results: {len(sheets['Results']):,} rows")
+                    if 'Removed' in sheets:
+                        sheet_info.append(f"• Removed: {len(sheets['Removed']):,} rows")
+
+                    success_msg = f"Workbook saved to:\n{filename}\n\nSheets:\n" + "\n".join(sheet_info)
 
             messagebox.showinfo("Success", success_msg)
             self.status_var.set(f"Saved to {Path(filename).name}")
 
         except Exception as e:
+            logging.error(f"[EXPORT ERROR] {str(e)}")
             messagebox.showerror("Error", f"Failed to save:\n{str(e)}")
     
 
@@ -4157,6 +4422,8 @@ class CleanSheetApp:
                         })
 
                 self.refresh_queue_display()
+                # Save loaded preset workflow to active sheet
+                self._save_current_workflow()
                 self.status_var.set(f"Loaded preset: {preset.name}")
                 dialog.destroy()
                 messagebox.showinfo("Success",
