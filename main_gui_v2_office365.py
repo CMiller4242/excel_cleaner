@@ -735,6 +735,8 @@ class CleanSheetApp:
         """Remove operation at specific index"""
         del self.operation_queue[index]
         self.refresh_queue_display()
+        # Save workflow changes to active sheet
+        self._save_current_workflow()
 
     def move_operation(self, index, direction):
         """Move operation up (-1) or down (+1)"""
@@ -743,6 +745,8 @@ class CleanSheetApp:
             self.operation_queue[index], self.operation_queue[new_index] = \
                 self.operation_queue[new_index], self.operation_queue[index]
             self.refresh_queue_display()
+            # Save workflow changes to active sheet
+            self._save_current_workflow()
 
     # ==================== EXISTING METHODS FROM ORIGINAL FILE ====================
     # NOTE: All other methods from the original main_gui_v2.py should be copied here
@@ -3117,6 +3121,8 @@ class CleanSheetApp:
                 self.status_var.set(f"Added: {operation.metadata.name}")
 
             self.refresh_queue_display()
+            # Save workflow changes to active sheet
+            self._save_current_workflow()
             dialog.destroy()
 
         # Buttons (fixed at bottom)
@@ -3267,6 +3273,8 @@ class CleanSheetApp:
                 self.status_var.set(f"Added: {operation.metadata.name}")
 
             self.refresh_queue_display()
+            # Save workflow changes to active sheet
+            self._save_current_workflow()
             dialog.destroy()
 
         # Fixed button frame at the bottom (NOT in scrollable area)
@@ -3417,6 +3425,8 @@ class CleanSheetApp:
                 self.status_var.set(f"Added: {operation.metadata.name}")
 
             self.refresh_queue_display()
+            # Save workflow changes to active sheet
+            self._save_current_workflow()
             dialog.destroy()
 
         # Buttons (fixed at bottom, not in scrollable area)
@@ -3590,6 +3600,8 @@ class CleanSheetApp:
                 self.status_var.set(f"Added: {operation.metadata.name}")
 
             self.refresh_queue_display()
+            # Save workflow changes to active sheet
+            self._save_current_workflow()
             dialog.destroy()
 
         # Fixed button frame at the bottom (NOT in scrollable area)
@@ -3798,11 +3810,55 @@ class CleanSheetApp:
         ttk.Button(btn_frame, text="✓ Add to Queue", command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
 
 
+    def _save_current_workflow(self):
+        """
+        Save current operation queue to active sheet's state
+
+        This preserves the workflow when switching sheets, enabling per-sheet workflows
+        """
+        if not self.workbook_session:
+            return
+
+        active_sheet = self.workbook_session.get_active_sheet()
+        if active_sheet:
+            # Save current operation queue to sheet state
+            active_sheet.operations = copy.deepcopy(self.operation_queue)
+            logging.info(f"[WORKFLOW] Saved {len(self.operation_queue)} operations to sheet '{active_sheet.sheet_name_display}'")
+
+    def _load_sheet_workflow(self, sheet_name: str):
+        """
+        Load workflow from sheet state into operation queue
+
+        Args:
+            sheet_name: Name of the sheet to load workflow from
+
+        This restores the per-sheet workflow when switching sheets
+        """
+        if not self.workbook_session:
+            self.operation_queue = []
+            return
+
+        sheet_state = self.workbook_session.get_sheet(sheet_name)
+        if sheet_state and sheet_state.operations:
+            # Load sheet's operations into operation queue
+            self.operation_queue = copy.deepcopy(sheet_state.operations)
+            logging.info(f"[WORKFLOW] Loaded {len(self.operation_queue)} operations from sheet '{sheet_name}'")
+        else:
+            # No operations for this sheet - start with empty queue
+            self.operation_queue = []
+            logging.info(f"[WORKFLOW] Sheet '{sheet_name}' has no operations - starting with empty queue")
+
+        # Refresh UI to show loaded operations
+        self.refresh_queue_display()
+
     def clear_queue(self):
         """Clear all operations"""
         if messagebox.askyesno("Confirm", "Clear all operations from queue?"):
             self.operation_queue = []
             self.refresh_queue_display()
+
+            # Save cleared queue to active sheet
+            self._save_current_workflow()
 
     def on_tab_click(self, sheet_name: str):
         """
@@ -3817,14 +3873,17 @@ class CleanSheetApp:
         try:
             logging.info(f"[SHEET TAB] Tab clicked: {sheet_name}")
 
-            # Switch active sheet in workbook session
+            # STEP 1: Save current sheet's workflow before switching
+            self._save_current_workflow()
+
+            # STEP 2: Switch active sheet in workbook session
             self.workbook_session.switch_to_sheet(sheet_name)
             sheet_state = self.workbook_session.get_active_sheet()
 
             if not sheet_state:
                 raise ValueError(f"Sheet '{sheet_name}' not found in workbook")
 
-            # LAZY LOAD: Load sheet data if not already loaded
+            # STEP 3: LAZY LOAD - Load sheet data if not already loaded
             if not sheet_state.is_loaded:
                 logging.info(f"[SHEET TAB] Lazy loading sheet '{sheet_name}'...")
                 self.df = pd.read_excel(self.current_file, sheet_name=sheet_name)
@@ -3837,7 +3896,7 @@ class CleanSheetApp:
 
             self.current_sheet_name = sheet_name
 
-            # Load results if available
+            # STEP 4: Load results if available
             if sheet_state.has_results():
                 self.result_df = sheet_state.df_result
                 self.removed_df = sheet_state.removed_rows
@@ -3845,6 +3904,9 @@ class CleanSheetApp:
             else:
                 self.result_df = None
                 self.removed_df = None
+
+            # STEP 5: Load new sheet's workflow into operation queue
+            self._load_sheet_workflow(sheet_name)
 
             # Update file info
             self.file_info_var.set(
@@ -3898,14 +3960,17 @@ class CleanSheetApp:
             try:
                 logging.info(f"[WORKBOOK] Switching from '{self.current_sheet_name}' to '{selected_sheet}'")
 
-                # Switch active sheet in workbook session
+                # STEP 1: Save current sheet's workflow before switching
+                self._save_current_workflow()
+
+                # STEP 2: Switch active sheet in workbook session
                 self.workbook_session.switch_to_sheet(selected_sheet)
                 sheet_state = self.workbook_session.get_active_sheet()
 
                 if not sheet_state:
                     raise ValueError(f"Sheet '{selected_sheet}' not found in workbook")
 
-                # LAZY LOAD: Load sheet data if not already loaded
+                # STEP 3: LAZY LOAD - Load sheet data if not already loaded
                 if not sheet_state.is_loaded:
                     logging.info(f"[WORKBOOK] Lazy loading sheet '{selected_sheet}'...")
                     self.df = pd.read_excel(self.current_file, sheet_name=selected_sheet)
@@ -3918,7 +3983,7 @@ class CleanSheetApp:
 
                 self.current_sheet_name = selected_sheet
 
-                # Load results if available
+                # STEP 4: Load results if available
                 if sheet_state.has_results():
                     self.result_df = sheet_state.df_result
                     self.removed_df = sheet_state.removed_rows
@@ -3926,6 +3991,9 @@ class CleanSheetApp:
                 else:
                     self.result_df = None
                     self.removed_df = None
+
+                # STEP 5: Load new sheet's workflow into operation queue
+                self._load_sheet_workflow(selected_sheet)
 
                 # Update file info
                 self.file_info_var.set(
@@ -4143,6 +4211,15 @@ class CleanSheetApp:
             # Use execute_queue_with_tracking to capture removed rows
             self.result_df, self.removed_df = self.executor.execute_queue_with_tracking(self.df, self.operation_queue)
 
+            # Save results to active sheet state
+            if self.workbook_session:
+                active_sheet = self.workbook_session.get_active_sheet()
+                if active_sheet:
+                    active_sheet.df_result = self.result_df
+                    active_sheet.removed_rows = self.removed_df
+                    active_sheet.is_dirty = True
+                    logging.info(f"[WORKFLOW] Saved results to sheet '{active_sheet.sheet_name_display}': {len(self.result_df):,} rows")
+
             # Display in enhanced preview
             self.enhanced_preview.load_dataframe(self.result_df, is_result=True)
 
@@ -4281,6 +4358,8 @@ class CleanSheetApp:
                         })
 
                 self.refresh_queue_display()
+                # Save loaded preset workflow to active sheet
+                self._save_current_workflow()
                 self.status_var.set(f"Loaded preset: {preset.name}")
                 dialog.destroy()
                 messagebox.showinfo("Success",

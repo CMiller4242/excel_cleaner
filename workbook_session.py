@@ -136,6 +136,10 @@ class WorkbookSession:
             return self.sheets[self.active_sheet]
         return None
 
+    def get_sheet(self, sheet_name: str) -> Optional[SheetState]:
+        """Get a specific sheet state by name"""
+        return self.sheets.get(sheet_name)
+
     def switch_to_sheet(self, sheet_name: str) -> bool:
         """Switch active sheet. Returns True if successful."""
         if sheet_name in self.sheets and sheet_name not in self.deleted_sheets:
