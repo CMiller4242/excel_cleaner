@@ -176,7 +176,9 @@ class ExcelRibbon(ttk.Frame):
 
         run_group.add_button("Execute", self.app.run_operations, "▶️",
                            style='RibbonButtonSuccess.TButton', row=0, column=0)
-        run_group.add_button("Preview", lambda: None, "🔍", row=0, column=1)
+        run_group.add_button("Validate", self.app.validate_operations, "✓",
+                           style='RibbonButtonAccent.TButton', row=0, column=1)
+        run_group.add_button("Preview", lambda: None, "🔍", row=1, column=0)
 
     def _create_data_tab(self):
         """Create Data tab"""

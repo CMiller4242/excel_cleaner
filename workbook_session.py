@@ -40,6 +40,15 @@ class SheetState:
     is_dirty: bool = False  # Track if there are unsaved changes
     is_deleted: bool = False  # Soft delete flag
 
+    # Run summary metadata
+    last_run_at: Optional[str] = None  # ISO timestamp of last run/validate
+    last_run_before_rows: Optional[int] = None  # Row count before execution
+    last_run_after_rows: Optional[int] = None  # Row count after execution
+    last_run_ops_total: Optional[int] = None  # Total operations
+    last_run_ops_skipped: Optional[int] = None  # Skipped operations (due to issues)
+    last_removed_count: Optional[int] = None  # Count of removed rows
+    last_action: Optional[str] = None  # "validate" or "run"
+
     def __post_init__(self):
         if not self.sheet_name_display:
             self.sheet_name_display = self.sheet_name_original
@@ -93,6 +102,18 @@ class SheetState:
         self.operations = self.redo_stack.pop()
         self.mark_dirty()
         return True
+
+    def get_status_icon(self) -> str:
+        """
+        Get status icon for run summary panel
+        Returns: ✓ Clean, ⚠ Needs Attention, ○ Not run yet
+        """
+        if self.last_action is None:
+            return "○"  # Not run yet
+        elif self.has_issues():
+            return "⚠"  # Needs Attention
+        else:
+            return "✓"  # Clean
 
 
 class WorkbookSession:

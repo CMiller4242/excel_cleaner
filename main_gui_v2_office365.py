@@ -66,6 +66,7 @@ from enhanced_preview import EnhancedDataPreview
 from smart_column_selector import ColumnSelector, MultiColumnSelector
 from analysis.data_quality_integration import DataQualityIntegration
 from excel_ribbon import ExcelRibbon, FormulaBar, ExcelStatusBar
+from ui.run_summary_panel import RunSummaryPanel
 from datetime import datetime
 
 
@@ -386,6 +387,15 @@ class CleanSheetApp:
         # Enhanced data preview - LARGE and spacious
         self.enhanced_preview = EnhancedDataPreview(data_frame)
         self.enhanced_preview.pack(fill='both', expand=True, padx=20, pady=(0, 10))
+
+        # Run Summary panel (initially hidden, shown when workbook session exists)
+        self.run_summary_panel = RunSummaryPanel(
+            data_frame,
+            workbook_session=None,
+            on_sheet_click=self.on_summary_sheet_click,
+            on_issue_click=self.on_summary_issue_click
+        )
+        # Panel will be shown/hidden dynamically based on workbook session
 
         # Sheet tab bar (Excel-like, initially hidden)
         self.sheet_tab_bar = SheetTabBar(data_frame, on_sheet_change=self.on_tab_click)
@@ -4280,12 +4290,23 @@ class CleanSheetApp:
             if self.workbook_session:
                 active_sheet = self.workbook_session.get_active_sheet()
                 if active_sheet:
+                    from datetime import datetime
+
                     active_sheet.df_result = self.result_df
                     active_sheet.removed_rows = self.removed_df
                     active_sheet.is_dirty = True
 
                     # Store validation issues
                     active_sheet.issues = validation_issues
+
+                    # Update run summary metadata
+                    active_sheet.last_action = "run"
+                    active_sheet.last_run_at = datetime.now().isoformat()
+                    active_sheet.last_run_before_rows = len(self.df)
+                    active_sheet.last_run_after_rows = len(self.result_df)
+                    active_sheet.last_run_ops_total = len(self.operation_queue)
+                    active_sheet.last_run_ops_skipped = len(validation_issues)
+                    active_sheet.last_removed_count = len(self.removed_df) if self.removed_df is not None else 0
 
                     if validation_issues:
                         logging.warning(f"[VALIDATION] Recorded {len(validation_issues)} issue(s) for sheet '{active_sheet.sheet_name_display}'")
@@ -4295,6 +4316,13 @@ class CleanSheetApp:
                             self.sheet_tab_bar.mark_sheet_issues(self.current_sheet_name, has_issues=True)
 
                     logging.info(f"[WORKFLOW] Saved results to sheet '{active_sheet.sheet_name_display}': {len(self.result_df):,} rows")
+
+                    # Update Run Summary panel
+                    self.run_summary_panel.set_workbook_session(self.workbook_session)
+                    self.run_summary_panel.refresh()
+                    # Show panel if hidden
+                    if not self.run_summary_panel.winfo_viewable():
+                        self.run_summary_panel.pack(fill='x', padx=20, pady=(0, 10), before=self.sheet_tab_bar)
 
             # Display in enhanced preview
             self.enhanced_preview.load_dataframe(self.result_df, is_result=True)
@@ -4330,7 +4358,81 @@ class CleanSheetApp:
 
         except Exception as e:
             messagebox.showerror("Error", f"Execution failed:\n{str(e)}")
-    
+
+    def validate_operations(self):
+        """
+        Validate operations without executing (dry run)
+        Shows issues in Run Summary panel without mutating df_result
+        """
+        if not self.workbook_session:
+            messagebox.showwarning("Warning", "Validation is only available for Excel workbooks")
+            return
+
+        if self.df is None:
+            messagebox.showwarning("Warning", "Please load a file first")
+            return
+
+        # Show sheet selection dialog
+        from ui.multi_sheet_preset_dialog import MultiSheetPresetDialog
+
+        dialog = MultiSheetPresetDialog(
+            self.root,
+            self.workbook_session.get_visible_sheets(),
+            "Validation",
+            0,  # Not showing operation count
+            title="Select Sheets to Validate",
+            message="Choose which sheets to validate:"
+        )
+
+        selected_sheets = dialog.show()
+
+        if not selected_sheets:
+            return  # User cancelled
+
+        try:
+            self.logger.info(f"Validating {len(selected_sheets)} sheet(s)")
+
+            # Run validation
+            from engine.validator import Validator
+            validation_results = Validator.validate_sheets_dry_run(
+                self.workbook_session,
+                selected_sheets
+            )
+
+            # Count total issues
+            total_issues = sum(len(issues) for issues in validation_results.values())
+
+            # Update Run Summary panel
+            if self.workbook_session:
+                self.run_summary_panel.set_workbook_session(self.workbook_session)
+                self.run_summary_panel.refresh()
+                # Show the panel if hidden
+                if not self.run_summary_panel.winfo_viewable():
+                    self.run_summary_panel.pack(fill='x', padx=20, pady=(0, 10), before=self.sheet_tab_bar)
+
+            # Show result message
+            if total_issues == 0:
+                messagebox.showinfo(
+                    "Validation Complete",
+                    f"✓ All {len(selected_sheets)} sheet(s) validated successfully!\n\n"
+                    "No issues found."
+                )
+            else:
+                sheets_with_issues = [name for name, issues in validation_results.items() if issues]
+                messagebox.showwarning(
+                    "Validation Issues Found",
+                    f"⚠ Found {total_issues} issue(s) across {len(sheets_with_issues)} sheet(s):\n\n" +
+                    "\n".join([f"  • {name}: {len(validation_results[name])} issue(s)"
+                               for name in sheets_with_issues]) +
+                    "\n\nSee Run Summary panel for details."
+                )
+
+            self.status_var.set(f"Validation complete: {total_issues} issue(s) found")
+
+        except Exception as e:
+            self.logger.error(f"Validation failed: {e}", exc_info=True)
+            messagebox.showerror("Error", f"Validation failed:\n{str(e)}")
+
 
     def save_results(self):
         """Save results to file with multi-sheet export"""
@@ -5282,6 +5384,65 @@ Repository: github.com/{GITHUB_REPO}
         )
 
     # ==================== END SESSION RECOVERY ====================
+
+    # ==================== RUN SUMMARY NAVIGATION ====================
+
+    def on_summary_sheet_click(self, sheet_name: str):
+        """Handle click on sheet in Run Summary panel - switch to that sheet"""
+        if not self.workbook_session:
+            return
+
+        # Switch to the sheet
+        if self.workbook_session.switch_to_sheet(sheet_name):
+            self.logger.info(f"Switching to sheet from summary: {sheet_name}")
+
+            # Save current sheet's workflow before switching
+            self._save_current_workflow()
+
+            # Load new sheet's data if not already loaded
+            sheet_state = self.workbook_session.get_sheet(sheet_name)
+            if sheet_state and not sheet_state.is_loaded:
+                # Lazy load the sheet
+                try:
+                    import pandas as pd
+                    df = pd.read_excel(self.current_file, sheet_name=sheet_name)
+                    self.workbook_session.load_sheet_data(sheet_name, df)
+                    self.df = df
+                except Exception as e:
+                    self.logger.error(f"Failed to load sheet {sheet_name}: {e}")
+                    messagebox.showerror("Error", f"Failed to load sheet:\n{str(e)}")
+                    return
+            else:
+                self.df = sheet_state.df_original if sheet_state else None
+
+            # Update UI
+            self.current_sheet_name = sheet_name
+            self._load_sheet_workflow(sheet_name)
+
+            # Update preview
+            if self.df is not None:
+                self.enhanced_preview.load_dataframe(self.df, is_result=False)
+
+            # Update sheet tab bar
+            if self.sheet_tab_bar:
+                self.sheet_tab_bar.set_active_sheet(sheet_name)
+
+            self.status_var.set(f"Switched to sheet: {sheet_name}")
+
+    def on_summary_issue_click(self, sheet_name: str, op_index: int):
+        """Handle click on issue in Run Summary panel - jump to operation and highlight it"""
+        # First, switch to the sheet
+        self.on_summary_sheet_click(sheet_name)
+
+        # Then scroll to and highlight the operation card
+        # This requires access to the queue cards frame
+        # For now, just log it - full implementation would require
+        # adding highlighting to operation cards
+        self.logger.info(f"Jumping to operation {op_index} on sheet {sheet_name}")
+
+        # Scroll the queue to make the operation visible
+        # and flash it (if queue cards are accessible)
+        # This is a TODO for visual feedback
 
     # ==================== LOGGING UI METHODS ====================
 
