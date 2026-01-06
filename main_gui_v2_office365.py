@@ -25,6 +25,8 @@ import os
 import logging
 import threading
 import copy
+import subprocess
+import traceback
 from typing import Optional
 
 # Add to path
@@ -34,6 +36,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from version import __version__, __app_name__, __app_tagline__, GITHUB_REPO, __release_date__, COPYRIGHT
 from config_manager import ConfigManager, FirstRunConfigDialog
 from utils.auto_updater import AutoUpdater, UpdateNotificationDialog, UpdateProgressDialog
+from utils.logging_setup import setup_logging, get_log_directory, get_debug_info, get_recent_logs
+from utils.session_recovery import SessionRecovery
 
 # Import existing components
 from operations.registry import registry
@@ -73,6 +77,7 @@ class CleanSheetApp:
 
     def __init__(self, root, session_token=None, user_email=None, config_manager=None):
         self.root = root
+        self.logger = logging.getLogger(__name__)
 
         # Configuration manager
         self.config_manager = config_manager
@@ -141,6 +146,13 @@ class CleanSheetApp:
         # Auto-updater
         self.updater = AutoUpdater(__version__, GITHUB_REPO)
 
+        # Session recovery
+        self.session_recovery = SessionRecovery()
+        self.last_export_path = None
+
+        # Global exception handler for Tkinter callbacks
+        self.root.report_callback_exception = self.handle_exception
+
         # UI state
         self.operations_visible = False
         self.operations_sidebar = None
@@ -161,6 +173,9 @@ class CleanSheetApp:
         if self.config_manager and self.config_manager.should_check_updates():
             if self.updater.should_check_for_updates():
                 self.check_for_updates_background()
+
+        # Prompt for session recovery after UI is ready
+        self.root.after(100, self.check_session_recovery)
 
     def setup_office365_theme(self):
         """Apply Office 365 light color scheme"""
@@ -3826,6 +3841,9 @@ class CleanSheetApp:
             active_sheet.operations = copy.deepcopy(self.operation_queue)
             logging.info(f"[WORKFLOW] Saved {len(self.operation_queue)} operations to sheet '{active_sheet.sheet_name_display}'")
 
+            # Persist session to disk (debounced)
+            self.save_session_debounced()
+
     def _load_sheet_workflow(self, sheet_name: str):
         """
         Load workflow from sheet state into operation queue
@@ -4177,6 +4195,10 @@ class CleanSheetApp:
 
             messagebox.showinfo("Success", success_msg)
 
+            # Save session after successful file load
+            self.logger.info("Saving session after file load")
+            self.save_session_debounced()
+
         except Exception as e:
             logging.error(f"[FILE LOAD ERROR] {str(e)}")
             messagebox.showerror("Error", f"Failed to load file:\n{str(e)}")
@@ -4297,11 +4319,15 @@ class CleanSheetApp:
             if hasattr(self, 'excel_status_bar'):
                 self.excel_status_bar.update_row_count(len(self.result_df))
 
+            # Save session after successful operations run
+            self.logger.info("Saving session after operations execution")
+            self.save_session_debounced()
+
             if validation_issues:
                 messagebox.showwarning("Success with Issues", success_msg)
             else:
                 messagebox.showinfo("Success", success_msg)
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"Execution failed:\n{str(e)}")
     
@@ -4424,6 +4450,10 @@ class CleanSheetApp:
 
                     success_msg = f"Workbook saved to:\n{filename}\n\nSheets:\n" + "\n".join(sheet_info)
 
+            # Save last export path for session recovery
+            self.last_export_path = filename
+            self.logger.info(f"Saved export to: {filename}")
+
             messagebox.showinfo("Success", success_msg)
             self.status_var.set(f"Saved to {Path(filename).name}")
 
@@ -4512,6 +4542,10 @@ class CleanSheetApp:
                     if self.current_sheet_name in selected_sheets:
                         self._load_sheet_workflow(self.current_sheet_name)
                         logging.info(f"[PRESET] Refreshed current sheet '{self.current_sheet_name}' workflow")
+
+                    # Save session after preset application
+                    self.logger.info("Saving session after preset application")
+                    self.save_session_debounced()
 
                     dialog.destroy()
                     messagebox.showinfo(
@@ -5031,6 +5065,278 @@ Repository: github.com/{GITHUB_REPO}
 
     # ==================== END AUTO-UPDATE METHODS ====================
 
+    # ==================== EXCEPTION HANDLING ====================
+
+    def handle_exception(self, exc_type, exc_value, exc_traceback):
+        """
+        Global exception handler for Tkinter callbacks
+        Logs exceptions and shows user-friendly error dialog
+        """
+        # Format the exception
+        error_msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+
+        # Log the full traceback
+        self.logger.error(f"Unhandled exception in UI callback:\n{error_msg}")
+
+        # Show user-friendly dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Unexpected Error")
+        dialog.geometry("500x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Center dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        # Icon and message
+        header_frame = tk.Frame(dialog, bg='#F3F2F1', height=60)
+        header_frame.pack(fill='x')
+        header_frame.pack_propagate(False)
+
+        tk.Label(
+            header_frame,
+            text="⚠️ Unexpected Error",
+            font=('Segoe UI', 12, 'bold'),
+            bg='#F3F2F1',
+            fg='#D83B01'
+        ).pack(pady=15)
+
+        # Message
+        msg_frame = tk.Frame(dialog, bg='white')
+        msg_frame.pack(fill='both', expand=True, padx=20, pady=10)
+
+        tk.Label(
+            msg_frame,
+            text=f"An unexpected error occurred:\n\n{exc_type.__name__}: {str(exc_value)}\n\n"
+                 "The error has been logged. You can continue working, but some\n"
+                 "functionality may not work correctly. Consider restarting the app.",
+            font=('Segoe UI', 10),
+            bg='white',
+            justify='left',
+            wraplength=450
+        ).pack(pady=10)
+
+        # Buttons
+        button_frame = tk.Frame(dialog, bg='white')
+        button_frame.pack(fill='x', padx=20, pady=(0, 20))
+
+        def copy_details():
+            """Copy error details to clipboard"""
+            self.root.clipboard_clear()
+            self.root.clipboard_append(error_msg)
+            messagebox.showinfo("Copied", "Error details copied to clipboard", parent=dialog)
+
+        tk.Button(
+            button_frame,
+            text="Copy Details",
+            command=copy_details,
+            font=('Segoe UI', 10),
+            padx=15,
+            pady=5
+        ).pack(side='left', padx=(0, 10))
+
+        tk.Button(
+            button_frame,
+            text="OK",
+            command=dialog.destroy,
+            font=('Segoe UI', 10, 'bold'),
+            bg='#0078D4',
+            fg='white',
+            padx=20,
+            pady=5
+        ).pack(side='left')
+
+    # ==================== SESSION RECOVERY ====================
+
+    def check_session_recovery(self):
+        """
+        Check if there's a saved session and prompt user to restore it
+        Called after UI initialization
+        """
+        session_data = self.session_recovery.load_session()
+
+        if not session_data:
+            return
+
+        # Show restore prompt
+        response = messagebox.askyesno(
+            "Restore Previous Session?",
+            f"A previous session was found:\n\n"
+            f"File: {Path(session_data['file_path']).name}\n"
+            f"Sheets: {len(session_data['sheet_names'])}\n"
+            f"Last saved: {session_data.get('timestamp', 'Unknown')}\n\n"
+            "Would you like to restore this session?",
+            icon='question'
+        )
+
+        if response:
+            # User chose to restore
+            try:
+                self._restore_session(session_data)
+                self.logger.info("Session restored successfully")
+                messagebox.showinfo(
+                    "Session Restored",
+                    "Your previous session has been restored.\n\n"
+                    "Note: Data will be reloaded from the original file."
+                )
+            except Exception as e:
+                self.logger.error(f"Failed to restore session: {e}", exc_info=True)
+                messagebox.showerror(
+                    "Restore Failed",
+                    f"Failed to restore session:\n{str(e)}\n\n"
+                    "The session has been discarded."
+                )
+                self.session_recovery.clear_session()
+        else:
+            # User chose to discard
+            self.session_recovery.clear_session()
+            self.logger.info("User discarded saved session")
+
+    def _restore_session(self, session_data):
+        """
+        Restore session data into the app
+        """
+        file_path = session_data['file_path']
+        is_excel = session_data['is_excel']
+
+        if is_excel:
+            # Restore Excel workbook session
+            self.current_file = file_path
+
+            # Create workbook session
+            self.workbook_session = WorkbookSession(file_path, is_excel=True)
+
+            # Restore session state
+            self.session_recovery.restore_session_to_workbook(session_data, self.workbook_session)
+
+            # Initialize sheet names (lazy load - don't load dataframes yet)
+            sheet_names = session_data['sheet_names']
+            self.available_sheets = sheet_names
+
+            # Update UI - show sheet tabs
+            if self.sheet_tab_bar:
+                self.sheet_tab_bar.destroy()
+
+            self.sheet_tab_bar = SheetTabBar(
+                self.center_area,
+                sheet_names=self.workbook_session.get_visible_sheets(),
+                deleted_sheets=list(self.workbook_session.deleted_sheets),
+                on_sheet_select=self.on_sheet_selected,
+                on_sheet_rename=self.on_sheet_renamed,
+                on_sheet_delete=self.on_sheet_deleted,
+                on_sheet_restore=self.on_sheet_restored,
+                workbook_session=self.workbook_session
+            )
+            self.sheet_tab_bar.pack(side='bottom', fill='x')
+
+            # Set active sheet
+            if self.workbook_session.active_sheet:
+                self.on_sheet_selected(self.workbook_session.active_sheet)
+
+            # Update status
+            self.excel_status_bar.update_status(f"Session restored: {Path(file_path).name}")
+
+        else:
+            # CSV file - simpler restore
+            self.current_file = file_path
+            # Load the CSV
+            self.df = pd.read_csv(file_path)
+
+            # Create single-sheet workbook session
+            self.workbook_session = WorkbookSession(file_path, is_excel=False)
+            self.workbook_session.initialize_from_csv(self.df)
+
+            # Restore operations
+            self.session_recovery.restore_session_to_workbook(session_data, self.workbook_session)
+
+            sheet_state = self.workbook_session.get_active_sheet()
+            if sheet_state and sheet_state.operations:
+                self.operation_queue = sheet_state.operations
+                self.update_queue_display()
+
+            # Update preview
+            if hasattr(self, 'data_preview'):
+                self.data_preview.update_data(self.df)
+
+    def save_session_debounced(self):
+        """
+        Save current session with debouncing to avoid disk thrashing
+        """
+        if self.workbook_session is None:
+            return
+
+        # Cancel any pending save
+        if hasattr(self, '_save_timer_id') and self._save_timer_id:
+            self.root.after_cancel(self._save_timer_id)
+
+        # Schedule new save after 500ms
+        self._save_timer_id = self.root.after(
+            500,
+            lambda: self.session_recovery.save_session(
+                self.workbook_session,
+                self.last_export_path
+            )
+        )
+
+    # ==================== END SESSION RECOVERY ====================
+
+    # ==================== LOGGING UI METHODS ====================
+
+    def open_logs_folder(self):
+        """Open the logs folder in file explorer"""
+        try:
+            log_dir = get_log_directory()
+
+            # Open folder based on platform
+            import platform
+            system = platform.system()
+
+            if system == "Windows":
+                os.startfile(str(log_dir))
+            elif system == "Darwin":  # macOS
+                subprocess.Popen(["open", str(log_dir)])
+            else:  # Linux
+                subprocess.Popen(["xdg-open", str(log_dir)])
+
+            self.logger.info(f"Opened logs folder: {log_dir}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to open logs folder: {e}")
+            messagebox.showerror(
+                "Error",
+                f"Failed to open logs folder:\n{str(e)}\n\n"
+                f"Logs are located at:\n{get_log_directory()}"
+            )
+
+    def copy_debug_info(self):
+        """Copy debug information to clipboard"""
+        try:
+            debug_info = get_debug_info(version=__version__)
+
+            # Copy to clipboard
+            self.root.clipboard_clear()
+            self.root.clipboard_append(debug_info)
+
+            messagebox.showinfo(
+                "Debug Info Copied",
+                "Debug information has been copied to clipboard.\n\n"
+                "You can paste this into support emails or issue reports."
+            )
+
+            self.logger.info("Debug info copied to clipboard")
+
+        except Exception as e:
+            self.logger.error(f"Failed to copy debug info: {e}")
+            messagebox.showerror(
+                "Error",
+                f"Failed to copy debug info:\n{str(e)}"
+            )
+
+    # ==================== END LOGGING UI METHODS ====================
+
     def handle_logout(self):
         """Handle user logout"""
         # Confirm logout
@@ -5073,13 +5379,11 @@ Repository: github.com/{GITHUB_REPO}
 def main():
     """Main entry point with authentication and configuration"""
 
-    # Setup logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    # Setup centralized logging with rotation
+    log_dir = setup_logging(app_name=__app_name__, version=__version__)
 
-    logging.info(f"Starting {__app_name__} v{__version__}")
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting {__app_name__} v{__version__}")
 
     # Initialize configuration manager
     config_manager = ConfigManager()

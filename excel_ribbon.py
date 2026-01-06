@@ -242,6 +242,11 @@ class ExcelRibbon(ttk.Frame):
         docs_group.add_button("About", self.app.show_about_dialog, "ℹ️", row=0, column=0)
         docs_group.add_button("Updates", self.app.check_for_updates_manual, "🔄", row=0, column=1)
 
+        debug_group = RibbonGroup(self.content_area, "Debugging")
+        debug_group.pack(side='left', fill='y', padx=2)
+        debug_group.add_button("Open\nLogs", self.app.open_logs_folder, "📂", row=0, column=0)
+        debug_group.add_button("Copy\nDebug", self.app.copy_debug_info, "📋", row=0, column=1)
+
 
 class FormulaBar(ttk.Frame):
     """Excel-style formula/filter bar above the data grid"""
