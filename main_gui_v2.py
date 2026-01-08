@@ -29,6 +29,7 @@ from ui.themes.accessible_theme import AccessibleTheme
 from ai_assistant.claude_assistant import ClaudeAssistant
 from utils.export_helper import ExportHelper
 from analysis.data_quality_integration import DataQualityIntegration
+from config_manager import ConfigManager
 from datetime import datetime
 
 # Import enhanced components
@@ -66,9 +67,13 @@ class UniversalExcelToolV2Enhanced:
         # Managers
         self.preset_manager = PresetManager()
         self.executor = OperationExecutor(progress_callback=self.on_progress)
-        
+        self.config_manager = ConfigManager()
+
         # Data Quality Integration
         self.dq_integration = DataQualityIntegration(self)
+
+        # Email validation cache (session only)
+        self.email_validation_cache = {}  # {normalized_email: validation_result_dict}
         
         # Apply accessible theme
         AccessibleTheme.apply_theme(self.root)
@@ -135,6 +140,14 @@ class UniversalExcelToolV2Enhanced:
             btn_frame,
             text="🔍 Analyze Data Quality",
             command=self.analyze_data_quality,
+            style='Primary.TButton'
+        ).pack(side='left', padx=5)
+
+        # Settings Button
+        ttk.Button(
+            btn_frame,
+            text="⚙️ Settings",
+            command=self.open_settings,
             style='Primary.TButton'
         ).pack(side='left', padx=5)
         
@@ -1568,6 +1581,12 @@ class UniversalExcelToolV2Enhanced:
     def analyze_data_quality(self):
         """Analyze data quality and suggest cleaning operations"""
         self.dq_integration.analyze_data()
+
+    def open_settings(self):
+        """Open settings dialog"""
+        from ui.settings_dialog import SettingsDialog
+        dialog = SettingsDialog(self.root, self.config_manager)
+        dialog.show()
 
 
 def main():

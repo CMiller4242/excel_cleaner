@@ -201,6 +201,13 @@ class ExcelRibbon(ttk.Frame):
         clean_group.add_button("Remove\nBlanks", lambda: None, "🧹", row=0, column=0)
         clean_group.add_button("Trim", lambda: None, "✂️", row=0, column=1)
 
+        # Tools group (for Email Validation, etc.)
+        tools_group = RibbonGroup(self.content_area, "Tools")
+        tools_group.pack(side='left', fill='y', padx=2)
+        tools_group.add_button("Validate\nEmails", self.app.validate_emails_tool, "✉️",
+                             style='RibbonButtonAccent.TButton', row=0, column=0)
+        tools_group.add_button("Settings", self.app.open_settings, "⚙️", row=0, column=1)
+
     def _create_transform_tab(self):
         """Create Transform tab"""
         # Data Structure group
