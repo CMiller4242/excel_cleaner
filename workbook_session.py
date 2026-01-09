@@ -109,6 +109,7 @@ class WorkbookSession:
         self.sheets: Dict[str, SheetState] = {}
         self.deleted_sheets: Set[str] = set()
         self.file_name = Path(file_path).name
+        self.extra_sheets: Dict[str, pd.DataFrame] = {}  # For tool-generated sheets like EMAIL_VALIDATION
 
     def initialize_from_excel(self, sheet_names: List[str]):
         """Initialize workbook session from Excel file sheet names (lazy load)"""
@@ -265,6 +266,11 @@ class WorkbookSession:
         if removed_rows_list:
             combined_removed = pd.concat(removed_rows_list, ignore_index=True)
             export_sheets['REMOVED_ROWS'] = combined_removed
+
+        # Add extra sheets (e.g., EMAIL_VALIDATION from tool actions)
+        for sheet_name, df in self.extra_sheets.items():
+            if df is not None and not df.empty:
+                export_sheets[sheet_name] = df
 
         return export_sheets
 

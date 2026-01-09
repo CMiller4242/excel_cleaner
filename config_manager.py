@@ -40,6 +40,7 @@ class ConfigManager:
         }
         self.config['API'] = {
             'anthropic_api_key': '',
+            'emailable_api_key': '',
         }
         self.config['App'] = {
             'check_updates': 'true',
@@ -76,6 +77,17 @@ class ConfigManager:
         if not self.config.has_section('API'):
             self.config.add_section('API')
         self.config.set('API', 'anthropic_api_key', key)
+        self.save_config()
+
+    def get_emailable_api_key(self):
+        """Get Emailable API key"""
+        return self.config.get('API', 'emailable_api_key', fallback='')
+
+    def set_emailable_api_key(self, key):
+        """Set Emailable API key"""
+        if not self.config.has_section('API'):
+            self.config.add_section('API')
+        self.config.set('API', 'emailable_api_key', key)
         self.save_config()
 
     def should_check_updates(self):

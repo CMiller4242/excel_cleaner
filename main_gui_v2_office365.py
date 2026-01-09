@@ -113,6 +113,9 @@ class CleanSheetApp:
         self.workbook_session: Optional[WorkbookSession] = None
         self.sheet_tab_bar: Optional[SheetTabBar] = None  # Excel-like sheet tabs
 
+        # Email validation cache (session only)
+        self.email_validation_cache = {}  # {normalized_email: validation_result_dict}
+
         # Data - Multi-File Mode
         self.loaded_files = []  # List of {'name': str, 'path': str, 'df': DataFrame}
         self.processing_mode = tk.StringVar(value="single")  # "single" or "batch"
@@ -4868,6 +4871,177 @@ class CleanSheetApp:
     def analyze_data_quality(self):
         """Analyze data quality and suggest cleaning operations"""
         self.dq_integration.analyze_data()
+
+    # ==================== EMAIL VALIDATION METHODS ====================
+
+    def validate_emails_tool(self):
+        """Launch email validation wizard and process validation."""
+        # Check if workbook session exists and is Excel
+        if not self.workbook_session:
+            messagebox.showwarning(
+                "No File Loaded",
+                "Please load an Excel file before using email validation.",
+                parent=self.root
+            )
+            return
+
+        if not self.workbook_session.is_excel:
+            messagebox.showinfo(
+                "Excel Only",
+                "Email validation is only available for Excel files with multiple sheets.",
+                parent=self.root
+            )
+            return
+
+        # Check for API key
+        if not self.config_manager:
+            messagebox.showerror(
+                "Configuration Error",
+                "Configuration manager not available.",
+                parent=self.root
+            )
+            return
+
+        api_key = self.config_manager.get_emailable_api_key()
+        if not api_key:
+            result = messagebox.askyesno(
+                "API Key Required",
+                "Emailable API key is not configured.\n\n"
+                "Would you like to open Settings to configure it now?",
+                parent=self.root
+            )
+            if result:
+                self.open_settings()
+            return
+
+        # Launch wizard
+        from ui.email_validation_wizard import EmailValidationWizard
+
+        wizard = EmailValidationWizard(
+            self.root,
+            self.workbook_session,
+            on_start_validation=self._start_email_validation
+        )
+        wizard.show()
+
+    def _start_email_validation(self, config):
+        """Start email validation with the given configuration."""
+        from integrations.emailable_client import EmailableClient
+        from integrations.email_validation_runner import EmailValidationRunner
+        from ui.progress_dialog import ProgressDialog
+        import queue
+
+        # Create progress dialog
+        progress_dialog = ProgressDialog(
+            self.root,
+            title="Email Validation",
+            cancelable=True
+        )
+
+        # Create message queue for thread-safe UI updates
+        progress_queue = queue.Queue()
+
+        # Progress callback (called from worker thread)
+        def progress_callback(message, current, total):
+            progress_queue.put(('progress', message, current, total))
+
+        # Completion callback (called from worker thread)
+        def completion_callback(success, result_or_error):
+            progress_queue.put(('complete', success, result_or_error))
+
+        # Create Emailable client
+        api_key = self.config_manager.get_emailable_api_key()
+        client = EmailableClient(api_key)
+
+        # Create and start runner
+        runner = EmailValidationRunner(
+            emailable_client=client,
+            workbook_session=self.workbook_session,
+            config=config,
+            validation_cache=self.email_validation_cache,
+            progress_callback=progress_callback,
+            completion_callback=completion_callback
+        )
+
+        # Wire up cancel button
+        progress_dialog.on_cancel = runner.cancel
+
+        # Start validation
+        runner.start()
+
+        # Poll queue for updates
+        def check_queue():
+            try:
+                while True:
+                    msg_type, *args = progress_queue.get_nowait()
+
+                    if msg_type == 'progress':
+                        message, current, total = args
+                        progress_dialog.update_progress(message, current, total)
+
+                    elif msg_type == 'complete':
+                        success, result_or_error = args
+                        progress_dialog.close()
+
+                        if success:
+                            result = result_or_error
+                            summary = result['summary']
+
+                            # Show summary
+                            summary_text = (
+                                f"Email validation completed successfully!\n\n"
+                                f"Total Occurrences: {summary['total_occurrences']}\n"
+                                f"Unique Emails: {summary['unique_emails']}\n\n"
+                                f"Deliverable: {summary['deliverable']}\n"
+                                f"Risky: {summary['risky']}\n"
+                                f"Undeliverable: {summary['undeliverable']}\n"
+                                f"Unknown/Error: {summary['unknown']}\n\n"
+                                f"Bad (Risky + Undeliverable): {summary['bad']}\n\n"
+                                f"Results have been saved to the EMAIL_VALIDATION sheet.\n"
+                                f"Use 'Save Results' to export the workbook with validation data."
+                            )
+
+                            messagebox.showinfo(
+                                "Validation Complete",
+                                summary_text,
+                                parent=self.root
+                            )
+
+                            # Refresh UI if needed
+                            self.set_status("Email validation completed. Save results to export.")
+
+                        else:
+                            error = result_or_error
+                            messagebox.showerror(
+                                "Validation Failed",
+                                f"Email validation failed:\n\n{error}",
+                                parent=self.root
+                            )
+
+                        return  # Stop polling
+
+            except queue.Empty:
+                pass
+
+            # Continue polling
+            self.root.after(100, check_queue)
+
+        # Start polling
+        self.root.after(100, check_queue)
+
+    def open_settings(self):
+        """Open settings dialog."""
+        from ui.settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(self.root, self.config_manager)
+        result = dialog.show()
+
+        if result:
+            # Settings were saved, refresh API key if needed
+            if self.config_manager:
+                api_key = self.config_manager.get_api_key()
+                if api_key:
+                    self.api_key.set(api_key)
 
     # ==================== AUTO-UPDATE METHODS ====================
 
