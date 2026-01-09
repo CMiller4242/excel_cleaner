@@ -883,6 +883,51 @@ class CleanSheetApp:
             self.status_var.set(f"Error processing {current}/{total}: {filename}")
         self.root.update_idletasks()
 
+    def set_status(self, message: str):
+        """
+        Set status message in UI.
+
+        Compatibility wrapper that tries various status update mechanisms
+        and never throws exceptions.
+
+        Args:
+            message: Status message to display
+        """
+        try:
+            # Try status_var first (primary mechanism)
+            if hasattr(self, 'status_var') and self.status_var:
+                self.status_var.set(message)
+                return
+        except Exception:
+            pass
+
+        try:
+            # Try status_text_var
+            if hasattr(self, 'status_text_var') and self.status_text_var:
+                self.status_text_var.set(message)
+                return
+        except Exception:
+            pass
+
+        try:
+            # Try status_label
+            if hasattr(self, 'status_label') and self.status_label:
+                self.status_label.config(text=message)
+                return
+        except Exception:
+            pass
+
+        try:
+            # Try update_status method
+            if hasattr(self, 'update_status'):
+                self.update_status(message)
+                return
+        except Exception:
+            pass
+
+        # Fallback: print to console
+        print(f"[STATUS] {message}")
+
     # ==================== MULTI-FILE MANAGEMENT ====================
 
     def show_file_management_panel(self):
@@ -4345,6 +4390,13 @@ class CleanSheetApp:
                 if sheet_state.has_results():
                     has_results = True
                     break
+
+            # Also check for extra sheets like EMAIL_VALIDATION from tool actions
+            if not has_results and self.workbook_session.extra_sheets:
+                has_results = any(
+                    df is not None and not df.empty
+                    for df in self.workbook_session.extra_sheets.values()
+                )
         else:
             # Single-sheet mode: Check active result
             has_results = (self.result_df is not None)
@@ -5008,7 +5060,10 @@ class CleanSheetApp:
                             )
 
                             # Refresh UI if needed
-                            self.set_status("Email validation completed. Save results to export.")
+                            try:
+                                self.set_status("Email validation completed. Use 'Save Results' to export.")
+                            except Exception as e:
+                                print(f"[WARNING] Failed to update status: {e}")
 
                         else:
                             error = result_or_error
