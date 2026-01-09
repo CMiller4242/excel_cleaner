@@ -64,9 +64,9 @@ class EmailValidationWizard:
 
     def _create_widgets(self):
         """Create wizard UI structure."""
-        # Header with progress
+        # Header with progress (pack at top)
         header_frame = tk.Frame(self.dialog, bg="#0078D4", height=100)
-        header_frame.pack(fill=tk.X)
+        header_frame.pack(side=tk.TOP, fill=tk.X)
         header_frame.pack_propagate(False)
 
         self.title_label = tk.Label(
@@ -87,19 +87,9 @@ class EmailValidationWizard:
         )
         self.subtitle_label.pack()
 
-        # Content area (will hold step frames)
-        self.content_frame = tk.Frame(self.dialog, padx=20, pady=20)
-        self.content_frame.pack(fill=tk.BOTH, expand=True)
-
-        # Create step frames (hidden initially)
-        self.step_frames = []
-        self.step_frames.append(self._create_step1())
-        self.step_frames.append(self._create_step2())
-        self.step_frames.append(self._create_step3())
-
-        # Navigation buttons
-        button_frame = tk.Frame(self.dialog)
-        button_frame.pack(fill=tk.X, padx=30, pady=(0, 20))
+        # Navigation buttons (pack at bottom FIRST to ensure visibility)
+        button_frame = tk.Frame(self.dialog, bg="#f0f0f0")
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=15)
 
         self.back_button = tk.Button(
             button_frame,
@@ -124,14 +114,29 @@ class EmailValidationWizard:
         )
         self.next_button.pack(side=tk.LEFT, padx=(0, 10))
 
-        tk.Button(
+        self.cancel_button = tk.Button(
             button_frame,
             text="Cancel",
-            command=self.dialog.destroy,
+            command=self._cancel,
             font=("Segoe UI", 10),
             padx=20,
             pady=8
-        ).pack(side=tk.RIGHT)
+        )
+        self.cancel_button.pack(side=tk.RIGHT)
+
+        # Content area (will hold step frames) - pack last to fill remaining space
+        self.content_frame = tk.Frame(self.dialog, padx=20, pady=20)
+        self.content_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        # Create step frames (hidden initially)
+        self.step_frames = []
+        self.step_frames.append(self._create_step1())
+        self.step_frames.append(self._create_step2())
+        self.step_frames.append(self._create_step3())
+
+        # Bind keyboard shortcuts
+        self.dialog.bind('<Return>', lambda e: self._handle_enter())
+        self.dialog.bind('<Escape>', lambda e: self._cancel())
 
     def _create_step1(self):
         """Create Step 1: Sheet Selection."""
@@ -175,6 +180,9 @@ class EmailValidationWizard:
         # Select first sheet by default
         if visible_sheets:
             self.sheet_listbox.selection_set(0)
+
+        # Bind selection change to update button states
+        self.sheet_listbox.bind('<<ListboxSelect>>', lambda e: self._update_button_states())
 
         # Select/Deselect All buttons
         button_row = tk.Frame(frame)
@@ -334,21 +342,39 @@ class EmailValidationWizard:
         # Show current step
         self.step_frames[step_index].pack(fill=tk.BOTH, expand=True)
 
-        # Update button states
+        # Update button states based on step
         if step_index == 0:
+            # Step 1: Back disabled, Next depends on selection
             self.back_button.config(state=tk.DISABLED)
-            self.next_button.config(text="Next >", command=self._go_next)
-        elif step_index == 2:
+            self.next_button.config(
+                text="Next >",
+                command=self._go_next,
+                bg="#0078D4",
+                state=tk.NORMAL
+            )
+        elif step_index == 1:
+            # Step 2: Both buttons enabled, Next depends on column selection
             self.back_button.config(state=tk.NORMAL)
-            self.next_button.config(text="Start Validation", command=self._start_validation,
-                                   bg="#28a745")
-        else:
-            self.back_button.config(state=tk.NORMAL)
-            self.next_button.config(text="Next >", command=self._go_next, bg="#0078D4")
-
-        # Special handling for step 2 (populate column mappings)
-        if step_index == 1:
+            self.next_button.config(
+                text="Next >",
+                command=self._go_next,
+                bg="#0078D4",
+                state=tk.NORMAL
+            )
+            # Populate column mappings
             self._populate_column_mappings()
+        elif step_index == 2:
+            # Step 3: Both buttons enabled, show "Start Validation"
+            self.back_button.config(state=tk.NORMAL)
+            self.next_button.config(
+                text="Start Validation",
+                command=self._start_validation,
+                bg="#28a745",
+                state=tk.NORMAL
+            )
+
+        # Update button states based on current data
+        self.dialog.after(100, self._update_button_states)
 
     def _go_back(self):
         """Navigate to previous step."""
@@ -392,10 +418,12 @@ class EmailValidationWizard:
     def _select_all_sheets(self):
         """Select all sheets in listbox."""
         self.sheet_listbox.selection_set(0, tk.END)
+        self._update_button_states()
 
     def _deselect_all_sheets(self):
         """Deselect all sheets in listbox."""
         self.sheet_listbox.selection_clear(0, tk.END)
+        self._update_button_states()
 
     def _populate_column_mappings(self):
         """Populate column selection widgets for each selected sheet."""
@@ -448,6 +476,9 @@ class EmailValidationWizard:
             )
             combobox.pack(side=tk.LEFT)
 
+            # Bind selection change to update button states
+            combobox.bind('<<ComboboxSelected>>', lambda e: self._update_button_states())
+
             # Auto-select if column name contains 'email' or 'mail'
             for col in columns:
                 if 'email' in col.lower() or 'mail' in col.lower():
@@ -455,6 +486,9 @@ class EmailValidationWizard:
                     break
 
             self.column_mapping_widgets[sheet_name] = combobox
+
+        # Update button states after populating
+        self.dialog.after(100, self._update_button_states)
 
     def _get_sheet_columns(self, sheet_name):
         """Get columns for a sheet (handles lazy loading)."""
@@ -490,6 +524,40 @@ class EmailValidationWizard:
 
         # Trigger validation
         self.on_start_validation(config)
+
+    def _cancel(self):
+        """Cancel the wizard and close dialog."""
+        self.dialog.destroy()
+
+    def _handle_enter(self):
+        """Handle Enter key press - trigger Next or Finish."""
+        if self.next_button['state'] != tk.DISABLED:
+            if self.current_step == 2:
+                self._start_validation()
+            else:
+                self._go_next()
+
+    def _update_button_states(self):
+        """Update button states based on current selections."""
+        if self.current_step == 0:
+            # Step 1: Enable Next if at least one sheet selected
+            selected_indices = self.sheet_listbox.curselection()
+            if selected_indices:
+                self.next_button.config(state=tk.NORMAL)
+            else:
+                self.next_button.config(state=tk.DISABLED)
+        elif self.current_step == 1:
+            # Step 2: Enable Next if all selected sheets have column mapping
+            all_mapped = True
+            for sheet_name in self.selected_sheets:
+                combobox = self.column_mapping_widgets.get(sheet_name)
+                if not combobox or not combobox.get():
+                    all_mapped = False
+                    break
+            if all_mapped:
+                self.next_button.config(state=tk.NORMAL)
+            else:
+                self.next_button.config(state=tk.DISABLED)
 
     def show(self):
         """Show the wizard dialog."""
