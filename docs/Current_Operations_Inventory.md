@@ -1,7 +1,7 @@
 # Universal Excel Tool V2.0 - Complete Operations Inventory
 
-**Total Operations: 24**
-**Last Updated:** 2025-11-18
+**Total Operations: 25**
+**Last Updated:** 2026-01-22
 
 ---
 
@@ -9,7 +9,7 @@
 
 1. [Text Operations](#text-operations) - 9 operations
 2. [Data Operations](#data-operations) - 3 operations
-3. [Cleaning Operations](#cleaning-operations) - 3 operations
+3. [Cleaning Operations](#cleaning-operations) - 4 operations
 4. [Math Operations](#math-operations) - 6 operations
 5. [Validation Operations](#validation-operations) - 1 operation
 6. [Conditional Operations](#conditional-operations) - 1 operation
@@ -180,6 +180,19 @@
   - `columns` (column_list) - Columns to remove
 - **Example Use:** Remove unnecessary ID columns
 - **Common Use Case:** Clean up exports, remove internal fields
+
+### 16. Keep Columns (Remove Everything Else)
+- **ID:** `clean_keep_columns`
+- **Excel Equivalent:** Hide/Delete columns (inverse)
+- **Description:** Keep only selected columns and remove all others
+- **Parameters:**
+  - `columns_to_keep` (column_list) - Columns to keep
+- **Example Use:** Keep only Name, Email, Phone from 50-column export
+- **Common Use Case:** Simplify datasets with many columns, extract specific fields
+- **Special Behavior:**
+  - If some selected columns don't exist, operation proceeds with columns that do exist (lenient validation)
+  - Preserves original DataFrame column order (not selection order)
+  - More efficient than selecting dozens of columns to remove when you only want a few columns
 
 ---
 
