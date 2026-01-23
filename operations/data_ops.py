@@ -1876,6 +1876,159 @@ class KeepBestByValueOperation(BaseOperation):
         return result_df
 
 
+class AddMultipleColumnsOperation(BaseOperation):
+    """Add multiple new columns at once with customizable defaults"""
+
+    def get_metadata(self) -> OperationMetadata:
+        return OperationMetadata(
+            id='data_add_multiple_columns',
+            name='Add Multiple Columns',
+            category='Data - Organization',
+            description='Add multiple new columns at once with blank or constant values',
+            parameters=[
+                Parameter(
+                    name='columns',
+                    type='add_columns_list',
+                    description='Column definitions to add',
+                    required=True,
+                    default=[]
+                )
+            ],
+            excel_equivalent='Insert columns (multiple times)',
+            examples=[
+                'Add blank columns for Status, Notes, Follow_Up',
+                'Add columns with default values like Country=USA',
+                'Batch create template columns for data entry'
+            ],
+            tags=['add', 'column', 'create', 'batch', 'bulk', 'template']
+        )
+
+    def validate_params(self, df: pd.DataFrame, params: Dict) -> tuple[bool, str]:
+        """
+        Validate parameters with lenient handling.
+        Only fails if columns list is empty or has critical errors.
+        """
+        if 'columns' not in params:
+            return False, "Missing required parameter: columns"
+
+        columns = params['columns']
+
+        if not isinstance(columns, list):
+            return False, "columns parameter must be a list"
+
+        if not columns:
+            return False, "No columns specified. Add at least one column definition."
+
+        # Check for basic validity (names, types)
+        for i, col_spec in enumerate(columns):
+            if not isinstance(col_spec, dict):
+                return False, f"Column definition {i+1} must be a dictionary"
+
+            name = col_spec.get('name', '').strip()
+            if not name:
+                return False, f"Column definition {i+1} has empty name"
+
+            default_type = col_spec.get('default_type', 'blank')
+            if default_type not in ['blank', 'value']:
+                return False, f"Column '{name}': invalid default_type '{default_type}' (must be 'blank' or 'value')"
+
+            on_exists = col_spec.get('on_exists', 'skip')
+            if on_exists not in ['skip', 'overwrite', 'rename']:
+                return False, f"Column '{name}': invalid on_exists '{on_exists}' (must be 'skip', 'overwrite', or 'rename')"
+
+        # Lenient: don't fail if columns already exist - handle at runtime
+        return True, ""
+
+    def execute(self, df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+        """
+        Add multiple columns to the DataFrame.
+        Handles existing columns based on on_exists behavior.
+        Logs warnings for issues but does not fail.
+        """
+        import logging
+
+        df = df.copy()
+        columns = params['columns']
+
+        issues = []  # Track issues for logging
+
+        for col_spec in columns:
+            name = col_spec.get('name', '').strip()
+            default_type = col_spec.get('default_type', 'blank')
+            on_exists = col_spec.get('on_exists', 'skip')
+            value = col_spec.get('value', '')
+
+            if not name:
+                continue
+
+            # Determine if column exists
+            column_exists = name in df.columns
+
+            if column_exists:
+                if on_exists == 'skip':
+                    # Skip this column, log issue
+                    logging.warning(f"Add Multiple Columns: Column '{name}' already exists, skipping (on_exists=skip)")
+                    issues.append({
+                        'code': 'DUPLICATE_COLUMN',
+                        'name': name,
+                        'action': 'skipped'
+                    })
+                    continue
+
+                elif on_exists == 'overwrite':
+                    # Overwrite existing column
+                    logging.warning(f"Add Multiple Columns: Overwriting existing column '{name}' (on_exists=overwrite)")
+                    issues.append({
+                        'code': 'OVERWROTE_COLUMN',
+                        'name': name,
+                        'action': 'overwritten'
+                    })
+                    # Will be overwritten below
+
+                elif on_exists == 'rename':
+                    # Find unique name
+                    original_name = name
+                    counter = 1
+                    while name in df.columns:
+                        name = f"{original_name}_{counter}"
+                        counter += 1
+
+                    logging.warning(f"Add Multiple Columns: Column '{original_name}' exists, renamed to '{name}' (on_exists=rename)")
+                    issues.append({
+                        'code': 'AUTO_RENAMED_COLUMN',
+                        'original': original_name,
+                        'new_name': name,
+                        'action': 'renamed'
+                    })
+
+            # Create/overwrite column based on default_type
+            if default_type == 'blank':
+                df[name] = ''
+            elif default_type == 'value':
+                # Try to parse as number if it looks numeric
+                try:
+                    if value and value.replace('.', '', 1).replace('-', '', 1).isdigit():
+                        numeric_value = float(value) if '.' in value else int(value)
+                        df[name] = numeric_value
+                    else:
+                        df[name] = value
+                except (ValueError, AttributeError):
+                    df[name] = value
+
+        # Log summary of issues
+        if issues:
+            logging.info(f"Add Multiple Columns: Processed {len(columns)} column(s) with {len(issues)} issue(s)")
+            for issue in issues:
+                if issue.get('code') == 'DUPLICATE_COLUMN':
+                    logging.info(f"  - Skipped '{issue['name']}' (already exists)")
+                elif issue.get('code') == 'OVERWROTE_COLUMN':
+                    logging.info(f"  - Overwrote '{issue['name']}'")
+                elif issue.get('code') == 'AUTO_RENAMED_COLUMN':
+                    logging.info(f"  - Renamed '{issue['original']}' → '{issue['new_name']}'")
+
+        return df
+
+
 # Register all operations
 registry.register(VLookupOperation())
 registry.register(RemoveDuplicatesOperation())
@@ -1887,3 +2040,4 @@ registry.register(KeepBestContactPerLocationOperation())
 registry.register(AnalyzeTitleRanksOperation())
 registry.register(FilterByValueOperation())
 registry.register(KeepBestByValueOperation())
+registry.register(AddMultipleColumnsOperation())

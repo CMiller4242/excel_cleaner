@@ -1,14 +1,14 @@
 # Universal Excel Tool V2.0 - Complete Operations Inventory
 
-**Total Operations: 25**
-**Last Updated:** 2026-01-22
+**Total Operations: 26**
+**Last Updated:** 2026-01-23
 
 ---
 
 ## Operation Categories
 
 1. [Text Operations](#text-operations) - 9 operations
-2. [Data Operations](#data-operations) - 3 operations
+2. [Data Operations](#data-operations) - 4 operations
 3. [Cleaning Operations](#cleaning-operations) - 4 operations
 4. [Math Operations](#math-operations) - 6 operations
 5. [Validation Operations](#validation-operations) - 1 operation
@@ -149,6 +149,34 @@
   - `ascending` (boolean) - Sort A-Z, 1-9 (default: true)
 - **Example Use:** Sort by customer name alphabetically
 - **Common Use Case:** Organize data, prepare for reporting
+
+### 12.5. Add Multiple Columns
+- **ID:** `data_add_multiple_columns`
+- **Excel Equivalent:** Insert columns (multiple times)
+- **Category:** Data - Organization
+- **Description:** Add multiple new columns at once with blank or constant values (batch column creation)
+- **Parameters:**
+  - `columns` (add_columns_list) - List of column definitions
+    - Each definition includes:
+      - `name` - Column name
+      - `default_type` - 'blank' or 'value'
+      - `value` - Default value (if type is 'value')
+      - `on_exists` - Behavior if column exists: 'skip', 'overwrite', or 'rename'
+- **Example Use:**
+  - Add blank columns for Status, Notes, Follow_Up
+  - Add columns with default values like Country=USA, Score=0
+  - Batch create template columns for data entry
+- **Common Use Case:**
+  - Prepare template columns for manual data entry
+  - Add standardized fields to multiple datasets
+  - Create placeholder columns for future processing
+- **Special Behavior:**
+  - New columns appended at end of DataFrame in order specified
+  - Non-fatal validation: handles existing columns gracefully
+  - on_exists=skip: skips and logs issue
+  - on_exists=overwrite: replaces existing column values
+  - on_exists=rename: auto-renames to unique name (e.g., Status_1)
+  - Issues logged but don't block execution
 
 ---
 
