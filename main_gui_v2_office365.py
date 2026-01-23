@@ -3618,8 +3618,23 @@ class CleanSheetApp:
 
                 param_widgets[param.name] = widget
 
+            elif param.type == 'add_columns_list':
+                # Special widget for adding multiple columns with dynamic add/remove rows
+                from ui.widgets.add_columns_widget import AddColumnsWidget
+
+                # Create the add columns widget
+                widget = AddColumnsWidget(frame)
+                widget.pack(fill='both', expand=True, pady=2)
+
+                # Pre-fill column definitions if in edit mode
+                if current_value and isinstance(current_value, list):
+                    widget.set_columns(current_value)
+
+                param_widgets[param.name] = widget
+
         def on_add():
             from ui.widgets.column_rename_widget import ColumnRenameWidget
+            from ui.widgets.add_columns_widget import AddColumnsWidget
 
             params = {}
             for param in operation.metadata.parameters:
@@ -3635,6 +3650,20 @@ class CleanSheetApp:
                             messagebox.showwarning("Missing Mappings", f"{param.description} is required")
                             return
                         params[param.name] = mappings
+                    elif isinstance(widget, AddColumnsWidget):
+                        # Get column definitions from the add columns widget
+                        # First validate
+                        is_valid, error_msg = widget.validate()
+                        if not is_valid:
+                            from tkinter import messagebox
+                            messagebox.showwarning("Invalid Column Definitions", error_msg)
+                            return
+                        columns = widget.get_columns()
+                        if not columns and param.required:
+                            from tkinter import messagebox
+                            messagebox.showwarning("Missing Columns", f"{param.description} is required")
+                            return
+                        params[param.name] = columns
                     elif isinstance(widget, (ttk.Entry, ttk.Combobox)):
                         value = widget.get()
                         if param.type == 'number':
