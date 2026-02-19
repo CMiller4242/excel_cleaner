@@ -25,7 +25,7 @@ from utils.smart_mapping import (
     MappingResult,
     infer_mapping,
 )
-from ui.widgets.searchable_combobox import SearchableCombobox
+from ui.widgets.autocomplete_combobox import AutocompleteCombobox
 from utils.smart_preset_manager import SmartPresetManager
 
 
@@ -114,10 +114,10 @@ class SmartFormatWizard:
         self.mapping_result: MappingResult = infer_mapping(raw_columns)
 
         # Source options for dropdowns
-        self._source_options = list(raw_columns)   # "(blank)" added by SearchableCombobox
+        self._source_options = list(raw_columns)   # "(blank)" added by AutocompleteCombobox
 
-        # Per-target widgets for step 2 (SearchableCombobox or special mode var)
-        self._target_vars: Dict[str, SearchableCombobox] = {}
+        # Per-target widgets for step 2 (AutocompleteCombobox or special mode var)
+        self._target_vars: Dict[str, AutocompleteCombobox] = {}
         self._contact_mode_var = tk.StringVar()
         self._first_var = tk.StringVar()
         self._last_var  = tk.StringVar()
@@ -394,7 +394,7 @@ class SmartFormatWizard:
                 continue
 
             # Searchable combobox
-            cb = SearchableCombobox(row, options=self._source_options, width=32)
+            cb = AutocompleteCombobox(row, options=self._source_options, width=32)
 
             if source and source != "__derived__" and source in self.raw_columns:
                 cb.set(source)
