@@ -435,6 +435,10 @@ class CleanSheetApp:
                   command=self.run_operations,
                   style='RibbonButtonSuccess.TButton',
                   width=8).pack(side='left', padx=2)
+        ttk.Button(queue_actions, text="✨ Smart Format",
+                  command=self.launch_smart_format,
+                  style='RibbonButton.TButton',
+                  width=16).pack(side='left', padx=2)
 
         # Queue content (cards view)
         self.queue_content = ttk.Frame(queue_frame, style='Card.TFrame')
@@ -4407,7 +4411,115 @@ class CleanSheetApp:
 
         except Exception as e:
             messagebox.showerror("Error", f"Execution failed:\n{str(e)}")
-    
+
+    # ------------------------------------------------------------------
+    # Smart Format – Mail File Standard
+    # ------------------------------------------------------------------
+
+    def launch_smart_format(self):
+        """
+        Launch the Smart Format wizard and, upon Apply, transform the active
+        sheet's data into the 24-column mail-file standard.
+        """
+        if self.df is None:
+            messagebox.showwarning("No Data", "Please load a file first.")
+            return
+
+        from ui.smart_format_wizard import SmartFormatWizard
+        from utils.smart_mapping import apply_mail_standard, REQUIRED_SCHEMA
+        from workbook_session import Issue
+
+        raw_cols = self.df.columns.tolist()
+
+        # Show wizard (blocks until closed)
+        wizard = SmartFormatWizard(self.root, raw_cols)
+        mapping_config = wizard.show()
+
+        if mapping_config is None:
+            return   # user cancelled
+
+        # ---- Apply the mail standard ----
+        try:
+            df_out, raw_issues, meta = apply_mail_standard(
+                self.df, mapping_config, REQUIRED_SCHEMA
+            )
+        except Exception as exc:
+            messagebox.showerror("Smart Format Error",
+                                 f"Failed to apply mail standard:\n{exc}")
+            return
+
+        # ---- Convert raw issues to Issue objects ----
+        sheet_name = self.current_sheet_name or "Sheet"
+        issue_objects = []
+        for raw in raw_issues:
+            issue_objects.append(Issue(
+                sheet_name=sheet_name,
+                op_index=-1,
+                op_label="Smart Format (Mail Standard)",
+                code=raw["code"],
+                message=raw["message"],
+                details=raw.get("details", {}),
+            ))
+
+        # ---- Update active sheet state ----
+        self.result_df = df_out
+        if self.workbook_session:
+            active_sheet = self.workbook_session.get_active_sheet()
+            if active_sheet:
+                active_sheet.df_result = df_out
+                active_sheet.is_dirty = True
+                # Append smart-format issues to any existing issues
+                active_sheet.issues = getattr(active_sheet, "issues", []) + issue_objects
+
+                if issue_objects and self.sheet_tab_bar and self.current_sheet_name:
+                    self.sheet_tab_bar.mark_sheet_issues(
+                        self.current_sheet_name, has_issues=True
+                    )
+        else:
+            # Single-file mode without workbook session
+            pass
+
+        # ---- Refresh preview ----
+        if hasattr(self, "enhanced_preview"):
+            self.enhanced_preview.load_dataframe(df_out, is_result=True)
+
+        # ---- Status / success message ----
+        n_blank   = len(meta.get("created_blank", []))
+        n_dropped = len(meta.get("dropped_columns", []))
+        n_issues  = len(issue_objects)
+
+        status_parts = [f"Smart Format applied — {len(df_out.columns)} columns, {len(df_out):,} rows"]
+        if n_blank:
+            status_parts.append(f"{n_blank} blank column(s) created")
+        if n_dropped:
+            status_parts.append(f"{n_dropped} extra column(s) dropped")
+        if n_issues:
+            status_parts.append(f"{n_issues} issue(s) flagged")
+
+        self.status_var.set("  |  ".join(status_parts))
+
+        # Summary dialog
+        detail_lines = []
+        if meta.get("derived_contact"):
+            detail_lines.append(f"• Contact derived from First + Last Name")
+        if n_blank:
+            detail_lines.append(
+                f"• {n_blank} column(s) created blank: "
+                + ", ".join(meta.get("created_blank", [])[:8])
+                + ("…" if n_blank > 8 else "")
+            )
+        if n_dropped:
+            dropped = meta.get("dropped_columns", [])
+            detail_lines.append(
+                f"• {n_dropped} source column(s) dropped: "
+                + ", ".join(dropped[:6])
+                + ("…" if n_dropped > 6 else "")
+            )
+        if n_issues:
+            detail_lines.append(f"• {n_issues} issue(s) recorded (see sheet ⚠ indicator)")
+
+        msg = "Mail file standard applied successfully.\n\n" + "\n".join(detail_lines)
+        messagebox.showinfo("Smart Format Complete", msg)
 
     def save_results(self):
         """Save results to file with multi-sheet export"""
