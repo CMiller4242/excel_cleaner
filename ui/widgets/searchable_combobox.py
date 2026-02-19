@@ -143,13 +143,6 @@ class SearchableCombobox(ttk.Frame):
         self._combo["values"] = filtered
         self._inhibit_filter = False
 
-        # Auto-open the dropdown when there are matching results
-        if len(filtered) > 1 and query:
-            try:
-                self._combo.event_generate("<Down>")
-            except Exception:
-                pass
-
     def _on_select(self, _event=None):
         """User chose an item from the dropdown list."""
         self._confirmed = self._var.get()
