@@ -1,16 +1,22 @@
 """
 Smart Format Wizard – Mail File Standard
 
-Three-step modal wizard:
+Five-step modal wizard:
   Step 1 – Confirm target schema + detected column summary
-  Step 2 – Mapping review table (user can adjust each target → source)
-  Step 3 – Summary + Apply
+  Step 2 – Mapping review table (searchable comboboxes)
+  Step 3 – Summary of missing columns / conflicts
+  Step 4 – Operations Builder (dedupe, remove rows, remove blank rows)
+  Step 5 – Final review & apply
+
+Supports:
+  • Edit mode  – pass existing_config to pre-populate prior selections
+  • Preset controls – load/save Smart Format presets from the header
 """
 
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 from typing import Callable, Dict, List, Optional
 
 from utils.smart_mapping import (
@@ -20,6 +26,7 @@ from utils.smart_mapping import (
     infer_mapping,
 )
 from ui.widgets.searchable_combobox import SearchableCombobox
+from utils.smart_preset_manager import SmartPresetManager
 
 
 # ---------------------------------------------------------------------------
@@ -37,41 +44,108 @@ _CONF_LABEL = {
     "low":  "Low / None",
 }
 
+_DEFAULT_DEDUPE_PRIORITY = [
+    "Email Address", "Company", "Address1", "Zip", "Contact",
+]
+
+
+# ---------------------------------------------------------------------------
+# Main wizard class
+# ---------------------------------------------------------------------------
 
 class SmartFormatWizard:
     """
-    Modal wizard that guides the user through mapping a raw DataFrame
-    to the 24-column mail-file standard.
+    Modal wizard that guides the user through mapping a raw DataFrame to the
+    24-column mail-file standard.
 
     Usage::
 
         wizard = SmartFormatWizard(parent, raw_columns=df.columns.tolist())
         config = wizard.show()   # blocks; returns mapping_config dict or None
+
+    For edit mode (re-opens with prior selections pre-populated)::
+
+        wizard = SmartFormatWizard(parent, raw_columns=df.columns.tolist(),
+                                   existing_config=sheet_state.smart_format)
+
+    Result dict (on Apply)::
+
+        {
+          "template_id":      "MAIL_STANDARD_V1",
+          "column_map":       {target: source_or_None},
+          "derivation_plan":  "use_contact"|"build_first_last"|"blank",
+          "first_col":        str|None,
+          "last_col":         str|None,
+          "operations_plan":  {
+              "dedupe":                  {"enabled": bool, "keys": [...]},
+              "remove_rows_containing":  {"enabled": bool, "columns": [...],
+                                          "patterns": str, "match_type": str},
+              "remove_blank_rows":       {"enabled": bool, "columns": [...]},
+          },
+          "preset_name":      str|None,   # if loaded from / saved to a preset
+        }
     """
 
-    STEPS = ["1. Schema Overview", "2. Column Mapping", "3. Review & Apply"]
+    STEPS = [
+        "1. Schema Overview",
+        "2. Column Mapping",
+        "3. Summary",
+        "4. Operations",
+        "5. Apply",
+    ]
+    TEMPLATE_ID = "MAIL_STANDARD_V1"
 
-    def __init__(self, parent: tk.Widget, raw_columns: List[str]):
+    # ------------------------------------------------------------------
+    # Construction
+    # ------------------------------------------------------------------
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        raw_columns: List[str],
+        existing_config: Optional[Dict] = None,
+    ):
         self.parent = parent
         self.raw_columns = raw_columns
         self._result: Optional[Dict] = None
         self.current_step = 0
 
-        # Run inference once
+        # Inference (always re-run – fast)
         self.mapping_result: MappingResult = infer_mapping(raw_columns)
 
-        # Source option list for dropdowns: "(blank)" + sorted raw columns
-        self._source_options = ["(blank)"] + list(raw_columns)
+        # Source options for dropdowns
+        self._source_options = list(raw_columns)   # "(blank)" added by SearchableCombobox
 
-        # Per-target StringVars for the mapping dropdowns (Step 2)
-        self._target_vars: Dict[str, tk.StringVar] = {}
-        # Contact mode StringVar
-        self._contact_mode_var: tk.StringVar = tk.StringVar()
-        # First/Last col display StringVars
-        self._first_var: tk.StringVar = tk.StringVar()
-        self._last_var:  tk.StringVar = tk.StringVar()
+        # Per-target widgets for step 2 (SearchableCombobox or special mode var)
+        self._target_vars: Dict[str, SearchableCombobox] = {}
+        self._contact_mode_var = tk.StringVar()
+        self._first_var = tk.StringVar()
+        self._last_var  = tk.StringVar()
+
+        # Operations builder vars (step 4)
+        self._dedupe_enabled      = tk.BooleanVar(value=False)
+        self._dedupe_keys_lb: Optional[tk.Listbox] = None
+
+        self._remove_rows_enabled = tk.BooleanVar(value=False)
+        self._remove_rows_cols_lb: Optional[tk.Listbox] = None
+        self._remove_rows_text    = tk.StringVar()
+        self._remove_rows_match   = tk.StringVar(value="contains")
+
+        self._remove_blank_enabled = tk.BooleanVar(value=False)
+        self._remove_blank_cols_lb: Optional[tk.Listbox] = None
+
+        # Preset management
+        self._preset_manager = SmartPresetManager()
+        self._loaded_preset_name: Optional[str] = None
+
+        # Existing config (for edit mode)
+        self._existing_config = existing_config
 
         self._build_dialog()
+
+        # Pre-populate from existing config after widgets are built
+        if existing_config:
+            self._populate_from_config(existing_config)
 
     # ------------------------------------------------------------------
     # Dialog construction
@@ -80,8 +154,8 @@ class SmartFormatWizard:
     def _build_dialog(self):
         self.dialog = tk.Toplevel(self.parent)
         self.dialog.title("✨ Smart Format — Mail File Standard")
-        self.dialog.geometry("820x640")
-        self.dialog.minsize(700, 520)
+        self.dialog.geometry("860x680")
+        self.dialog.minsize(720, 540)
         self.dialog.transient(self.parent)
         self.dialog.grab_set()
         self.dialog.resizable(True, True)
@@ -98,20 +172,47 @@ class SmartFormatWizard:
             bg="#0078D4", fg="white",
         ).pack(side=tk.LEFT, padx=16, pady=12)
 
-        # Step indicator (right side of header)
+        # Preset buttons (right side of header)
+        preset_bar = tk.Frame(header, bg="#0078D4")
+        preset_bar.pack(side=tk.RIGHT, padx=12)
+
+        tk.Button(
+            preset_bar,
+            text="💾 Save Preset",
+            font=("Segoe UI", 8),
+            bg="#005A9E", fg="white",
+            bd=0, padx=8, pady=3,
+            cursor="hand2",
+            relief="flat",
+            activebackground="#004578",
+            command=self._save_preset,
+        ).pack(side=tk.RIGHT, padx=3)
+
+        tk.Button(
+            preset_bar,
+            text="📂 Load Preset",
+            font=("Segoe UI", 8),
+            bg="#005A9E", fg="white",
+            bd=0, padx=8, pady=3,
+            cursor="hand2",
+            relief="flat",
+            activebackground="#004578",
+            command=self._load_preset,
+        ).pack(side=tk.RIGHT, padx=3)
+
+        # Step indicator
         self._step_label = tk.Label(
             header,
-            text="Step 1 of 3",
+            text="Step 1 of 5",
             font=("Segoe UI", 10),
             bg="#0078D4", fg="#BDD7F5",
         )
         self._step_label.pack(side=tk.RIGHT, padx=16)
 
-        # ---- Button bar (packed BOTTOM so content fills middle) ----
+        # ---- Button bar (bottom) ----
         btn_bar = tk.Frame(self.dialog, bg="#F3F2F1", bd=0)
         btn_bar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        tk.Frame(btn_bar, bg="#EDEBE9", height=1).pack(fill=tk.X)  # separator
+        tk.Frame(btn_bar, bg="#EDEBE9", height=1).pack(fill=tk.X)
 
         inner_btns = tk.Frame(btn_bar, bg="#F3F2F1")
         inner_btns.pack(pady=10, padx=16, anchor=tk.E)
@@ -124,7 +225,7 @@ class SmartFormatWizard:
                                     command=self._go_back, state=tk.DISABLED)
         self._back_btn.pack(side=tk.LEFT, padx=4)
 
-        self._next_btn = ttk.Button(inner_btns, text="Next  ▶", width=12,
+        self._next_btn = ttk.Button(inner_btns, text="Next  ▶", width=14,
                                     command=self._go_next)
         self._next_btn.pack(side=tk.LEFT, padx=4)
 
@@ -132,11 +233,13 @@ class SmartFormatWizard:
         self._content = tk.Frame(self.dialog, bg="white")
         self._content.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        # Build all three step frames (hidden initially)
+        # Build all step frames
         self._step_frames = [
             self._build_step1(),
             self._build_step2(),
             self._build_step3(),
+            self._build_step4(),
+            self._build_step5(),
         ]
 
         self._show_step(0)
@@ -146,10 +249,9 @@ class SmartFormatWizard:
     # ------------------------------------------------------------------
 
     def _build_step1(self) -> tk.Frame:
-        """Overview: target schema list + raw column summary."""
+        """Schema overview: target schema list + raw column summary."""
         frame = tk.Frame(self._content, bg="white")
 
-        # Title
         tk.Label(
             frame,
             text="Target Schema: 24-Column Mail File Standard",
@@ -157,11 +259,8 @@ class SmartFormatWizard:
             bg="white", fg="#323130",
         ).pack(anchor=tk.W, padx=20, pady=(20, 4))
 
-        # Summary line
-        n_raw = len(self.raw_columns)
-        n_found = sum(
-            1 for v in self.mapping_result.suggested_map.values() if v
-        )
+        n_raw   = len(self.raw_columns)
+        n_found = sum(1 for v in self.mapping_result.suggested_map.values() if v)
         n_blank = len(REQUIRED_SCHEMA) - n_found
 
         tk.Label(
@@ -171,43 +270,37 @@ class SmartFormatWizard:
                   f"{n_blank} will be created blank"),
             font=("Segoe UI", 10),
             bg="white", fg="#605E5C",
-            wraplength=750, justify=tk.LEFT,
+            wraplength=800, justify=tk.LEFT,
         ).pack(anchor=tk.W, padx=20, pady=(0, 12))
 
-        # Schema list in scrollable canvas
+        # Scrollable schema list
         canvas_frame = tk.Frame(frame, bg="white")
         canvas_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
 
         canvas = tk.Canvas(canvas_frame, bg="white", highlightthickness=0)
         sb = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=canvas.yview)
         inner = tk.Frame(canvas, bg="white")
-
         canvas.configure(yscrollcommand=sb.set)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         win = canvas.create_window((0, 0), window=inner, anchor=tk.NW)
-
         inner.bind("<Configure>",
                    lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfig(win, width=e.width))
 
-        # Header row
         hdr = tk.Frame(inner, bg="#F3F2F1")
         hdr.pack(fill=tk.X, pady=(0, 2))
-        tk.Label(hdr, text="#",           width=4,  bg="#F3F2F1", font=("Segoe UI", 9, "bold"), anchor=tk.W).pack(side=tk.LEFT, padx=4)
-        tk.Label(hdr, text="Target Column", width=22, bg="#F3F2F1", font=("Segoe UI", 9, "bold"), anchor=tk.W).pack(side=tk.LEFT, padx=4)
-        tk.Label(hdr, text="Best Match",   width=28, bg="#F3F2F1", font=("Segoe UI", 9, "bold"), anchor=tk.W).pack(side=tk.LEFT, padx=4)
-        tk.Label(hdr, text="Confidence",   width=10, bg="#F3F2F1", font=("Segoe UI", 9, "bold"), anchor=tk.W).pack(side=tk.LEFT, padx=4)
+        for txt, w in [("#", 4), ("Target Column", 22), ("Best Match", 28), ("Confidence", 10)]:
+            tk.Label(hdr, text=txt, width=w, bg="#F3F2F1",
+                     font=("Segoe UI", 9, "bold"), anchor=tk.W).pack(side=tk.LEFT, padx=4)
 
         for idx, target in enumerate(REQUIRED_SCHEMA):
             source = self.mapping_result.suggested_map.get(target)
             conf   = self.mapping_result.confidences.get(target, "low")
-
             row_bg = "white" if idx % 2 == 0 else "#FAFAFA"
             row = tk.Frame(inner, bg=row_bg)
             row.pack(fill=tk.X, pady=1)
-
             tk.Label(row, text=str(idx + 1), width=4,  bg=row_bg, font=("Segoe UI", 9), anchor=tk.W).pack(side=tk.LEFT, padx=4)
             tk.Label(row, text=target,        width=22, bg=row_bg, font=("Segoe UI", 9), anchor=tk.W).pack(side=tk.LEFT, padx=4)
 
@@ -228,13 +321,12 @@ class SmartFormatWizard:
                      font=("Segoe UI", 9), anchor=tk.W,
                      fg=conf_color).pack(side=tk.LEFT, padx=4)
 
-        # Conflicts note
         if self.mapping_result.conflicts:
-            note = tk.Frame(frame, bg="#FFF4CE", bd=1, relief=tk.FLAT)
+            note = tk.Frame(frame, bg="#FFF4CE")
             note.pack(fill=tk.X, padx=20, pady=(4, 0))
             tk.Label(
                 note,
-                text=(f"⚠  {len(self.mapping_result.conflicts)} mapping conflict(s) detected — "
+                text=(f"⚠  {len(self.mapping_result.conflicts)} mapping conflict(s) detected – "
                       f"review in Step 2."),
                 font=("Segoe UI", 9),
                 bg="#FFF4CE", fg="#7A5C00",
@@ -244,7 +336,7 @@ class SmartFormatWizard:
         return frame
 
     def _build_step2(self) -> tk.Frame:
-        """Mapping review: one row per target column with editable dropdown."""
+        """Mapping review: one row per target column with searchable dropdown."""
         frame = tk.Frame(self._content, bg="white")
 
         tk.Label(
@@ -256,24 +348,21 @@ class SmartFormatWizard:
 
         tk.Label(
             frame,
-            text="For each target column, choose the source column from your file (or '(blank)'). Type to search.",
+            text="For each target column choose the source column from your file (or '(blank)'). Type to search.",
             font=("Segoe UI", 9),
             bg="white", fg="#605E5C",
         ).pack(anchor=tk.W, padx=20, pady=(0, 10))
 
-        # Scrollable mapping table
         outer = tk.Frame(frame, bg="white")
         outer.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
 
         canvas = tk.Canvas(outer, bg="white", highlightthickness=0)
         sb = ttk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
         table = tk.Frame(canvas, bg="white")
-
         canvas.configure(yscrollcommand=sb.set)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         win = canvas.create_window((0, 0), window=table, anchor=tk.NW)
-
         table.bind("<Configure>",
                    lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>",
@@ -300,23 +389,19 @@ class SmartFormatWizard:
             tk.Label(row, text=target, width=20, bg=row_bg,
                      font=("Segoe UI", 9), anchor=tk.W).pack(side=tk.LEFT, padx=6)
 
-            # ---- Contact gets special treatment ----
             if target == "Contact":
                 self._build_contact_row(row, row_bg)
                 continue
 
-            # Searchable dropdown – options list excludes "(blank)"; widget adds it
-            raw_only = [o for o in self._source_options if o != "(blank)"]
-            cb = SearchableCombobox(row, options=raw_only, width=32)
+            # Searchable combobox
+            cb = SearchableCombobox(row, options=self._source_options, width=32)
 
-            if source == "__derived__" or not source or source not in self.raw_columns:
-                cb.set("(blank)")
-            else:
+            if source and source != "__derived__" and source in self.raw_columns:
                 cb.set(source)
+            else:
+                cb.set("(blank)")
 
             cb.pack(side=tk.LEFT, padx=6)
-
-            # Store widget directly so _collect_mapping can call cb.get()
             self._target_vars[target] = cb
 
             conf_color = _CONF_COLOR.get(conf, "#A19F9D") if source else "#A19F9D"
@@ -324,7 +409,6 @@ class SmartFormatWizard:
             tk.Label(row, text=conf_txt, width=8, bg=row_bg,
                      font=("Segoe UI", 9), fg=conf_color, anchor=tk.W).pack(side=tk.LEFT, padx=6)
 
-            # Conflict note
             conflict_for = [c for c in mr.conflicts if c["target_col"] == target]
             note_txt = ""
             if conflict_for:
@@ -335,16 +419,16 @@ class SmartFormatWizard:
 
             if note_txt:
                 tk.Label(row, text=note_txt, width=28, bg=row_bg,
-                         font=("Segoe UI", 8), fg="#7A5C00" if "conflict" in note_txt else "#A19F9D",
+                         font=("Segoe UI", 8),
+                         fg="#7A5C00" if "conflict" in note_txt else "#A19F9D",
                          anchor=tk.W).pack(side=tk.LEFT, padx=6)
 
         return frame
 
     def _build_contact_row(self, row: tk.Frame, row_bg: str):
-        """Contact row with mode selector."""
+        """Contact row with mode selector (special case)."""
         mr = self.mapping_result
 
-        # Set initial mode
         if mr.derivation_plan == "use_contact":
             initial_mode = "Use existing Contact column"
         elif mr.derivation_plan == "build_first_last":
@@ -354,55 +438,53 @@ class SmartFormatWizard:
 
         self._contact_mode_var.set(initial_mode)
 
-        modes = ["Use existing Contact column",
-                 "Build from First + Last Name",
-                 "(blank)"]
+        modes = [
+            "Use existing Contact column",
+            "Build from First + Last Name",
+            "(blank)",
+        ]
 
         cb = ttk.Combobox(row, textvariable=self._contact_mode_var,
                           values=modes, width=30, state="readonly",
                           font=("Segoe UI", 9))
         cb.pack(side=tk.LEFT, padx=6)
 
-        # Show first/last columns detected
         first_txt = mr.first_col or "(not found)"
         last_txt  = mr.last_col  or "(not found)"
-
         self._first_var.set(first_txt)
         self._last_var.set(last_txt)
 
-        detail_lbl = tk.Label(
+        tk.Label(
             row,
             text=f"First='{first_txt}'  Last='{last_txt}'",
             font=("Segoe UI", 8), bg=row_bg, fg="#605E5C",
-        )
-        detail_lbl.pack(side=tk.LEFT, padx=6)
+        ).pack(side=tk.LEFT, padx=6)
 
     def _build_step3(self) -> tk.Frame:
-        """Summary / confirmation screen."""
+        """Summary of missing columns and conflicts (populated when shown)."""
         frame = tk.Frame(self._content, bg="white")
-        self._step3_frame = frame   # keep ref for refresh
+        self._step3_frame = frame
         return frame
 
     def _populate_step3(self):
-        """Rebuild step 3 content based on current Step 2 selections."""
+        """Rebuild step 3 from current Step 2 selections."""
         frame = self._step3_frame
         for w in frame.winfo_children():
             w.destroy()
 
         tk.Label(
             frame,
-            text="Review & Apply",
+            text="Mapping Summary",
             font=("Segoe UI", 12, "bold"),
             bg="white", fg="#323130",
         ).pack(anchor=tk.W, padx=20, pady=(20, 4))
 
         col_map, derivation_plan, first_col, last_col = self._collect_mapping()
 
-        # Compute stats
-        blank_targets = [t for t, s in col_map.items() if not s]
+        blank_targets  = [t for t, s in col_map.items() if not s]
         mapped_targets = [t for t, s in col_map.items() if s]
         conflicts = self.mapping_result.conflicts
-        dropped = self.mapping_result.dropped_columns
+        dropped   = self.mapping_result.dropped_columns
 
         lines = [
             f"✓  {len(mapped_targets)} columns mapped from source",
@@ -421,24 +503,356 @@ class SmartFormatWizard:
                      bg="white", fg=fg, anchor=tk.W).pack(anchor=tk.W, padx=20, pady=2)
 
         if blank_targets:
-            tk.Label(frame, text="Blank columns: " + ", ".join(blank_targets),
-                     font=("Segoe UI", 9), bg="white", fg="#605E5C",
-                     wraplength=740, justify=tk.LEFT,
-                     anchor=tk.W).pack(anchor=tk.W, padx=32, pady=(0, 4))
+            tk.Label(
+                frame,
+                text="Blank columns: " + ", ".join(blank_targets),
+                font=("Segoe UI", 9), bg="white", fg="#605E5C",
+                wraplength=790, justify=tk.LEFT, anchor=tk.W,
+            ).pack(anchor=tk.W, padx=32, pady=(0, 4))
 
         if dropped:
-            tk.Label(frame, text="Dropped: " + ", ".join(dropped[:10]) +
-                     (f"  …+{len(dropped)-10} more" if len(dropped) > 10 else ""),
-                     font=("Segoe UI", 9), bg="white", fg="#A19F9D",
-                     wraplength=740, justify=tk.LEFT,
-                     anchor=tk.W).pack(anchor=tk.W, padx=32, pady=(0, 8))
+            tk.Label(
+                frame,
+                text="Dropped: " + ", ".join(dropped[:10])
+                     + (f"  …+{len(dropped) - 10} more" if len(dropped) > 10 else ""),
+                font=("Segoe UI", 9), bg="white", fg="#A19F9D",
+                wraplength=790, justify=tk.LEFT, anchor=tk.W,
+            ).pack(anchor=tk.W, padx=32, pady=(0, 8))
 
         tk.Label(
             frame,
-            text="Click 'Apply' to transform the active sheet. This is reversible via Undo.",
+            text="Click 'Next' to configure optional clean-up operations.",
             font=("Segoe UI", 9, "italic"),
             bg="white", fg="#605E5C",
         ).pack(anchor=tk.W, padx=20, pady=(8, 0))
+
+    def _build_step4(self) -> tk.Frame:
+        """Operations Builder step."""
+        frame = tk.Frame(self._content, bg="white")
+
+        tk.Label(
+            frame,
+            text="Operations Builder (Optional)",
+            font=("Segoe UI", 12, "bold"),
+            bg="white", fg="#323130",
+        ).pack(anchor=tk.W, padx=20, pady=(20, 2))
+
+        tk.Label(
+            frame,
+            text="Choose clean-up operations to run automatically after applying the mail standard.",
+            font=("Segoe UI", 9),
+            bg="white", fg="#605E5C",
+        ).pack(anchor=tk.W, padx=20, pady=(0, 10))
+
+        # Scrollable container for the ops
+        outer = tk.Frame(frame, bg="white")
+        outer.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
+
+        canvas = tk.Canvas(outer, bg="white", highlightthickness=0)
+        sb = ttk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
+        inner = tk.Frame(canvas, bg="white")
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        win = canvas.create_window((0, 0), window=inner, anchor=tk.NW)
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfig(win, width=e.width))
+
+        # ---- 1. Dedupe ----
+        self._dedupe_keys_lb = self._build_dedupe_section(inner)
+
+        ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
+
+        # ---- 2. Remove rows containing ----
+        self._remove_rows_cols_lb = self._build_remove_rows_section(inner)
+
+        ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
+
+        # ---- 3. Remove blank rows ----
+        self._remove_blank_cols_lb = self._build_remove_blank_section(inner)
+
+        return frame
+
+    def _build_dedupe_section(self, parent: tk.Frame) -> tk.Listbox:
+        """Build the Dedupe sub-section in step 4. Returns the keys Listbox."""
+        section = tk.Frame(parent, bg="white")
+        section.pack(fill=tk.X, pady=4)
+
+        hdr = tk.Frame(section, bg="white")
+        hdr.pack(fill=tk.X)
+        tk.Checkbutton(
+            hdr,
+            text="Remove Duplicate Rows (Dedupe)",
+            variable=self._dedupe_enabled,
+            font=("Segoe UI", 10, "bold"),
+            bg="white", fg="#323130",
+            command=lambda: self._toggle_section(body, self._dedupe_enabled),
+        ).pack(side=tk.LEFT)
+
+        body = tk.Frame(section, bg="white")
+        body.pack(fill=tk.X, padx=20)
+
+        tk.Label(
+            body,
+            text="Dedupe keys – hold Ctrl/Shift to select multiple:",
+            font=("Segoe UI", 9),
+            bg="white", fg="#605E5C",
+        ).pack(anchor=tk.W, pady=(4, 2))
+
+        lb_frame = tk.Frame(body, bg="white")
+        lb_frame.pack(anchor=tk.W)
+
+        sb = ttk.Scrollbar(lb_frame, orient=tk.VERTICAL)
+        lb = tk.Listbox(
+            lb_frame,
+            selectmode=tk.MULTIPLE,
+            font=("Segoe UI", 9),
+            height=6,
+            width=36,
+            yscrollcommand=sb.set,
+            exportselection=False,
+        )
+        sb.config(command=lb.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        lb.pack(side=tk.LEFT)
+
+        # Populate with target schema columns
+        for col in REQUIRED_SCHEMA:
+            lb.insert(tk.END, col)
+
+        # Default selection: priority columns if they're in schema
+        for i, col in enumerate(REQUIRED_SCHEMA):
+            if col in _DEFAULT_DEDUPE_PRIORITY:
+                lb.selection_set(i)
+
+        # Start disabled
+        self._toggle_section(body, self._dedupe_enabled)
+        return lb
+
+    def _build_remove_rows_section(self, parent: tk.Frame) -> tk.Listbox:
+        """Build Remove Rows Containing sub-section. Returns the columns Listbox."""
+        section = tk.Frame(parent, bg="white")
+        section.pack(fill=tk.X, pady=4)
+
+        hdr = tk.Frame(section, bg="white")
+        hdr.pack(fill=tk.X)
+        tk.Checkbutton(
+            hdr,
+            text="Remove Rows Containing (text filter)",
+            variable=self._remove_rows_enabled,
+            font=("Segoe UI", 10, "bold"),
+            bg="white", fg="#323130",
+            command=lambda: self._toggle_section(body, self._remove_rows_enabled),
+        ).pack(side=tk.LEFT)
+
+        body = tk.Frame(section, bg="white")
+        body.pack(fill=tk.X, padx=20)
+
+        # Column selector
+        tk.Label(body, text="Target column(s):", font=("Segoe UI", 9),
+                 bg="white", fg="#605E5C").pack(anchor=tk.W, pady=(4, 2))
+
+        lb_frame = tk.Frame(body, bg="white")
+        lb_frame.pack(anchor=tk.W)
+
+        sb = ttk.Scrollbar(lb_frame, orient=tk.VERTICAL)
+        lb = tk.Listbox(
+            lb_frame,
+            selectmode=tk.MULTIPLE,
+            font=("Segoe UI", 9),
+            height=4,
+            width=36,
+            yscrollcommand=sb.set,
+            exportselection=False,
+        )
+        sb.config(command=lb.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        lb.pack(side=tk.LEFT)
+
+        for col in REQUIRED_SCHEMA:
+            lb.insert(tk.END, col)
+
+        # Text entry
+        text_row = tk.Frame(body, bg="white")
+        text_row.pack(fill=tk.X, pady=(6, 2))
+        tk.Label(text_row, text="Remove rows where column contains:",
+                 font=("Segoe UI", 9), bg="white", fg="#605E5C").pack(side=tk.LEFT)
+
+        text_frame = tk.Frame(body, bg="white")
+        text_frame.pack(fill=tk.X, pady=(0, 4))
+        tk.Entry(text_frame, textvariable=self._remove_rows_text,
+                 font=("Segoe UI", 9), width=40).pack(side=tk.LEFT)
+        tk.Label(text_frame, text=" (comma-separated)",
+                 font=("Segoe UI", 8), bg="white", fg="#A19F9D").pack(side=tk.LEFT)
+
+        # Match type
+        match_row = tk.Frame(body, bg="white")
+        match_row.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(match_row, text="Match type:", font=("Segoe UI", 9),
+                 bg="white", fg="#605E5C").pack(side=tk.LEFT)
+        for val, lbl in [("contains", "Contains"), ("equals", "Equals (exact)"),
+                          ("startswith", "Starts with")]:
+            tk.Radiobutton(match_row, text=lbl, variable=self._remove_rows_match,
+                           value=val, bg="white", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=6)
+
+        self._toggle_section(body, self._remove_rows_enabled)
+        return lb
+
+    def _build_remove_blank_section(self, parent: tk.Frame) -> tk.Listbox:
+        """Build Remove Blank Rows sub-section. Returns the columns Listbox."""
+        section = tk.Frame(parent, bg="white")
+        section.pack(fill=tk.X, pady=4)
+
+        hdr = tk.Frame(section, bg="white")
+        hdr.pack(fill=tk.X)
+        tk.Checkbutton(
+            hdr,
+            text="Remove Blank Rows",
+            variable=self._remove_blank_enabled,
+            font=("Segoe UI", 10, "bold"),
+            bg="white", fg="#323130",
+            command=lambda: self._toggle_section(body, self._remove_blank_enabled),
+        ).pack(side=tk.LEFT)
+
+        body = tk.Frame(section, bg="white")
+        body.pack(fill=tk.X, padx=20)
+
+        tk.Label(
+            body,
+            text="Remove row only if ALL of these columns are blank:",
+            font=("Segoe UI", 9), bg="white", fg="#605E5C",
+        ).pack(anchor=tk.W, pady=(4, 2))
+
+        lb_frame = tk.Frame(body, bg="white")
+        lb_frame.pack(anchor=tk.W)
+
+        sb = ttk.Scrollbar(lb_frame, orient=tk.VERTICAL)
+        lb = tk.Listbox(
+            lb_frame,
+            selectmode=tk.MULTIPLE,
+            font=("Segoe UI", 9),
+            height=4,
+            width=36,
+            yscrollcommand=sb.set,
+            exportselection=False,
+        )
+        sb.config(command=lb.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        lb.pack(side=tk.LEFT)
+
+        for col in REQUIRED_SCHEMA:
+            lb.insert(tk.END, col)
+
+        self._toggle_section(body, self._remove_blank_enabled)
+        return lb
+
+    @staticmethod
+    def _toggle_section(body: tk.Frame, var: tk.BooleanVar):
+        """Enable/disable all widgets inside a section body frame."""
+        state = tk.NORMAL if var.get() else tk.DISABLED
+        for child in body.winfo_children():
+            try:
+                child.config(state=state)
+            except tk.TclError:
+                pass
+            # Recurse into sub-frames
+            for grandchild in child.winfo_children():
+                try:
+                    grandchild.config(state=state)
+                except tk.TclError:
+                    pass
+
+    def _build_step5(self) -> tk.Frame:
+        """Final apply confirmation (populated dynamically)."""
+        frame = tk.Frame(self._content, bg="white")
+        self._step5_frame = frame
+        return frame
+
+    def _populate_step5(self):
+        """Rebuild step 5 based on current selections from steps 2 & 4."""
+        frame = self._step5_frame
+        for w in frame.winfo_children():
+            w.destroy()
+
+        tk.Label(
+            frame,
+            text="Review & Apply",
+            font=("Segoe UI", 12, "bold"),
+            bg="white", fg="#323130",
+        ).pack(anchor=tk.W, padx=20, pady=(20, 4))
+
+        col_map, derivation_plan, first_col, last_col = self._collect_mapping()
+        ops_plan = self._collect_ops_plan()
+
+        blank_targets  = [t for t, s in col_map.items() if not s]
+        mapped_targets = [t for t, s in col_map.items() if s]
+        conflicts = self.mapping_result.conflicts
+        dropped   = self.mapping_result.dropped_columns
+
+        # Mapping summary
+        tk.Label(frame, text="Mapping:", font=("Segoe UI", 10, "bold"),
+                 bg="white", fg="#323130").pack(anchor=tk.W, padx=20, pady=(8, 2))
+
+        lines = [
+            f"  ✓  {len(mapped_targets)} columns mapped from source",
+            f"  ○  {len(blank_targets)} required columns will be created blank",
+        ]
+        if derivation_plan == "build_first_last":
+            lines.append(f"  ⚙  Contact derived from First ('{first_col}') + Last ('{last_col}')")
+        if conflicts:
+            lines.append(f"  ⚠  {len(conflicts)} conflict(s) auto-resolved")
+        if dropped:
+            lines.append(f"  ✂  {len(dropped)} extra column(s) will be dropped")
+
+        for line in lines:
+            fg = "#7A5C00" if "⚠" in line else "#323130"
+            tk.Label(frame, text=line, font=("Segoe UI", 9),
+                     bg="white", fg=fg, anchor=tk.W).pack(anchor=tk.W, padx=20, pady=1)
+
+        # Operations summary
+        tk.Label(frame, text="Operations to run after mapping:",
+                 font=("Segoe UI", 10, "bold"),
+                 bg="white", fg="#323130").pack(anchor=tk.W, padx=20, pady=(10, 2))
+
+        ops_lines = []
+        if ops_plan.get("dedupe", {}).get("enabled"):
+            keys = ops_plan["dedupe"].get("keys", [])
+            ops_lines.append(f"  ✓  Dedupe  (keys: {', '.join(keys) or 'none selected'})")
+
+        rrc = ops_plan.get("remove_rows_containing", {})
+        if rrc.get("enabled"):
+            cols = rrc.get("columns", [])
+            pats = rrc.get("patterns", "")
+            ops_lines.append(f"  ✓  Remove rows containing '{pats}' in: {', '.join(cols) or 'no columns'}")
+
+        rbr = ops_plan.get("remove_blank_rows", {})
+        if rbr.get("enabled"):
+            cols = rbr.get("columns", [])
+            ops_lines.append(f"  ✓  Remove blank rows  (columns: {', '.join(cols) or 'none selected'})")
+
+        if not ops_lines:
+            ops_lines.append("  (none selected)")
+
+        for line in ops_lines:
+            tk.Label(frame, text=line, font=("Segoe UI", 9),
+                     bg="white", fg="#323130", anchor=tk.W).pack(anchor=tk.W, padx=20, pady=1)
+
+        if self._loaded_preset_name:
+            tk.Label(
+                frame,
+                text=f'📂 Preset loaded: "{self._loaded_preset_name}"',
+                font=("Segoe UI", 9, "italic"),
+                bg="white", fg="#605E5C",
+            ).pack(anchor=tk.W, padx=20, pady=(6, 0))
+
+        tk.Label(
+            frame,
+            text="\nClick 'Apply' to transform the active sheet. Reversible via Undo.",
+            font=("Segoe UI", 9, "italic"),
+            bg="white", fg="#605E5C",
+        ).pack(anchor=tk.W, padx=20, pady=(4, 0))
 
     # ------------------------------------------------------------------
     # Navigation
@@ -450,7 +864,6 @@ class SmartFormatWizard:
         self._step_frames[step].pack(fill=tk.BOTH, expand=True)
         self._step_label.config(text=f"Step {step + 1} of {len(self.STEPS)}")
 
-        # Update buttons
         self._back_btn.config(state=tk.NORMAL if step > 0 else tk.DISABLED)
         if step == len(self.STEPS) - 1:
             self._next_btn.config(text="✔  Apply")
@@ -462,9 +875,13 @@ class SmartFormatWizard:
             self._apply()
             return
 
-        # Validate step 2 before proceeding
+        # On leaving step 2 → populate step 3 summary
         if self.current_step == 1:
             self._populate_step3()
+
+        # On leaving step 4 → populate step 5 final review
+        if self.current_step == 3:
+            self._populate_step5()
 
         self.current_step += 1
         self._show_step(self.current_step)
@@ -487,23 +904,21 @@ class SmartFormatWizard:
 
         for target in REQUIRED_SCHEMA:
             if target == "Contact":
-                continue   # handled separately
-            var = self._target_vars.get(target)
-            if var is None:
+                continue
+            cb = self._target_vars.get(target)
+            if cb is None:
                 col_map[target] = None
                 continue
-            val = var.get()
-            col_map[target] = None if val == "(blank)" else val
+            val = cb.get()
+            col_map[target] = None if val in ("(blank)", "") else val
 
         # Contact
         mode = self._contact_mode_var.get()
         mr = self.mapping_result
         if mode == "Use existing Contact column":
             derivation_plan = "use_contact"
-            # Find which raw col is the contact source
             contact_src = mr.suggested_map.get("Contact")
             if contact_src == "__derived__" or not contact_src:
-                # fall back to greedy scan
                 contact_src = None
                 for rc in self.raw_columns:
                     from utils.smart_mapping import normalize_header
@@ -527,19 +942,244 @@ class SmartFormatWizard:
         return col_map, derivation_plan, first_col, last_col
 
     # ------------------------------------------------------------------
+    # Collect operations plan from Step 4 widgets
+    # ------------------------------------------------------------------
+
+    def _collect_ops_plan(self) -> Dict:
+        ops: Dict = {}
+
+        # Dedupe
+        if self._dedupe_enabled.get() and self._dedupe_keys_lb:
+            sel_indices = self._dedupe_keys_lb.curselection()
+            keys = [self._dedupe_keys_lb.get(i) for i in sel_indices]
+            ops["dedupe"] = {"enabled": True, "keys": keys}
+        else:
+            ops["dedupe"] = {"enabled": False, "keys": []}
+
+        # Remove rows containing
+        if self._remove_rows_enabled.get() and self._remove_rows_cols_lb:
+            sel_indices = self._remove_rows_cols_lb.curselection()
+            cols = [self._remove_rows_cols_lb.get(i) for i in sel_indices]
+            ops["remove_rows_containing"] = {
+                "enabled": True,
+                "columns": cols,
+                "patterns": self._remove_rows_text.get(),
+                "match_type": self._remove_rows_match.get(),
+            }
+        else:
+            ops["remove_rows_containing"] = {
+                "enabled": False,
+                "columns": [],
+                "patterns": "",
+                "match_type": "contains",
+            }
+
+        # Remove blank rows
+        if self._remove_blank_enabled.get() and self._remove_blank_cols_lb:
+            sel_indices = self._remove_blank_cols_lb.curselection()
+            cols = [self._remove_blank_cols_lb.get(i) for i in sel_indices]
+            ops["remove_blank_rows"] = {"enabled": True, "columns": cols}
+        else:
+            ops["remove_blank_rows"] = {"enabled": False, "columns": []}
+
+        return ops
+
+    # ------------------------------------------------------------------
     # Apply
     # ------------------------------------------------------------------
 
     def _apply(self):
         col_map, derivation_plan, first_col, last_col = self._collect_mapping()
+        ops_plan = self._collect_ops_plan()
 
         self._result = {
-            "column_map": col_map,
+            "template_id":     self.TEMPLATE_ID,
+            "column_map":      col_map,
             "derivation_plan": derivation_plan,
-            "first_col": first_col,
-            "last_col":  last_col,
+            "first_col":       first_col,
+            "last_col":        last_col,
+            "operations_plan": ops_plan,
+            "preset_name":     self._loaded_preset_name,
         }
         self.dialog.destroy()
+
+    # ------------------------------------------------------------------
+    # Preset load / save
+    # ------------------------------------------------------------------
+
+    def _load_preset(self):
+        """Show preset picker dialog and populate wizard from chosen preset."""
+        presets = self._preset_manager.list_presets()
+        if not presets:
+            messagebox.showinfo(
+                "No Smart Presets",
+                "No Smart Format presets found.\n\n"
+                "Complete the wizard and click 'Save Preset' to create one.",
+                parent=self.dialog,
+            )
+            return
+
+        picker = _PresetPickerDialog(self.dialog, presets)
+        chosen = picker.show()
+        if chosen is None:
+            return
+
+        self._apply_preset_to_wizard(chosen)
+
+    def _save_preset(self):
+        """Prompt for a name and save current wizard config as a smart preset."""
+        name = simpledialog.askstring(
+            "Save Smart Format Preset",
+            "Enter a name for this Smart Format preset:",
+            parent=self.dialog,
+        )
+        if not name or not name.strip():
+            return
+
+        name = name.strip()
+        col_map, derivation_plan, first_col, last_col = self._collect_mapping()
+        ops_plan = self._collect_ops_plan()
+
+        config_to_save = {
+            "template_id": self.TEMPLATE_ID,
+            "mapping_config": {
+                "column_map": col_map,
+                "derivation_plan": derivation_plan,
+                "first_col": first_col,
+                "last_col": last_col,
+            },
+            "operations_plan": ops_plan,
+        }
+
+        ok = self._preset_manager.save_preset(name, config_to_save)
+        if ok:
+            self._loaded_preset_name = name
+            messagebox.showinfo(
+                "Preset Saved",
+                f"Smart Format preset '{name}' saved successfully.",
+                parent=self.dialog,
+            )
+        else:
+            messagebox.showerror(
+                "Save Failed",
+                "Could not save the preset. Check write permissions.",
+                parent=self.dialog,
+            )
+
+    def _apply_preset_to_wizard(self, preset: Dict):
+        """Populate step 2 and step 4 widgets from a loaded preset."""
+        self._loaded_preset_name = preset.get("name")
+
+        mapping_config = preset.get("mapping_config", {})
+        col_map        = mapping_config.get("column_map", {})
+        derivation_plan = mapping_config.get("derivation_plan", "blank")
+        first_col      = mapping_config.get("first_col")
+        last_col       = mapping_config.get("last_col")
+        ops_plan       = preset.get("operations_plan", {})
+
+        # ---- Populate step 2 dropdowns ----
+        for target, source in col_map.items():
+            if target == "Contact":
+                continue
+            cb = self._target_vars.get(target)
+            if cb is None:
+                continue
+            if source and source != "__derived__" and source in self.raw_columns:
+                cb.set(source)
+            else:
+                cb.set("(blank)")
+
+        # Contact mode
+        if derivation_plan == "use_contact":
+            self._contact_mode_var.set("Use existing Contact column")
+        elif derivation_plan == "build_first_last":
+            self._contact_mode_var.set("Build from First + Last Name")
+        else:
+            self._contact_mode_var.set("(blank)")
+
+        # ---- Populate step 4 operations ----
+        self._apply_ops_plan_to_widgets(ops_plan)
+
+        messagebox.showinfo(
+            "Preset Loaded",
+            f"Preset '{self._loaded_preset_name}' loaded.\n\n"
+            "Review mappings in Step 2 and operations in Step 4.\n"
+            "Source columns not found in this file are marked (blank).",
+            parent=self.dialog,
+        )
+
+    def _apply_ops_plan_to_widgets(self, ops_plan: Dict):
+        """Set step 4 widget states from an ops_plan dict."""
+        # Dedupe
+        dedupe = ops_plan.get("dedupe", {})
+        self._dedupe_enabled.set(dedupe.get("enabled", False))
+        if self._dedupe_keys_lb and dedupe.get("enabled"):
+            keys = set(dedupe.get("keys", []))
+            for i, col in enumerate(REQUIRED_SCHEMA):
+                if col in keys:
+                    self._dedupe_keys_lb.selection_set(i)
+                else:
+                    self._dedupe_keys_lb.selection_clear(i)
+
+        # Remove rows containing
+        rrc = ops_plan.get("remove_rows_containing", {})
+        self._remove_rows_enabled.set(rrc.get("enabled", False))
+        if self._remove_rows_cols_lb:
+            cols = set(rrc.get("columns", []))
+            for i, col in enumerate(REQUIRED_SCHEMA):
+                if col in cols:
+                    self._remove_rows_cols_lb.selection_set(i)
+                else:
+                    self._remove_rows_cols_lb.selection_clear(i)
+        self._remove_rows_text.set(rrc.get("patterns", ""))
+        self._remove_rows_match.set(rrc.get("match_type", "contains"))
+
+        # Remove blank rows
+        rbr = ops_plan.get("remove_blank_rows", {})
+        self._remove_blank_enabled.set(rbr.get("enabled", False))
+        if self._remove_blank_cols_lb:
+            cols = set(rbr.get("columns", []))
+            for i, col in enumerate(REQUIRED_SCHEMA):
+                if col in cols:
+                    self._remove_blank_cols_lb.selection_set(i)
+                else:
+                    self._remove_blank_cols_lb.selection_clear(i)
+
+    # ------------------------------------------------------------------
+    # Edit mode: pre-populate from existing SheetState.smart_format
+    # ------------------------------------------------------------------
+
+    def _populate_from_config(self, config: Dict):
+        """Pre-populate wizard from a previously saved smart_format config."""
+        mapping_config = config.get("mapping_config", {})
+        ops_plan       = config.get("operations_plan", {})
+        self._loaded_preset_name = config.get("preset_name")
+
+        col_map        = mapping_config.get("column_map", {})
+        derivation_plan = mapping_config.get("derivation_plan", "blank")
+
+        # Step 2 dropdowns
+        for target, source in col_map.items():
+            if target == "Contact":
+                continue
+            cb = self._target_vars.get(target)
+            if cb is None:
+                continue
+            if source and source != "__derived__" and source in self.raw_columns:
+                cb.set(source)
+            else:
+                cb.set("(blank)")
+
+        # Contact mode
+        if derivation_plan == "use_contact":
+            self._contact_mode_var.set("Use existing Contact column")
+        elif derivation_plan == "build_first_last":
+            self._contact_mode_var.set("Build from First + Last Name")
+        else:
+            self._contact_mode_var.set("(blank)")
+
+        # Step 4 ops
+        self._apply_ops_plan_to_widgets(ops_plan)
 
     # ------------------------------------------------------------------
     # Public API
@@ -549,7 +1189,68 @@ class SmartFormatWizard:
         """
         Show the wizard and block until closed.
 
-        Returns the mapping_config dict on Apply, or None on Cancel.
+        Returns the config dict on Apply, or None on Cancel.
         """
         self.parent.wait_window(self.dialog)
         return self._result
+
+
+# ---------------------------------------------------------------------------
+# Simple preset picker dialog
+# ---------------------------------------------------------------------------
+
+class _PresetPickerDialog:
+    """
+    Small modal dialog to select a smart format preset from a list.
+    Returns the chosen preset dict or None.
+    """
+
+    def __init__(self, parent: tk.Widget, presets: List[Dict]):
+        self.parent = parent
+        self.presets = presets
+        self._chosen: Optional[Dict] = None
+
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Load Smart Format Preset")
+        self.dialog.geometry("400x320")
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        self.dialog.resizable(False, True)
+
+        tk.Label(self.dialog, text="Select a Smart Format Preset:",
+                 font=("Segoe UI", 10, "bold")).pack(padx=16, pady=(16, 6), anchor=tk.W)
+
+        frame = tk.Frame(self.dialog)
+        frame.pack(fill=tk.BOTH, expand=True, padx=16)
+
+        sb = ttk.Scrollbar(frame, orient=tk.VERTICAL)
+        self._lb = tk.Listbox(frame, font=("Segoe UI", 9),
+                              yscrollcommand=sb.set, selectmode=tk.SINGLE)
+        sb.config(command=self._lb.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        for p in presets:
+            name = p.get("name", "Unnamed")
+            suffix = " [system]" if p.get("_is_system") else ""
+            self._lb.insert(tk.END, f"{name}{suffix}")
+
+        self._lb.bind("<Double-Button-1>", lambda _: self._confirm())
+
+        btn_bar = tk.Frame(self.dialog)
+        btn_bar.pack(fill=tk.X, padx=16, pady=10)
+        ttk.Button(btn_bar, text="Cancel", command=self._cancel).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(btn_bar, text="Load", command=self._confirm).pack(side=tk.RIGHT, padx=4)
+
+    def _confirm(self):
+        sel = self._lb.curselection()
+        if sel:
+            self._chosen = self.presets[sel[0]]
+        self.dialog.destroy()
+
+    def _cancel(self):
+        self.dialog.destroy()
+
+    def show(self) -> Optional[Dict]:
+        self.parent.wait_window(self.dialog)
+        return self._chosen

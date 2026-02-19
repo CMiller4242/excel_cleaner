@@ -4424,21 +4424,22 @@ class CleanSheetApp:
     # ------------------------------------------------------------------
 
     def _build_smart_format_panel(self):
-        """Build the Smart Format recommendations panel contents (initially hidden)."""
+        """Build the Smart Format status panel contents (initially hidden)."""
         panel = tk.Frame(self.smart_format_panel, bg='#FFF4CE')
         panel.pack(fill='x')
 
-        # Header row
+        # ---- Header row: indicator + dismiss ----
         header_row = tk.Frame(panel, bg='#FFF4CE')
         header_row.pack(fill='x', padx=8, pady=(4, 2))
 
-        tk.Label(
+        self._sf_indicator_lbl = tk.Label(
             header_row,
-            text="Recommended Next Steps",
+            text="✨ Smart Format: Mail File Standard (Configured)",
             font=('Segoe UI', 8, 'bold'),
             bg='#FFF4CE', fg='#5D4037',
             anchor='w',
-        ).pack(side='left')
+        )
+        self._sf_indicator_lbl.pack(side='left')
 
         tk.Button(
             header_row,
@@ -4452,9 +4453,22 @@ class CleanSheetApp:
             activebackground='#FFE082',
         ).pack(side='right')
 
-        # Button row
+        # ---- Button row ----
         btn_row = tk.Frame(panel, bg='#FFF4CE')
         btn_row.pack(fill='x', padx=8, pady=(0, 5))
+
+        # Edit Smart Format
+        tk.Button(
+            btn_row,
+            text="✏ Edit Smart Format…",
+            font=('Segoe UI', 8),
+            bg='#0078D4', fg='white',
+            bd=0, padx=8, pady=3,
+            cursor='hand2',
+            command=self._edit_smart_format,
+            relief='flat',
+            activebackground='#005A9E',
+        ).pack(side='left', padx=(0, 4))
 
         self._dedupe_rec_btn = tk.Button(
             btn_row,
@@ -4482,30 +4496,55 @@ class CleanSheetApp:
         )
         self._issues_rec_btn.pack(side='left', padx=(0, 4))
 
+        # Clear Smart Format
+        tk.Button(
+            btn_row,
+            text="🗑 Clear Smart Format",
+            font=('Segoe UI', 8),
+            bg='#797775', fg='white',
+            bd=0, padx=8, pady=3,
+            cursor='hand2',
+            command=self._clear_smart_format,
+            relief='flat',
+            activebackground='#484644',
+        ).pack(side='right', padx=(4, 0))
+
     def refresh_smart_format_panel(self):
-        """Show/hide the recommendations panel and update button states for the active sheet."""
+        """Show/hide the Smart Format status panel and update buttons for the active sheet."""
         if not hasattr(self, 'smart_format_panel'):
             return
 
-        # Read active sheet meta
+        # Determine if smart format is configured for the active sheet.
+        # Check smart_format field first (new), fall back to legacy meta flag.
+        sf_config = None
         meta = {}
         if self.workbook_session:
             active = self.workbook_session.get_active_sheet()
             if active:
+                sf_config = getattr(active, 'smart_format', None)
                 meta = getattr(active, 'meta', {})
 
-        applied = meta.get('smart_format_mail_standard_applied', False)
+        applied = (sf_config is not None) or meta.get('smart_format_mail_standard_applied', False)
 
         if not applied:
             self.smart_format_panel.pack_forget()
             return
 
-        # Show the panel before queue_content
+        # Show the panel (before queue_content)
         if not self.smart_format_panel.winfo_ismapped():
             self.smart_format_panel.pack(
                 fill='x', padx=10, pady=(0, 4),
                 before=self.queue_content,
             )
+
+        # --- Update indicator label ---
+        if hasattr(self, '_sf_indicator_lbl'):
+            template = (sf_config or {}).get('template_id', 'Mail Standard')
+            preset   = (sf_config or {}).get('preset_name')
+            lbl_txt  = f"✨ Smart Format: {template} (Configured)"
+            if preset:
+                lbl_txt += f"  •  Preset: {preset}"
+            self._sf_indicator_lbl.config(text=lbl_txt)
 
         # --- Update dedupe button ---
         dedupe_in_queue = any(
@@ -4519,7 +4558,13 @@ class CleanSheetApp:
                 bg='#9E9E9E',
             )
         else:
-            rec_keys = meta.get('recommended_dedupe_keys', [])
+            # Try to get recommended keys from smart_format config or legacy meta
+            rec_keys = []
+            if sf_config:
+                rec_keys = sf_config.get('recommended_dedupe_keys', [])
+            if not rec_keys:
+                rec_keys = meta.get('recommended_dedupe_keys', [])
+
             if rec_keys:
                 key_label = " + ".join(rec_keys[:3])
                 btn_text = f"⊕ Add Dedupe  ({key_label})"
@@ -4617,10 +4662,16 @@ class CleanSheetApp:
 
         messagebox.showinfo("Smart Format Issues", "\n".join(lines))
 
-    def launch_smart_format(self):
+    def launch_smart_format(self, existing_config=None):
         """
         Launch the Smart Format wizard and, upon Apply, transform the active
         sheet's data into the 24-column mail-file standard.
+
+        Parameters
+        ----------
+        existing_config : dict or None
+            If provided the wizard opens in edit mode pre-populated with
+            the prior selections from SheetState.smart_format.
         """
         if self.df is None:
             messagebox.showwarning("No Data", "Please load a file first.")
@@ -4633,7 +4684,7 @@ class CleanSheetApp:
         raw_cols = self.df.columns.tolist()
 
         # Show wizard (blocks until closed)
-        wizard = SmartFormatWizard(self.root, raw_cols)
+        wizard = SmartFormatWizard(self.root, raw_cols, existing_config=existing_config)
         mapping_config = wizard.show()
 
         if mapping_config is None:
@@ -4641,7 +4692,7 @@ class CleanSheetApp:
 
         # ---- Apply the mail standard ----
         try:
-            df_out, raw_issues, meta = apply_mail_standard(
+            df_out, raw_issues, apply_meta = apply_mail_standard(
                 self.df, mapping_config, REQUIRED_SCHEMA
             )
         except Exception as exc:
@@ -4662,46 +4713,92 @@ class CleanSheetApp:
                 details=raw.get("details", {}),
             ))
 
+        # ---- Apply operations from Ops Builder (Step 4) ----
+        ops_plan = mapping_config.get("operations_plan", {})
+        df_final, ops_added, removed_from_ops = self._apply_smart_format_ops_plan(
+            df_out, ops_plan
+        )
+
+        # ---- Compute recommended dedupe keys from output columns ----
+        _DEDUPE_PRIORITY = ["Email Address", "Company", "Address1", "Zip", "Contact"]
+        rec_keys = [k for k in _DEDUPE_PRIORITY if k in df_final.columns]
+
+        # ---- Build persistent smart_format config for SheetState ----
+        from datetime import datetime as _dt
+        sf_config = {
+            "template_id":     mapping_config.get("template_id", "MAIL_STANDARD_V1"),
+            "mapping_config": {
+                "column_map":       mapping_config.get("column_map", {}),
+                "derivation_plan":  mapping_config.get("derivation_plan", "blank"),
+                "first_col":        mapping_config.get("first_col"),
+                "last_col":         mapping_config.get("last_col"),
+            },
+            "operations_plan":         ops_plan,
+            "created_blank":           apply_meta.get("created_blank", []),
+            "dropped_columns":         apply_meta.get("dropped_columns", []),
+            "recommended_dedupe_keys": rec_keys,
+            "last_applied_timestamp":  _dt.now().isoformat(),
+            "preset_name":             mapping_config.get("preset_name"),
+            "version":                 "1",
+        }
+
         # ---- Update active sheet state ----
-        self.result_df = df_out
+        self.result_df = df_final
         if self.workbook_session:
             active_sheet = self.workbook_session.get_active_sheet()
             if active_sheet:
-                active_sheet.df_result = df_out
+                active_sheet.df_result = df_final
                 active_sheet.is_dirty = True
-                # Append smart-format issues to any existing issues
-                active_sheet.issues = getattr(active_sheet, "issues", []) + issue_objects
 
-                # Store meta for recommendations panel
+                # Persist Smart Format config – this is NEVER cleared by
+                # normal workflow ops; only by "Clear Smart Format".
+                active_sheet.smart_format = sf_config
+
+                # Legacy meta flag for backward compatibility
                 active_sheet.meta["smart_format_mail_standard_applied"] = True
-                _DEDUPE_PRIORITY = [
-                    "Email Address", "Company", "Address1", "Zip", "Contact"
-                ]
-                rec_keys = [k for k in _DEDUPE_PRIORITY if k in df_out.columns]
                 active_sheet.meta["recommended_dedupe_keys"] = rec_keys
+
+                # Append smart-format issues (preserve previous issues)
+                existing_sf_issues = [
+                    i for i in getattr(active_sheet, "issues", [])
+                    if getattr(i, "op_label", "") != "Smart Format (Mail Standard)"
+                ]
+                active_sheet.issues = existing_sf_issues + issue_objects
+
+                # Add ops-builder operations to the sheet's workflow queue
+                if ops_added:
+                    active_sheet.push_undo()
+                    for op in ops_added:
+                        if op not in active_sheet.operations:
+                            active_sheet.operations.append(op)
+                    self.operation_queue = list(active_sheet.operations)
+                    self.refresh_queue_display()
 
                 if issue_objects and self.sheet_tab_bar and self.current_sheet_name:
                     self.sheet_tab_bar.mark_sheet_issues(
                         self.current_sheet_name, has_issues=True
                     )
         else:
-            # Single-file mode without workbook session
+            # Single-file mode without workbook session – still track via instance var
             pass
 
         # ---- Refresh preview ----
         if hasattr(self, "enhanced_preview"):
-            self.enhanced_preview.load_dataframe(df_out, is_result=True)
+            self.enhanced_preview.load_dataframe(df_final, is_result=True)
 
         # ---- Status / success message ----
-        n_blank   = len(meta.get("created_blank", []))
-        n_dropped = len(meta.get("dropped_columns", []))
+        n_blank   = len(apply_meta.get("created_blank", []))
+        n_dropped = len(apply_meta.get("dropped_columns", []))
         n_issues  = len(issue_objects)
+        n_ops     = len(ops_added)
 
-        status_parts = [f"Smart Format applied — {len(df_out.columns)} columns, {len(df_out):,} rows"]
+        status_parts = [f"Smart Format applied — {len(df_final.columns)} columns, {len(df_final):,} rows"]
         if n_blank:
             status_parts.append(f"{n_blank} blank column(s) created")
         if n_dropped:
             status_parts.append(f"{n_dropped} extra column(s) dropped")
+        if n_ops:
+            status_parts.append(f"{n_ops} post-mapping op(s) run")
         if n_issues:
             status_parts.append(f"{n_issues} issue(s) flagged")
 
@@ -4709,30 +4806,202 @@ class CleanSheetApp:
 
         # Summary dialog
         detail_lines = []
-        if meta.get("derived_contact"):
-            detail_lines.append(f"• Contact derived from First + Last Name")
+        if apply_meta.get("derived_contact"):
+            detail_lines.append("• Contact derived from First + Last Name")
         if n_blank:
             detail_lines.append(
                 f"• {n_blank} column(s) created blank: "
-                + ", ".join(meta.get("created_blank", [])[:8])
+                + ", ".join(apply_meta.get("created_blank", [])[:8])
                 + ("…" if n_blank > 8 else "")
             )
         if n_dropped:
-            dropped = meta.get("dropped_columns", [])
+            dropped = apply_meta.get("dropped_columns", [])
             detail_lines.append(
                 f"• {n_dropped} source column(s) dropped: "
                 + ", ".join(dropped[:6])
                 + ("…" if n_dropped > 6 else "")
+            )
+        if n_ops:
+            detail_lines.append(
+                f"• {n_ops} operation(s) applied and added to workflow queue"
             )
         if n_issues:
             detail_lines.append(f"• {n_issues} issue(s) recorded (see sheet ⚠ indicator)")
 
         msg = "Mail file standard applied successfully.\n\n" + "\n".join(detail_lines)
 
-        # Show recommendations panel
+        # Show status panel
         self.refresh_smart_format_panel()
 
         messagebox.showinfo("Smart Format Complete", msg)
+
+    def _apply_smart_format_ops_plan(self, df_out, ops_plan):
+        """
+        Apply Operations Builder ops to the smart-format output df.
+
+        Returns
+        -------
+        (df_final, ops_added, removed_rows)
+            df_final   – DataFrame after all ops applied
+            ops_added  – list of operation dicts added to queue
+            removed_rows – DataFrame of removed rows (may be None)
+        """
+        import pandas as pd
+
+        df_final = df_out
+        ops_added = []
+        all_removed = []
+
+        if not ops_plan:
+            return df_final, ops_added, None
+
+        available_cols = set(df_out.columns.tolist())
+
+        # ---- 1. Dedupe ----
+        dedupe_cfg = ops_plan.get("dedupe", {})
+        if dedupe_cfg.get("enabled"):
+            keys = [k for k in dedupe_cfg.get("keys", []) if k in available_cols]
+            if not keys:
+                logging.warning("[SmartFormat] Dedupe skipped: no valid keys in output columns")
+            else:
+                op_dict = {
+                    "operation_id": "data_remove_duplicates",
+                    "name": "Remove Duplicate Rows",
+                    "parameters": {
+                        "columns": keys,
+                        "keep": "first",
+                        "smart_matching": False,
+                        "multi_level_deduplication": False,
+                    },
+                    "enabled": True,
+                }
+                try:
+                    result, removed = self.executor.execute_queue_with_tracking(
+                        df_final, [op_dict]
+                    )
+                    df_final = result
+                    if removed is not None and not removed.empty:
+                        all_removed.append(removed)
+                    ops_added.append(op_dict)
+                except Exception as exc:
+                    logging.warning("[SmartFormat] Dedupe failed: %s", exc)
+
+        # ---- 2. Remove rows containing ----
+        rrc = ops_plan.get("remove_rows_containing", {})
+        if rrc.get("enabled"):
+            cols = [c for c in rrc.get("columns", []) if c in available_cols]
+            patterns = rrc.get("patterns", "").strip()
+            if not cols:
+                logging.warning("[SmartFormat] RemoveRowsContaining skipped: no valid columns")
+            elif not patterns:
+                logging.warning("[SmartFormat] RemoveRowsContaining skipped: no patterns given")
+            else:
+                match_type = rrc.get("match_type", "contains")
+                op_dict = {
+                    "operation_id": "remove_rows_containing",
+                    "name": "Remove Rows Containing",
+                    "parameters": {
+                        "columns": cols,
+                        "patterns": patterns,
+                        "preset": "Custom (use patterns above)",
+                        "case_sensitive": False,
+                        "match_whole_cell": match_type == "equals",
+                        "remove_blanks": False,
+                    },
+                    "enabled": True,
+                }
+                try:
+                    result, removed = self.executor.execute_queue_with_tracking(
+                        df_final, [op_dict]
+                    )
+                    df_final = result
+                    if removed is not None and not removed.empty:
+                        all_removed.append(removed)
+                    ops_added.append(op_dict)
+                except Exception as exc:
+                    logging.warning("[SmartFormat] RemoveRowsContaining failed: %s", exc)
+
+        # ---- 3. Remove blank rows ----
+        rbr = ops_plan.get("remove_blank_rows", {})
+        if rbr.get("enabled"):
+            cols = [c for c in rbr.get("columns", []) if c in available_cols]
+            if not cols:
+                logging.warning("[SmartFormat] RemoveBlankRows skipped: no valid columns")
+            else:
+                op_dict = {
+                    "operation_id": "remove_rows_containing",
+                    "name": "Remove Blank Rows",
+                    "parameters": {
+                        "columns": cols,
+                        "patterns": "",
+                        "preset": "Custom (use patterns above)",
+                        "case_sensitive": False,
+                        "match_whole_cell": False,
+                        "remove_blanks": True,
+                    },
+                    "enabled": True,
+                }
+                try:
+                    result, removed = self.executor.execute_queue_with_tracking(
+                        df_final, [op_dict]
+                    )
+                    df_final = result
+                    if removed is not None and not removed.empty:
+                        all_removed.append(removed)
+                    ops_added.append(op_dict)
+                except Exception as exc:
+                    logging.warning("[SmartFormat] RemoveBlankRows failed: %s", exc)
+
+        # Combine removed rows
+        combined_removed = None
+        if all_removed:
+            import pandas as pd
+            combined_removed = pd.concat(all_removed, ignore_index=True)
+
+        return df_final, ops_added, combined_removed
+
+    def _edit_smart_format(self):
+        """Reopen the Smart Format wizard pre-populated with the current sheet's config."""
+        if self.df is None:
+            messagebox.showwarning("No Data", "Please load a file first.")
+            return
+
+        existing_config = None
+        if self.workbook_session:
+            active = self.workbook_session.get_active_sheet()
+            if active:
+                existing_config = getattr(active, 'smart_format', None)
+
+        self.launch_smart_format(existing_config=existing_config)
+
+    def _clear_smart_format(self):
+        """Remove Smart Format config from the active sheet after user confirmation."""
+        if not self.workbook_session:
+            return
+        active = self.workbook_session.get_active_sheet()
+        if not active:
+            return
+
+        confirmed = messagebox.askyesno(
+            "Clear Smart Format",
+            "This will remove the Smart Format configuration for this sheet.\n\n"
+            "The current data view will be preserved but the Smart Format indicator "
+            "will be cleared.\n\nContinue?",
+            icon="warning",
+        )
+        if not confirmed:
+            return
+
+        # Clear smart_format field
+        active.smart_format = None
+        # Clear legacy meta flag
+        active.meta.pop("smart_format_mail_standard_applied", None)
+        active.meta.pop("recommended_dedupe_keys", None)
+        active.is_dirty = True
+
+        # Hide the panel
+        self.refresh_smart_format_panel()
+        self.status_var.set("Smart Format configuration cleared for this sheet.")
 
     def save_results(self):
         """Save results to file with multi-sheet export"""
