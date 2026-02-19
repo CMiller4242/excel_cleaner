@@ -440,6 +440,10 @@ class CleanSheetApp:
                   style='RibbonButton.TButton',
                   width=16).pack(side='left', padx=2)
 
+        # Smart Format recommendations panel (hidden until Smart Format is applied)
+        self.smart_format_panel = tk.Frame(queue_frame, bg='#FFF4CE', relief='flat')
+        self._build_smart_format_panel()
+
         # Queue content (cards view)
         self.queue_content = ttk.Frame(queue_frame, style='Card.TFrame')
         self.queue_content.pack(fill='both', expand=True, padx=10, pady=5)
@@ -4008,6 +4012,9 @@ class CleanSheetApp:
             # STEP 5: Load new sheet's workflow into operation queue
             self._load_sheet_workflow(sheet_name)
 
+            # STEP 6: Refresh Smart Format recommendations panel for new sheet
+            self.refresh_smart_format_panel()
+
             # Update file info
             self.file_info_var.set(
                 f"📁 {Path(self.current_file).name} | Sheet: {sheet_name} • {len(self.df):,} rows × {len(self.df.columns)} columns"
@@ -4416,6 +4423,200 @@ class CleanSheetApp:
     # Smart Format – Mail File Standard
     # ------------------------------------------------------------------
 
+    def _build_smart_format_panel(self):
+        """Build the Smart Format recommendations panel contents (initially hidden)."""
+        panel = tk.Frame(self.smart_format_panel, bg='#FFF4CE')
+        panel.pack(fill='x')
+
+        # Header row
+        header_row = tk.Frame(panel, bg='#FFF4CE')
+        header_row.pack(fill='x', padx=8, pady=(4, 2))
+
+        tk.Label(
+            header_row,
+            text="Recommended Next Steps",
+            font=('Segoe UI', 8, 'bold'),
+            bg='#FFF4CE', fg='#5D4037',
+            anchor='w',
+        ).pack(side='left')
+
+        tk.Button(
+            header_row,
+            text="✕",
+            font=('Segoe UI', 7),
+            bg='#FFF4CE', fg='#795548',
+            bd=0, padx=3, pady=0,
+            cursor='hand2',
+            command=self._dismiss_smart_format_panel,
+            relief='flat',
+            activebackground='#FFE082',
+        ).pack(side='right')
+
+        # Button row
+        btn_row = tk.Frame(panel, bg='#FFF4CE')
+        btn_row.pack(fill='x', padx=8, pady=(0, 5))
+
+        self._dedupe_rec_btn = tk.Button(
+            btn_row,
+            text="⊕ Add Dedupe Step",
+            font=('Segoe UI', 8),
+            bg='#F9A825', fg='white',
+            bd=0, padx=8, pady=3,
+            cursor='hand2',
+            command=self._add_recommended_dedupe,
+            relief='flat',
+            activebackground='#F57F17',
+        )
+        self._dedupe_rec_btn.pack(side='left', padx=(0, 4))
+
+        self._issues_rec_btn = tk.Button(
+            btn_row,
+            text="⚠ Review Issues",
+            font=('Segoe UI', 8),
+            bg='#E65100', fg='white',
+            bd=0, padx=8, pady=3,
+            cursor='hand2',
+            command=self._review_smart_format_issues,
+            relief='flat',
+            activebackground='#BF360C',
+        )
+        self._issues_rec_btn.pack(side='left', padx=(0, 4))
+
+    def refresh_smart_format_panel(self):
+        """Show/hide the recommendations panel and update button states for the active sheet."""
+        if not hasattr(self, 'smart_format_panel'):
+            return
+
+        # Read active sheet meta
+        meta = {}
+        if self.workbook_session:
+            active = self.workbook_session.get_active_sheet()
+            if active:
+                meta = getattr(active, 'meta', {})
+
+        applied = meta.get('smart_format_mail_standard_applied', False)
+
+        if not applied:
+            self.smart_format_panel.pack_forget()
+            return
+
+        # Show the panel before queue_content
+        if not self.smart_format_panel.winfo_ismapped():
+            self.smart_format_panel.pack(
+                fill='x', padx=10, pady=(0, 4),
+                before=self.queue_content,
+            )
+
+        # --- Update dedupe button ---
+        dedupe_in_queue = any(
+            op.get('operation_id') == 'data_remove_duplicates'
+            for op in self.operation_queue
+        )
+        if dedupe_in_queue:
+            self._dedupe_rec_btn.config(
+                text="✓ Dedupe Already in Queue",
+                state='disabled',
+                bg='#9E9E9E',
+            )
+        else:
+            rec_keys = meta.get('recommended_dedupe_keys', [])
+            if rec_keys:
+                key_label = " + ".join(rec_keys[:3])
+                btn_text = f"⊕ Add Dedupe  ({key_label})"
+            else:
+                btn_text = "⊕ Add Dedupe Step"
+            self._dedupe_rec_btn.config(
+                text=btn_text,
+                state='normal',
+                bg='#F9A825',
+            )
+
+        # --- Update issues button ---
+        sf_issues = []
+        if self.workbook_session:
+            active = self.workbook_session.get_active_sheet()
+            if active:
+                sf_issues = [
+                    i for i in getattr(active, 'issues', [])
+                    if getattr(i, 'op_label', '') == 'Smart Format (Mail Standard)'
+                ]
+        if sf_issues:
+            self._issues_rec_btn.config(
+                text=f"⚠ Review {len(sf_issues)} Issue(s)",
+                state='normal',
+                bg='#E65100',
+            )
+        else:
+            self._issues_rec_btn.config(
+                text="✓ No Issues",
+                state='disabled',
+                bg='#9E9E9E',
+            )
+
+    def _dismiss_smart_format_panel(self):
+        """Hide the recommendations panel without clearing sheet meta."""
+        self.smart_format_panel.pack_forget()
+
+    def _add_recommended_dedupe(self):
+        """Append a Remove Duplicate Rows operation using the recommended keys."""
+        if not self.workbook_session:
+            return
+        active = self.workbook_session.get_active_sheet()
+        if not active:
+            return
+
+        rec_keys = active.meta.get('recommended_dedupe_keys', [])
+
+        # Push undo snapshot before modifying queue
+        active.push_undo()
+
+        self.operation_queue.append({
+            'operation_id': 'data_remove_duplicates',
+            'name': 'Remove Duplicate Rows',
+            'parameters': {
+                'multi_level_deduplication': False,
+                'columns': rec_keys,
+                'keep': 'first',
+                'smart_matching': True,
+            },
+            'enabled': True,
+        })
+        self.refresh_queue_display()
+        self._save_current_workflow()
+        self.status_var.set("Added: Remove Duplicate Rows (recommended keys)")
+
+        # Disable the button to prevent duplicate additions
+        self._dedupe_rec_btn.config(
+            text="✓ Dedupe Already in Queue",
+            state='disabled',
+            bg='#9E9E9E',
+        )
+
+    def _review_smart_format_issues(self):
+        """Show a summary dialog for Smart Format issues on the active sheet."""
+        if not self.workbook_session:
+            return
+        active = self.workbook_session.get_active_sheet()
+        if not active:
+            return
+
+        sf_issues = [
+            i for i in getattr(active, 'issues', [])
+            if getattr(i, 'op_label', '') == 'Smart Format (Mail Standard)'
+        ]
+
+        if not sf_issues:
+            messagebox.showinfo("Smart Format Issues", "No issues recorded for this sheet.")
+            return
+
+        lines = [f"Smart Format Issues ({len(sf_issues)} total)\n"]
+        for iss in sf_issues:
+            code = getattr(iss, 'code', '?')
+            msg  = getattr(iss, 'message', '')
+            lines.append(f"  [{code}]  {msg}")
+
+        messagebox.showinfo("Smart Format Issues", "\n".join(lines))
+
     def launch_smart_format(self):
         """
         Launch the Smart Format wizard and, upon Apply, transform the active
@@ -4471,6 +4672,14 @@ class CleanSheetApp:
                 # Append smart-format issues to any existing issues
                 active_sheet.issues = getattr(active_sheet, "issues", []) + issue_objects
 
+                # Store meta for recommendations panel
+                active_sheet.meta["smart_format_mail_standard_applied"] = True
+                _DEDUPE_PRIORITY = [
+                    "Email Address", "Company", "Address1", "Zip", "Contact"
+                ]
+                rec_keys = [k for k in _DEDUPE_PRIORITY if k in df_out.columns]
+                active_sheet.meta["recommended_dedupe_keys"] = rec_keys
+
                 if issue_objects and self.sheet_tab_bar and self.current_sheet_name:
                     self.sheet_tab_bar.mark_sheet_issues(
                         self.current_sheet_name, has_issues=True
@@ -4519,6 +4728,10 @@ class CleanSheetApp:
             detail_lines.append(f"• {n_issues} issue(s) recorded (see sheet ⚠ indicator)")
 
         msg = "Mail file standard applied successfully.\n\n" + "\n".join(detail_lines)
+
+        # Show recommendations panel
+        self.refresh_smart_format_panel()
+
         messagebox.showinfo("Smart Format Complete", msg)
 
     def save_results(self):

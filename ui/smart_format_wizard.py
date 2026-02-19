@@ -19,6 +19,7 @@ from utils.smart_mapping import (
     MappingResult,
     infer_mapping,
 )
+from ui.widgets.searchable_combobox import SearchableCombobox
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +256,7 @@ class SmartFormatWizard:
 
         tk.Label(
             frame,
-            text="For each target column, choose the source column from your file (or '(blank)').",
+            text="For each target column, choose the source column from your file (or '(blank)'). Type to search.",
             font=("Segoe UI", 9),
             bg="white", fg="#605E5C",
         ).pack(anchor=tk.W, padx=20, pady=(0, 10))
@@ -304,20 +305,19 @@ class SmartFormatWizard:
                 self._build_contact_row(row, row_bg)
                 continue
 
-            # Normal dropdown
-            var = tk.StringVar()
-            if source == "__derived__":
-                var.set("(blank)")   # shouldn't happen for non-Contact
-            elif source and source in self.raw_columns:
-                var.set(source)
+            # Searchable dropdown – options list excludes "(blank)"; widget adds it
+            raw_only = [o for o in self._source_options if o != "(blank)"]
+            cb = SearchableCombobox(row, options=raw_only, width=32)
+
+            if source == "__derived__" or not source or source not in self.raw_columns:
+                cb.set("(blank)")
             else:
-                var.set("(blank)")
+                cb.set(source)
 
-            self._target_vars[target] = var
-
-            cb = ttk.Combobox(row, textvariable=var, values=self._source_options,
-                              width=30, state="readonly", font=("Segoe UI", 9))
             cb.pack(side=tk.LEFT, padx=6)
+
+            # Store widget directly so _collect_mapping can call cb.get()
+            self._target_vars[target] = cb
 
             conf_color = _CONF_COLOR.get(conf, "#A19F9D") if source else "#A19F9D"
             conf_txt   = _CONF_LABEL.get(conf, "") if source else "—"
