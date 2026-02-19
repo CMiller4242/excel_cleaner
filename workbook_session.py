@@ -39,6 +39,7 @@ class SheetState:
     is_loaded: bool = False  # Track if df_original has been loaded
     is_dirty: bool = False  # Track if there are unsaved changes
     is_deleted: bool = False  # Soft delete flag
+    meta: Dict[str, Any] = field(default_factory=dict)  # Arbitrary per-sheet metadata
 
     def __post_init__(self):
         if not self.sheet_name_display:
