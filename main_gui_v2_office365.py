@@ -3990,13 +3990,35 @@ class CleanSheetApp:
             # STEP 3: LAZY LOAD - Load sheet data if not already loaded
             if not sheet_state.is_loaded:
                 logging.info(f"[SHEET TAB] Lazy loading sheet '{sheet_name}'...")
-                self.df = pd.read_excel(self.current_file, sheet_name=sheet_name)
-                self.workbook_session.load_sheet_data(sheet_name, self.df)
-                logging.info(f"[SHEET TAB] Sheet loaded: {len(self.df):,} rows")
+                raw_df = pd.read_excel(self.current_file, sheet_name=sheet_name)
+                self.workbook_session.load_sheet_data(sheet_name, raw_df)
+                # If smart format has already been applied (e.g. session recovery),
+                # use its result as the working df so workflow ops see target columns.
+                if sheet_state.smart_format and sheet_state.has_results():
+                    self.df = sheet_state.df_result
+                    logging.info(
+                        "[SHEET TAB] Sheet loaded; using smart-format result df "
+                        "(%d rows, target schema)", len(self.df)
+                    )
+                else:
+                    self.df = raw_df
+                    logging.info(f"[SHEET TAB] Sheet loaded: {len(self.df):,} rows")
             else:
-                # Sheet already loaded - retrieve from session
-                self.df = sheet_state.df_original
-                logging.info(f"[SHEET TAB] Sheet retrieved from cache: {len(self.df):,} rows")
+                # Sheet already loaded – use formatted df if smart format was applied,
+                # so that any subsequent workflow ops validate against target columns.
+                if sheet_state.smart_format and sheet_state.has_results():
+                    self.df = sheet_state.df_result
+                    logging.info(
+                        "[SHEET TAB] Restored smart-format result df for '%s' "
+                        "(%d rows, columns: %s)",
+                        sheet_name, len(self.df),
+                        sheet_state.df_result.columns.tolist(),
+                    )
+                else:
+                    self.df = sheet_state.df_original
+                    logging.info(
+                        f"[SHEET TAB] Sheet retrieved from cache: {len(self.df):,} rows"
+                    )
 
             self.current_sheet_name = sheet_name
 
@@ -4743,6 +4765,11 @@ class CleanSheetApp:
         }
 
         # ---- Update active sheet state ----
+        # Phase 1 (mapping) + Phase 2 (post-ops) are already complete.
+        # Update self.df to the formatted result so any future workflow
+        # operations the user adds will validate / execute against the
+        # target-schema columns (Address1, Company, etc.), not the raw columns.
+        self.df = df_final
         self.result_df = df_final
         if self.workbook_session:
             active_sheet = self.workbook_session.get_active_sheet()
@@ -4765,21 +4792,25 @@ class CleanSheetApp:
                 ]
                 active_sheet.issues = existing_sf_issues + issue_objects
 
-                # Add ops-builder operations to the sheet's workflow queue
-                if ops_added:
-                    active_sheet.push_undo()
-                    for op in ops_added:
-                        if op not in active_sheet.operations:
-                            active_sheet.operations.append(op)
-                    self.operation_queue = list(active_sheet.operations)
-                    self.refresh_queue_display()
+                # NOTE: Post-mapping ops (dedupe, remove-rows, etc.) are
+                # intentionally NOT added to the regular operation_queue.
+                # They have already been applied to df_final above, and their
+                # parameters reference target-schema column names.  Adding
+                # them to the queue would cause "column not found" validation
+                # errors if the user ever clicks Run on the original pipeline.
+                # The ops are stored in smart_format["operations_plan"] so
+                # they can be reviewed / re-applied via "Edit Smart Format".
+                logging.info(
+                    "[SmartFormat] Applied. Working df updated to target schema: %s",
+                    df_final.columns.tolist(),
+                )
 
                 if issue_objects and self.sheet_tab_bar and self.current_sheet_name:
                     self.sheet_tab_bar.mark_sheet_issues(
                         self.current_sheet_name, has_issues=True
                     )
         else:
-            # Single-file mode without workbook session – still track via instance var
+            # Single-file mode without workbook session
             pass
 
         # ---- Refresh preview ----
@@ -4823,7 +4854,7 @@ class CleanSheetApp:
             )
         if n_ops:
             detail_lines.append(
-                f"• {n_ops} operation(s) applied and added to workflow queue"
+                f"• {n_ops} post-mapping operation(s) applied (dedupe / remove rows / remove blanks)"
             )
         if n_issues:
             detail_lines.append(f"• {n_issues} issue(s) recorded (see sheet ⚠ indicator)")
