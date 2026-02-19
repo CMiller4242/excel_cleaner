@@ -1,0 +1,54 @@
+{
+  "name": "Mail Standard + Dedupe",
+  "template_id": "MAIL_STANDARD_V1",
+  "schema_version": "1",
+  "mapping_config": {
+    "column_map": {
+      "KeyCode": null,
+      "Cust": null,
+      "Seg": null,
+      "Sls#": null,
+      "Rep Name": null,
+      "Company": null,
+      "Address1": null,
+      "Address2": null,
+      "City": null,
+      "State": null,
+      "Zip": null,
+      "Contact": "__derived__",
+      "Title": null,
+      "Telephone": null,
+      "Seqno": null,
+      "Ssqno": null,
+      "Service": null,
+      "Wt": null,
+      "Type": null,
+      "Billto": null,
+      "USPSConf": null,
+      "Email Address": null,
+      "SQL": null,
+      "Sugar Lead Source": null
+    },
+    "derivation_plan": "build_first_last",
+    "first_col": null,
+    "last_col": null
+  },
+  "operations_plan": {
+    "dedupe": {
+      "enabled": true,
+      "keys": ["Email Address", "Company", "Address1", "Zip", "Contact"]
+    },
+    "remove_rows_containing": {
+      "enabled": false,
+      "columns": [],
+      "patterns": "",
+      "match_type": "contains"
+    },
+    "remove_blank_rows": {
+      "enabled": false,
+      "columns": []
+    }
+  },
+  "created_at": "2026-02-19T00:00:00",
+  "notes": "System preset: maps to mail standard schema and dedupes on key fields. Adjust column mapping for each file."
+}

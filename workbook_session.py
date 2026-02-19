@@ -40,6 +40,9 @@ class SheetState:
     is_dirty: bool = False  # Track if there are unsaved changes
     is_deleted: bool = False  # Soft delete flag
     meta: Dict[str, Any] = field(default_factory=dict)  # Arbitrary per-sheet metadata
+    # Smart Format persistent config – never cleared by normal workflow changes.
+    # Set when Smart Format is applied; cleared only via "Clear Smart Format".
+    smart_format: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         if not self.sheet_name_display:
