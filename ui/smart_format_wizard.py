@@ -50,6 +50,35 @@ _DEFAULT_DEDUPE_PRIORITY = [
 
 
 # ---------------------------------------------------------------------------
+# Display helpers
+# ---------------------------------------------------------------------------
+
+def _fmt_list(items, limit: int = 10) -> str:
+    """Return a safe, comma-separated display string from any iterable.
+
+    Converts every item to ``str`` so the function never raises
+    ``TypeError: sequence item N: expected str instance, int found``
+    when column labels happen to be non-strings (e.g. integer indices
+    from a headerless CSV).
+
+    Args:
+        items:  Any iterable of column identifiers (may be int, str, …).
+        limit:  Maximum number of items to show before appending an
+                "…+N more" suffix.  Pass ``None`` to show all.
+
+    Returns:
+        A plain string suitable for use in a ``tk.Label``.  Returns
+        ``"(none)"`` for falsy / empty input.
+    """
+    if not items:
+        return "(none)"
+    lst = [str(x) for x in items]
+    if limit is not None and len(lst) > limit:
+        return ", ".join(lst[:limit]) + f"  …+{len(lst) - limit} more"
+    return ", ".join(lst)
+
+
+# ---------------------------------------------------------------------------
 # Main wizard class
 # ---------------------------------------------------------------------------
 
@@ -106,15 +135,31 @@ class SmartFormatWizard:
         existing_config: Optional[Dict] = None,
     ):
         self.parent = parent
-        self.raw_columns = raw_columns
+
+        # Normalise raw column labels to strings so that downstream UI
+        # rendering (str.join, f-strings) never crashes on int/float labels,
+        # which can occur when a DataFrame was read without a header row.
+        non_str = [c for c in raw_columns if not isinstance(c, str)]
+        if non_str:
+            import logging as _log
+            _log.warning(
+                "[SmartFormatWizard] %d non-string column label(s) detected "
+                "and coerced to str (sample types: %s).  "
+                "First few: %s",
+                len(non_str),
+                ", ".join(sorted({type(c).__name__ for c in non_str})),
+                non_str[:5],
+            )
+        self.raw_columns: List[str] = [str(c) for c in raw_columns]
+
         self._result: Optional[Dict] = None
         self.current_step = 0
 
         # Inference (always re-run – fast)
-        self.mapping_result: MappingResult = infer_mapping(raw_columns)
+        self.mapping_result: MappingResult = infer_mapping(self.raw_columns)
 
-        # Source options for dropdowns
-        self._source_options = list(raw_columns)   # "(blank)" added by AutocompleteCombobox
+        # Source options for dropdowns (use the normalised list)
+        self._source_options = list(self.raw_columns)   # "(blank)" added by AutocompleteCombobox
 
         # Per-target widgets for step 2 (AutocompleteCombobox or special mode var)
         self._target_vars: Dict[str, AutocompleteCombobox] = {}
@@ -505,7 +550,7 @@ class SmartFormatWizard:
         if blank_targets:
             tk.Label(
                 frame,
-                text="Blank columns: " + ", ".join(blank_targets),
+                text="Blank columns: " + _fmt_list(blank_targets, limit=None),
                 font=("Segoe UI", 9), bg="white", fg="#605E5C",
                 wraplength=790, justify=tk.LEFT, anchor=tk.W,
             ).pack(anchor=tk.W, padx=32, pady=(0, 4))
@@ -513,8 +558,7 @@ class SmartFormatWizard:
         if dropped:
             tk.Label(
                 frame,
-                text="Dropped: " + ", ".join(dropped[:10])
-                     + (f"  …+{len(dropped) - 10} more" if len(dropped) > 10 else ""),
+                text="Dropped: " + _fmt_list(dropped),
                 font=("Segoe UI", 9), bg="white", fg="#A19F9D",
                 wraplength=790, justify=tk.LEFT, anchor=tk.W,
             ).pack(anchor=tk.W, padx=32, pady=(0, 8))
@@ -819,18 +863,18 @@ class SmartFormatWizard:
         ops_lines = []
         if ops_plan.get("dedupe", {}).get("enabled"):
             keys = ops_plan["dedupe"].get("keys", [])
-            ops_lines.append(f"  ✓  Dedupe  (keys: {', '.join(keys) or 'none selected'})")
+            ops_lines.append(f"  ✓  Dedupe  (keys: {_fmt_list(keys) if keys else 'none selected'})")
 
         rrc = ops_plan.get("remove_rows_containing", {})
         if rrc.get("enabled"):
             cols = rrc.get("columns", [])
             pats = rrc.get("patterns", "")
-            ops_lines.append(f"  ✓  Remove rows containing '{pats}' in: {', '.join(cols) or 'no columns'}")
+            ops_lines.append(f"  ✓  Remove rows containing '{pats}' in: {_fmt_list(cols) if cols else 'no columns'}")
 
         rbr = ops_plan.get("remove_blank_rows", {})
         if rbr.get("enabled"):
             cols = rbr.get("columns", [])
-            ops_lines.append(f"  ✓  Remove blank rows  (columns: {', '.join(cols) or 'none selected'})")
+            ops_lines.append(f"  ✓  Remove blank rows  (columns: {_fmt_list(cols) if cols else 'none selected'})")
 
         if not ops_lines:
             ops_lines.append("  (none selected)")
