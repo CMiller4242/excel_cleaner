@@ -18,6 +18,9 @@ from . import standardization_ops
 # Import smart column operations
 from . import add_column_smart_ops
 
+# Import geographic filter operations (Lower 48, etc.)
+from . import filter_ops
+
 # Import v2 advanced operations
 try:
     from .advanced import math_advanced

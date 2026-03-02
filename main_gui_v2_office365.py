@@ -746,6 +746,10 @@ class CleanSheetApp:
             self._show_add_column_smart_dialog(operation, columns, edit_mode=True, edit_index=index, current_params=op_config['parameters'])
             return
 
+        if operation.metadata.id == 'filter_lower_48':
+            self._show_lower_48_dialog(operation, columns, edit_mode=True, edit_index=index, current_params=op_config['parameters'])
+            return
+
         # Determine which dialog to show
         needs_single_column = any(p.type == 'column' for p in operation.metadata.parameters)
         needs_multi_column = any(p.type == 'column_list' for p in operation.metadata.parameters)
@@ -2906,6 +2910,11 @@ class CleanSheetApp:
             self._show_add_column_smart_dialog(operation, columns)
             return
 
+        if operation.metadata.id == 'filter_lower_48':
+            # Use specialized Lower 48 dialog with country/checkbox controls
+            self._show_lower_48_dialog(operation, columns)
+            return
+
         # Determine if operation needs special column selection
         needs_single_column = any(p.type == 'column' for p in operation.metadata.parameters)
         needs_multi_column = any(p.type == 'column_list' for p in operation.metadata.parameters)
@@ -3712,6 +3721,172 @@ class CleanSheetApp:
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
         button_text = "✓ Update" if edit_mode else "✓ Add to Queue"
         ttk.Button(btn_frame, text=button_text, command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
+
+
+    def _show_lower_48_dialog(self, operation, columns, edit_mode=False, edit_index=None, current_params=None):
+        """Custom dialog for Filter to Lower 48 States operation."""
+        from ui.widgets.scrollable_frame import ScrollableOperationFrame
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"{'Edit' if edit_mode else 'Add'}: {operation.metadata.name}")
+        dialog.geometry("620x620")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Scrollable content area
+        scrollable = ScrollableOperationFrame(dialog)
+        scrollable.pack(fill='both', expand=True, padx=10, pady=(10, 0))
+        main_frame = scrollable.scroll_frame
+
+        # --- Title ---
+        ttk.Label(
+            main_frame,
+            text=operation.metadata.name,
+            font=('Segoe UI', 14, 'bold'),
+        ).pack(pady=(10, 4), padx=10)
+
+        ttk.Label(
+            main_frame,
+            text=operation.metadata.description,
+            wraplength=570,
+            font=('Arial', 11),
+        ).pack(pady=(0, 14), padx=10)
+
+        # Helper: current param value
+        def cp(name, default=None):
+            if current_params and name in current_params:
+                return current_params[name]
+            return default
+
+        # --- State column (required) ---
+        state_frame = ttk.LabelFrame(main_frame, text="State Column  (required)", padding=8)
+        state_frame.pack(fill='x', pady=(0, 6), padx=10)
+
+        state_selector = ColumnSelector(state_frame, columns, "Select state column *")
+        state_selector.pack(fill='x')
+        saved_state = cp('state_column', '')
+        if saved_state:
+            state_selector.set_value(saved_state)
+
+        # --- Country column (optional) ---
+        country_frame = ttk.LabelFrame(main_frame, text="Country Column  (optional)", padding=8)
+        country_frame.pack(fill='x', pady=(0, 6), padx=10)
+
+        ttk.Label(
+            country_frame,
+            text="Leave blank to skip country-based filtering.",
+            font=('Arial', 9),
+            foreground='gray',
+        ).pack(anchor='w', pady=(0, 4))
+
+        country_selector = ColumnSelector(country_frame, [''] + columns, "Select country column (optional)")
+        country_selector.pack(fill='x')
+        saved_country = cp('country_column', '')
+        if saved_country:
+            country_selector.set_value(saved_country)
+
+        # --- Country sub-options (shown/hidden based on country selection) ---
+        country_opts_frame = ttk.Frame(country_frame)
+        country_opts_frame.pack(fill='x', pady=(6, 0))
+
+        require_usa_var = tk.BooleanVar(value=cp('require_usa_country', True))
+        require_usa_cb = ttk.Checkbutton(
+            country_opts_frame,
+            text='Require USA in Country column  (US / USA / United States)',
+            variable=require_usa_var,
+        )
+        require_usa_cb.pack(anchor='w')
+
+        allow_blank_country_var = tk.BooleanVar(value=cp('allow_blank_country', True))
+        allow_blank_cb = ttk.Checkbutton(
+            country_opts_frame,
+            text='Allow rows where Country is blank',
+            variable=allow_blank_country_var,
+        )
+        allow_blank_cb.pack(anchor='w')
+
+        def _update_country_opts(*_):
+            raw = country_selector.get_value().strip()
+            state = 'normal' if raw else 'disabled'
+            require_usa_cb.config(state=state)
+            allow_blank_cb.config(state=state)
+
+        # Bind to combobox changes
+        country_selector.combo.bind('<<ComboboxSelected>>', _update_country_opts)
+        country_selector.combo.bind('<KeyRelease>', _update_country_opts)
+        _update_country_opts()  # Set initial state
+
+        # --- Options ---
+        opts_frame = ttk.LabelFrame(main_frame, text="Options", padding=8)
+        opts_frame.pack(fill='x', pady=(0, 6), padx=10)
+
+        normalize_var = tk.BooleanVar(value=cp('normalize_states', True))
+        ttk.Checkbutton(
+            opts_frame,
+            text='Normalize full state names to abbreviations  (e.g. "New York" → "NY", "N.Y." → "NY")',
+            variable=normalize_var,
+        ).pack(anchor='w')
+
+        remove_blank_var = tk.BooleanVar(value=cp('remove_blank_states', True))
+        ttk.Checkbutton(
+            opts_frame,
+            text='Remove rows with blank or unrecognised state',
+            variable=remove_blank_var,
+        ).pack(anchor='w', pady=(4, 0))
+
+        include_dc_var = tk.BooleanVar(value=cp('include_dc', False))
+        ttk.Checkbutton(
+            opts_frame,
+            text='Include DC (Washington D.C.) in the Lower 48 allow-list',
+            variable=include_dc_var,
+        ).pack(anchor='w', pady=(4, 0))
+
+        # --- Submit ---
+        def on_add():
+            state_col = state_selector.get_value().strip()
+            if not state_col:
+                from tkinter import messagebox as mb
+                mb.showwarning("State Column Required", "Please select a State column.", parent=dialog)
+                return
+
+            country_col = country_selector.get_value().strip()
+
+            params = {
+                'state_column': state_col,
+                'country_column': country_col,
+                'normalize_states': normalize_var.get(),
+                'remove_blank_states': remove_blank_var.get(),
+                'require_usa_country': require_usa_var.get(),
+                'allow_blank_country': allow_blank_country_var.get(),
+                'include_dc': include_dc_var.get(),
+            }
+
+            if edit_mode:
+                self.operation_queue[edit_index] = {
+                    'operation_id': operation.metadata.id,
+                    'name': operation.metadata.name,
+                    'parameters': params,
+                    'enabled': self.operation_queue[edit_index]['enabled'],
+                }
+                self.status_var.set(f"Updated: {operation.metadata.name}")
+            else:
+                self.operation_queue.append({
+                    'operation_id': operation.metadata.id,
+                    'name': operation.metadata.name,
+                    'parameters': params,
+                    'enabled': True,
+                })
+                self.status_var.set(f"Added: {operation.metadata.name}")
+
+            self.refresh_queue_display()
+            self._save_current_workflow()
+            dialog.destroy()
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill='x', pady=10, padx=10)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=15).pack(side='left', padx=5)
+        btn_text = "✓ Update" if edit_mode else "✓ Add to Queue"
+        ttk.Button(btn_frame, text=btn_text, command=on_add, style='Success.TButton', width=15).pack(side='right', padx=5)
 
 
     def _show_reorder_columns_dialog(self, operation, columns):
