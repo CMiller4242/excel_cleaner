@@ -1045,96 +1045,194 @@ class CleanSheetApp:
         self.status_var.set("Single file mode enabled")
 
     def _create_combine_panel(self):
-        """Create the Combine Mode UI panel"""
+        """Create the Combine Mode UI panel with file status tracking and conversion actions."""
         self.combine_panel = tk.Frame(self.root, bg='white')
 
-        # Main container with scrolling
-        main_container = ttk.Frame(self.combine_panel, style='Card.TFrame')
-        main_container.pack(fill='both', expand=True, padx=20, pady=20)
+        # Outer scrollable container
+        outer_canvas = tk.Canvas(self.combine_panel, bg='white', highlightthickness=0)
+        outer_scroll = ttk.Scrollbar(self.combine_panel, orient='vertical',
+                                     command=outer_canvas.yview)
+        outer_canvas.configure(yscrollcommand=outer_scroll.set)
+        outer_scroll.pack(side='right', fill='y')
+        outer_canvas.pack(side='left', fill='both', expand=True)
 
-        # Title
-        title_label = ttk.Label(
+        main_container = ttk.Frame(outer_canvas, style='Card.TFrame')
+        canvas_window = outer_canvas.create_window((0, 0), window=main_container, anchor='nw')
+
+        def _on_frame_configure(event):
+            outer_canvas.configure(scrollregion=outer_canvas.bbox('all'))
+
+        def _on_canvas_configure(event):
+            outer_canvas.itemconfig(canvas_window, width=event.width)
+
+        main_container.bind('<Configure>', _on_frame_configure)
+        outer_canvas.bind('<Configure>', _on_canvas_configure)
+
+        # ── Title ──────────────────────────────────────────────────────────────
+        ttk.Label(
             main_container,
             text="Combine Files",
             font=('Segoe UI', 18, 'bold'),
             foreground='#0078D4'
-        )
-        title_label.pack(pady=(10, 5), padx=20)
+        ).pack(pady=(15, 4), padx=20)
 
-        subtitle_label = ttk.Label(
+        ttk.Label(
             main_container,
-            text="Combine multiple CSV/TXT files into one file with exact formatting preservation.\n"
-                 "Header from first file is kept. Repeated headers are automatically removed.\n"
-                 "No formatting changes - quotes, spacing, and delimiters preserved exactly.",
+            text=(
+                "Upload multiple files, convert as needed, then combine.\n"
+                "Mixed formats are handled — convert all files to the same "
+                "format before combining."
+            ),
             font=('Segoe UI', 10),
             foreground='#666666',
             justify='center'
-        )
-        subtitle_label.pack(pady=(0, 20), padx=20)
+        ).pack(pady=(0, 15), padx=20)
 
-        # File Upload Section
-        upload_frame = ttk.LabelFrame(main_container, text="📁 File Upload", padding=15)
-        upload_frame.pack(fill='both', padx=20, pady=10)
+        # ── File List Section ──────────────────────────────────────────────────
+        upload_frame = ttk.LabelFrame(main_container, text="📁 Files", padding=12)
+        upload_frame.pack(fill='both', expand=True, padx=20, pady=(0, 8))
 
-        btn_upload = ttk.Button(
-            upload_frame,
+        # Top button row
+        top_btn_row = ttk.Frame(upload_frame)
+        top_btn_row.pack(fill='x', pady=(0, 8))
+
+        ttk.Button(
+            top_btn_row,
             text="Browse Files...",
             command=self.combine_browse_files,
             style='Accent.TButton',
-            width=20
-        )
-        btn_upload.pack(pady=10)
-
-        # File list with scrollbar
-        list_frame = ttk.Frame(upload_frame)
-        list_frame.pack(fill='both', expand=True, pady=10)
-
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side='right', fill='y')
-
-        self.combine_file_listbox = tk.Listbox(
-            list_frame,
-            height=8,
-            font=('Consolas', 10),
-            yscrollcommand=scrollbar.set
-        )
-        self.combine_file_listbox.pack(side='left', fill='both', expand=True)
-        scrollbar.config(command=self.combine_file_listbox.yview)
-
-        # Buttons for file management
-        file_btn_frame = ttk.Frame(upload_frame)
-        file_btn_frame.pack(fill='x', pady=5)
+            width=18
+        ).pack(side='left', padx=(0, 6))
 
         ttk.Button(
-            file_btn_frame,
+            top_btn_row,
             text="Remove Selected",
             command=self.combine_remove_file,
-            width=15
-        ).pack(side='left', padx=5)
+            width=16
+        ).pack(side='left', padx=(0, 6))
 
         ttk.Button(
-            file_btn_frame,
+            top_btn_row,
             text="Clear All",
             command=self.combine_clear_files,
-            width=15
-        ).pack(side='left', padx=5)
+            width=10
+        ).pack(side='left')
 
-        # Summary Panel
-        summary_frame = ttk.LabelFrame(main_container, text="📊 Summary", padding=15)
-        summary_frame.pack(fill='x', padx=20, pady=10)
+        # Error Details button (right-aligned)
+        self.combine_error_btn = ttk.Button(
+            top_btn_row,
+            text="Error Details",
+            command=self._combine_show_file_error,
+            width=14
+        )
+        self.combine_error_btn.pack(side='right')
+
+        # Treeview for file list
+        tree_frame = ttk.Frame(upload_frame)
+        tree_frame.pack(fill='both', expand=True)
+
+        tree_scroll_y = ttk.Scrollbar(tree_frame, orient='vertical')
+        tree_scroll_y.pack(side='right', fill='y')
+
+        tree_scroll_x = ttk.Scrollbar(tree_frame, orient='horizontal')
+        tree_scroll_x.pack(side='bottom', fill='x')
+
+        self.combine_file_tree = ttk.Treeview(
+            tree_frame,
+            columns=('status', 'format', 'rows'),
+            show='tree headings',
+            selectmode='extended',
+            height=8,
+            yscrollcommand=tree_scroll_y.set,
+            xscrollcommand=tree_scroll_x.set,
+        )
+        self.combine_file_tree.pack(side='left', fill='both', expand=True)
+        tree_scroll_y.config(command=self.combine_file_tree.yview)
+        tree_scroll_x.config(command=self.combine_file_tree.xview)
+
+        self.combine_file_tree.heading('#0', text='Filename', anchor='w')
+        self.combine_file_tree.heading('status', text='Status', anchor='w')
+        self.combine_file_tree.heading('format', text='Format', anchor='center')
+        self.combine_file_tree.heading('rows', text='Rows', anchor='e')
+
+        self.combine_file_tree.column('#0', width=300, minwidth=160, stretch=True)
+        self.combine_file_tree.column('status', width=150, minwidth=100, stretch=False)
+        self.combine_file_tree.column('format', width=70, minwidth=50, stretch=False, anchor='center')
+        self.combine_file_tree.column('rows', width=70, minwidth=50, stretch=False, anchor='e')
+
+        # Tag-based colour coding
+        self.combine_file_tree.tag_configure('loaded',      foreground='#107C10')
+        self.combine_file_tree.tag_configure('failed',      foreground='#D83B01')
+        self.combine_file_tree.tag_configure('converted',   foreground='#0078D4')
+        self.combine_file_tree.tag_configure('needs_sheet', foreground='#CA5010')
+
+        # Double-click to show error / sheet picker
+        self.combine_file_tree.bind('<Double-Button-1>', self._combine_on_tree_double_click)
+
+        # ── Conversion Action Bar ──────────────────────────────────────────────
+        conv_frame = ttk.LabelFrame(main_container, text="🔄 Convert", padding=10)
+        conv_frame.pack(fill='x', padx=20, pady=(0, 8))
+
+        conv_row1 = ttk.Frame(conv_frame)
+        conv_row1.pack(fill='x', pady=(0, 5))
+
+        ttk.Button(
+            conv_row1,
+            text="Convert Selected → CSV",
+            command=self._combine_convert_selected_to_csv,
+            width=22
+        ).pack(side='left', padx=(0, 6))
+
+        ttk.Button(
+            conv_row1,
+            text="Convert Selected → XLSX",
+            command=self._combine_convert_selected_to_xlsx,
+            width=22
+        ).pack(side='left', padx=(0, 6))
+
+        self.combine_retry_btn = ttk.Button(
+            conv_row1,
+            text="Retry Failed",
+            command=self._combine_retry_failed,
+            width=14
+        )
+        self.combine_retry_btn.pack(side='right')
+
+        conv_row2 = ttk.Frame(conv_frame)
+        conv_row2.pack(fill='x')
+
+        ttk.Button(
+            conv_row2,
+            text="Convert All → CSV",
+            command=self._combine_convert_all_to_csv,
+            width=22
+        ).pack(side='left', padx=(0, 6))
+
+        ttk.Button(
+            conv_row2,
+            text="Convert All → XLSX",
+            command=self._combine_convert_all_to_xlsx,
+            width=22
+        ).pack(side='left')
+
+        # ── Summary Bar ───────────────────────────────────────────────────────
+        summary_frame = ttk.LabelFrame(main_container, text="📊 Summary", padding=10)
+        summary_frame.pack(fill='x', padx=20, pady=(0, 8))
 
         self.combine_summary_text = tk.Text(
             summary_frame,
-            height=6,
+            height=4,
             font=('Consolas', 10),
             wrap='word',
-            state='disabled'
+            state='disabled',
+            bg='#FAFAFA',
+            relief='flat'
         )
         self.combine_summary_text.pack(fill='x')
 
-        # Combine Button
+        # ── Combine Button ─────────────────────────────────────────────────────
         action_frame = ttk.Frame(main_container)
-        action_frame.pack(fill='x', padx=20, pady=20)
+        action_frame.pack(fill='x', padx=20, pady=(5, 20))
 
         self.combine_btn = ttk.Button(
             action_frame,
@@ -1146,7 +1244,7 @@ class CleanSheetApp:
         )
         self.combine_btn.pack()
 
-        # Initialize summary
+        # Initialise
         self.update_combine_summary()
 
     def _create_split_pane(self):
@@ -1637,12 +1735,12 @@ class CleanSheetApp:
     # ==================== COMBINE MODE METHODS ====================
 
     def combine_browse_files(self):
-        """Browse and add files to combine queue"""
+        """Browse and add files to the combine queue with safe loading and sheet selection."""
         filenames = filedialog.askopenfilenames(
             title="Select Files to Combine",
             filetypes=[
-                ("All Supported", "*.xlsx *.xls *.csv *.txt *.tsv"),
-                ("Excel files", "*.xlsx *.xls"),
+                ("All Supported", "*.xlsx *.xls *.xlsm *.csv *.txt *.tsv"),
+                ("Excel files", "*.xlsx *.xls *.xlsm"),
                 ("CSV files", "*.csv"),
                 ("Text files", "*.txt *.tsv"),
                 ("All files", "*.*")
@@ -1652,190 +1750,655 @@ class CleanSheetApp:
         if not filenames:
             return
 
-        # Validate file limit (2-50 files total)
-        total_files = len(self.combine_mode_handler.loaded_files) + len(filenames)
-        if total_files > 50:
+        # Deduplicate: skip already-loaded paths
+        existing_originals = {
+            f['original_path'] for f in self.combine_mode_handler.loaded_files
+        }
+        new_filenames = [fn for fn in filenames if fn not in existing_originals]
+        skipped = len(filenames) - len(new_filenames)
+
+        # Validate file limit (2–50 files total)
+        total_after = len(self.combine_mode_handler.loaded_files) + len(new_filenames)
+        if total_after > 50:
             messagebox.showerror(
                 "Too Many Files",
-                f"Cannot add {len(filenames)} files. Maximum 50 files allowed.\nCurrently loaded: {len(self.combine_mode_handler.loaded_files)}"
+                f"Cannot add {len(new_filenames)} files.\n"
+                f"Maximum 50 files allowed.\n"
+                f"Currently loaded: {len(self.combine_mode_handler.loaded_files)}"
             )
             return
 
-        self.status_var.set(f"Loading {len(filenames)} files...")
+        if not new_filenames:
+            if skipped:
+                messagebox.showinfo("Already Loaded",
+                                    "All selected files are already in the combine list.")
+            return
 
-        loaded_count = 0
-        errors = []
+        self.status_var.set(f"Loading {len(new_filenames)} files...")
 
-        for filename in filenames:
-            try:
-                # Add file to combine handler
-                file_info = self.combine_mode_handler.add_file(filename)
+        loaded_ok = 0
+        loaded_failed = 0
 
-                # Add to listbox display
-                display_text = f"{file_info['name']} ({file_info['rows']} rows, {file_info['columns']} cols, {file_info['type']})"
-                if file_info['type'] == 'text':
-                    delimiter_map = {',': 'comma', '|': 'pipe', '\t': 'tab'}
-                    delim_name = delimiter_map.get(file_info['delimiter'], file_info['delimiter'])
-                    display_text += f" [{delim_name}]"
+        for filename in new_filenames:
+            # For Excel files with multiple sheets, ask which sheet to use
+            sheet_name = None
+            file_type = self.combine_mode_handler.detect_file_type(filename)
+            if file_type == 'excel':
+                sheets = self.combine_mode_handler.get_excel_sheets(filename)
+                if len(sheets) > 1:
+                    sheet_name = select_sheet_from_file(self.root, filename, sheets)
+                    if sheet_name is None:
+                        # User cancelled — add as needs_sheet so it shows in the list
+                        from utils.file_conversion import get_extension_format
+                        file_info = {
+                            'name': Path(filename).name,
+                            'path': filename,
+                            'df': None,
+                            'type': 'excel',
+                            'delimiter': None,
+                            'sheet': None,
+                            'rows': 0,
+                            'columns': 0,
+                            'original_path': filename,
+                            'original_format': get_extension_format(filename),
+                            'current_format': get_extension_format(filename),
+                            'load_status': 'needs_sheet',
+                            'last_error': 'No sheet selected — double-click to select a sheet.',
+                        }
+                        self.combine_mode_handler.loaded_files.append(file_info)
+                        loaded_failed += 1
+                        continue
+                elif len(sheets) == 1:
+                    sheet_name = sheets[0]
 
-                self.combine_file_listbox.insert(tk.END, display_text)
-                loaded_count += 1
-
-            except Exception as e:
-                errors.append(f"{Path(filename).name}: {str(e)}")
-                logging.error(f"Failed to load {filename} for combine: {e}")
-
-        # Show errors if any
-        if errors:
-            error_msg = "\n".join(errors[:5])  # Show first 5 errors
-            if len(errors) > 5:
-                error_msg += f"\n... and {len(errors) - 5} more errors"
-            messagebox.showerror("Load Errors", f"Failed to load some files:\n\n{error_msg}")
-
-        # Update status and summary
-        if loaded_count > 0:
-            self.status_var.set(f"Loaded {loaded_count} files successfully")
-            self.update_combine_summary()
-
-            # Validate files
-            is_valid, error_msg = self.combine_mode_handler.validate_files(
-                self.combine_mode_handler.loaded_files
-            )
-            if not is_valid:
-                messagebox.showerror("Validation Error", error_msg)
-                self.combine_btn.config(state='disabled')
+            # Safe load: errors become 'failed' entries, not exceptions
+            file_info = self.combine_mode_handler.add_file_safe(filename, sheet_name=sheet_name)
+            if file_info['load_status'] == 'loaded':
+                loaded_ok += 1
             else:
-                # Enable combine button if 2+ files
-                if len(self.combine_mode_handler.loaded_files) >= 2:
-                    self.combine_btn.config(state='normal')
-        else:
-            self.status_var.set("No files loaded")
+                loaded_failed += 1
+
+        # Refresh the Treeview to reflect what was just loaded
+        self._refresh_combine_file_list()
+        self.update_combine_summary()
+        self._combine_update_btn_state()
+
+        # Status message
+        parts = []
+        if loaded_ok:
+            parts.append(f"{loaded_ok} loaded")
+        if loaded_failed:
+            parts.append(f"{loaded_failed} need attention")
+        if skipped:
+            parts.append(f"{skipped} skipped (duplicate)")
+        self.status_var.set("Files: " + ", ".join(parts) if parts else "No new files added")
 
     def combine_remove_file(self):
-        """Remove selected file from combine queue"""
-        selection = self.combine_file_listbox.curselection()
-        if not selection:
-            messagebox.showwarning("No Selection", "Please select a file to remove")
+        """Remove all selected files from the combine queue."""
+        selected_iids = self.combine_file_tree.selection()
+        if not selected_iids:
+            messagebox.showwarning("No Selection", "Please select one or more files to remove.")
             return
 
-        index = selection[0]
-        file_info = self.combine_mode_handler.loaded_files[index]
+        # IIDs are original_paths; remove each
+        for iid in selected_iids:
+            # Find the matching file_info by original_path
+            entry = next(
+                (f for f in self.combine_mode_handler.loaded_files
+                 if f['original_path'] == iid),
+                None
+            )
+            if entry:
+                # Use current path for handler's internal list
+                self.combine_mode_handler.loaded_files.remove(entry)
 
-        # Remove from handler
-        self.combine_mode_handler.remove_file(file_info['path'])
+        # If handler detected_file_type / delimiter now stale, reset them
+        if not self.combine_mode_handler.loaded_files:
+            self.combine_mode_handler.detected_file_type = None
+            self.combine_mode_handler.detected_delimiter = None
 
-        # Remove from listbox
-        self.combine_file_listbox.delete(index)
-
-        # Update summary
+        self._refresh_combine_file_list()
         self.update_combine_summary()
-
-        # Disable combine button if less than 2 files
-        if len(self.combine_mode_handler.loaded_files) < 2:
-            self.combine_btn.config(state='disabled')
+        self._combine_update_btn_state()
 
     def combine_clear_files(self):
-        """Clear all files from combine queue"""
+        """Clear all files from the combine queue."""
         if not self.combine_mode_handler.loaded_files:
             return
 
-        result = messagebox.askyesno(
+        if not messagebox.askyesno(
             "Clear All Files",
             "Are you sure you want to clear all files from the combine queue?"
-        )
+        ):
+            return
 
-        if result:
-            self.combine_mode_handler.clear_files()
-            self.combine_file_listbox.delete(0, tk.END)
-            self.update_combine_summary()
-            self.combine_btn.config(state='disabled')
-            self.status_var.set("Cleared all files")
+        self.combine_mode_handler.clear_files()
+        self._refresh_combine_file_list()
+        self.update_combine_summary()
+        self._combine_update_btn_state()
+        self.status_var.set("Cleared all files")
 
     def update_combine_summary(self):
-        """Update the summary panel with current file info"""
-        summary = self.combine_mode_handler.get_summary()
+        """Update the summary panel with extended status info."""
+        if not hasattr(self, 'combine_summary_text'):
+            return
 
-        # Build summary text
-        summary_text = []
-        summary_text.append(f"Files detected: {summary['file_count']}")
+        ext = self.combine_mode_handler.get_summary_extended()
 
-        if summary['file_count'] > 0:
-            summary_text.append(f"Detected file type: {summary['file_type'] or 'Unknown'}")
-            if summary['delimiter']:
-                summary_text.append(f"Detected delimiter: {summary['delimiter']}")
-            summary_text.append(f"Total rows: {summary['total_rows']:,}")
-            summary_text.append(f"Total unique columns: {summary['total_columns']}")
+        lines = []
+        if ext['total'] == 0:
+            lines.append("No files loaded yet.")
+            lines.append("Browse files to begin. Mixed formats are supported — convert before combining.")
         else:
-            summary_text.append("")
-            summary_text.append("No files loaded yet")
-            summary_text.append("Upload 2 or more files to begin")
+            status_parts = [f"Total: {ext['total']}"]
+            if ext['loaded']:
+                status_parts.append(f"Loaded: {ext['loaded']}")
+            if ext['converted']:
+                status_parts.append(f"Converted: {ext['converted']}")
+            if ext['failed']:
+                status_parts.append(f"Failed: {ext['failed']}")
+            if ext['needs_sheet']:
+                status_parts.append(f"Needs Sheet: {ext['needs_sheet']}")
+            lines.append("  ".join(status_parts))
 
-        # Update text widget
+            if ext['formats']:
+                lines.append(f"Formats present: {', '.join(ext['formats'])}")
+                if len(ext['formats']) > 1:
+                    lines.append(
+                        "  ⚠ Mixed formats detected — use 'Convert All → CSV' or "
+                        "'Convert All → XLSX' before combining."
+                    )
+
+            if ext['total_rows']:
+                lines.append(f"Total rows (loaded): {ext['total_rows']:,}")
+
         self.combine_summary_text.config(state='normal')
         self.combine_summary_text.delete(1.0, tk.END)
-        self.combine_summary_text.insert(1.0, "\n".join(summary_text))
+        self.combine_summary_text.insert(1.0, "\n".join(lines))
         self.combine_summary_text.config(state='disabled')
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Combine Mode – internal helpers
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _refresh_combine_file_list(self):
+        """Rebuild the Treeview from combine_mode_handler.loaded_files."""
+        if not hasattr(self, 'combine_file_tree'):
+            return
+
+        self.combine_file_tree.delete(*self.combine_file_tree.get_children())
+
+        for fi in self.combine_mode_handler.loaded_files:
+            status = fi.get('load_status', 'unknown')
+            original_fmt = fi.get('original_format', '')
+            current_fmt = fi.get('current_format', '')
+
+            if status == 'converted':
+                status_display = f"Converted → {current_fmt}"
+            elif status == 'failed':
+                status_display = 'Failed'
+            elif status == 'needs_sheet':
+                status_display = 'Needs Sheet Selection'
+            else:
+                status_display = 'Loaded'
+
+            rows_val = fi.get('rows', 0)
+            rows_display = f"{rows_val:,}" if rows_val else '—'
+
+            # IID = original_path so it is stable across conversions
+            self.combine_file_tree.insert(
+                '',
+                'end',
+                iid=fi['original_path'],
+                text=fi['name'],
+                values=(status_display, current_fmt or original_fmt, rows_display),
+                tags=(status,),
+            )
+
+    def _combine_update_btn_state(self):
+        """Enable/disable the Combine button based on how many files are ready."""
+        if not hasattr(self, 'combine_btn'):
+            return
+        combinable = self.combine_mode_handler.get_combinable_files()
+        state = 'normal' if len(combinable) >= 2 else 'disabled'
+        self.combine_btn.config(state=state)
+
+    def _combine_on_tree_double_click(self, event):
+        """Handle double-click on a Treeview row."""
+        iid = self.combine_file_tree.focus()
+        if not iid:
+            return
+        fi = next(
+            (f for f in self.combine_mode_handler.loaded_files
+             if f['original_path'] == iid),
+            None
+        )
+        if fi is None:
+            return
+
+        if fi.get('load_status') == 'needs_sheet':
+            self._combine_pick_sheet_for_file(fi)
+        elif fi.get('load_status') == 'failed':
+            self._combine_show_file_error()
+
+    def _combine_pick_sheet_for_file(self, fi: dict):
+        """Show sheet-selection dialog for a 'needs_sheet' file and reload it."""
+        sheets = self.combine_mode_handler.get_excel_sheets(fi['original_path'])
+        if not sheets:
+            messagebox.showerror(
+                "Cannot Read Sheets",
+                f"Could not read sheet names from:\n{fi['name']}"
+            )
+            return
+
+        sheet_name = select_sheet_from_file(self.root, fi['original_path'], sheets)
+        if sheet_name is None:
+            return  # User cancelled
+
+        # Attempt to load now
+        try:
+            fi['sheet'] = sheet_name
+            df = self.combine_mode_handler.load_file_to_dataframe(
+                fi['original_path'], sheet_name=sheet_name
+            )
+            fi['df'] = df
+            fi['rows'] = len(df)
+            fi['columns'] = len(df.columns)
+            fi['load_status'] = 'loaded'
+            fi['last_error'] = None
+            # Update detected type
+            if self.combine_mode_handler.detected_file_type is None:
+                self.combine_mode_handler.detected_file_type = 'excel'
+        except Exception as e:
+            fi['load_status'] = 'failed'
+            fi['last_error'] = str(e)
+            messagebox.showerror(
+                "Load Error",
+                f"Could not load sheet '{sheet_name}' from {fi['name']}:\n\n{e}"
+            )
+
+        self._refresh_combine_file_list()
+        self.update_combine_summary()
+        self._combine_update_btn_state()
+
+    def _combine_show_file_error(self):
+        """Show last_error details for selected files."""
+        selected_iids = self.combine_file_tree.selection()
+        if not selected_iids:
+            messagebox.showinfo("Error Details", "Select one or more files to see their error details.")
+            return
+
+        messages = []
+        for iid in selected_iids:
+            fi = next(
+                (f for f in self.combine_mode_handler.loaded_files
+                 if f['original_path'] == iid),
+                None
+            )
+            if fi and fi.get('last_error'):
+                messages.append(f"File: {fi['name']}\nError: {fi['last_error']}")
+            elif fi:
+                messages.append(f"File: {fi['name']}\nStatus: {fi.get('load_status', 'unknown')} — no error details.")
+
+        if messages:
+            messagebox.showinfo("Error Details", "\n\n─────────────────\n\n".join(messages))
+
+    def _combine_get_selected_file_infos(self) -> list:
+        """Return file_info dicts for all Treeview-selected rows."""
+        selected_iids = self.combine_file_tree.selection()
+        result = []
+        for iid in selected_iids:
+            fi = next(
+                (f for f in self.combine_mode_handler.loaded_files
+                 if f['original_path'] == iid),
+                None
+            )
+            if fi:
+                result.append(fi)
+        return result
+
+    def _combine_convert_files(self, file_infos: list, target_format: str):
+        """
+        Convert a list of file_info entries to the target format.
+
+        Args:
+            file_infos: list of file_info dicts to convert
+            target_format: 'csv' or 'xlsx'
+        """
+        from utils.file_conversion import (
+            convert_file_to_csv, convert_file_to_xlsx, get_extension_format
+        )
+
+        if not file_infos:
+            messagebox.showinfo("Nothing to Convert", "No files selected for conversion.")
+            return
+
+        converted = 0
+        skipped = 0
+        errors = []
+
+        for fi in file_infos:
+            # Skip already-correct format (unless it's failed/needs_sheet)
+            current_ext = Path(fi['path']).suffix.lower()
+            target_ext = f'.{target_format}'
+            already_right_format = current_ext == target_ext
+            already_correct_and_loaded = (
+                already_right_format and fi.get('load_status') in ('loaded', 'converted')
+            )
+            if already_correct_and_loaded:
+                skipped += 1
+                continue
+
+            # For Excel → CSV: need sheet selection if not already set
+            sheet_name = fi.get('sheet')
+            if (fi.get('type') == 'excel' or
+                    Path(fi['path']).suffix.lower() in ('.xlsx', '.xls', '.xlsm')):
+                if sheet_name is None:
+                    sheets = self.combine_mode_handler.get_excel_sheets(fi['path'])
+                    if len(sheets) > 1:
+                        sheet_name = select_sheet_from_file(self.root, fi['path'], sheets)
+                        if sheet_name is None:
+                            # User cancelled this one
+                            fi['load_status'] = 'needs_sheet'
+                            fi['last_error'] = 'No sheet selected — double-click to select a sheet.'
+                            skipped += 1
+                            continue
+                    elif len(sheets) == 1:
+                        sheet_name = sheets[0]
+
+            try:
+                if target_format == 'csv':
+                    new_path = convert_file_to_csv(fi['path'], sheet_name)
+                else:
+                    new_path = convert_file_to_xlsx(fi['path'], sheet_name)
+
+                # Reload DataFrame from converted file
+                new_type = self.combine_mode_handler.detect_file_type(new_path)
+                delimiter = None
+                if new_type == 'text':
+                    delimiter = self.combine_mode_handler.detect_delimiter(new_path)
+                df = self.combine_mode_handler.load_file_to_dataframe(
+                    new_path, delimiter=delimiter, sheet_name=None
+                )
+
+                # Update file_info in-place
+                fi['path'] = new_path
+                fi['name'] = Path(new_path).name
+                fi['df'] = df
+                fi['type'] = new_type
+                fi['delimiter'] = delimiter
+                fi['sheet'] = None
+                fi['rows'] = len(df)
+                fi['columns'] = len(df.columns)
+                fi['current_format'] = get_extension_format(new_path)
+                fi['load_status'] = 'converted'
+                fi['last_error'] = None
+
+                # Update handler-level type/delimiter if first file sets them
+                if self.combine_mode_handler.detected_file_type is None:
+                    self.combine_mode_handler.detected_file_type = new_type
+                if new_type == 'text' and self.combine_mode_handler.detected_delimiter is None:
+                    self.combine_mode_handler.detected_delimiter = delimiter
+
+                converted += 1
+
+            except Exception as e:
+                logging.error(f"Conversion failed for '{fi['name']}': {e}", exc_info=True)
+                fi['load_status'] = 'failed'
+                fi['last_error'] = f"Conversion to {target_format.upper()} failed: {e}"
+                errors.append(f"{fi['name']}: {e}")
+
+        # Refresh UI
+        self._refresh_combine_file_list()
+        self.update_combine_summary()
+        self._combine_update_btn_state()
+
+        # Status report
+        parts = []
+        if converted:
+            parts.append(f"{converted} converted to {target_format.upper()}")
+        if skipped:
+            parts.append(f"{skipped} skipped")
+        if errors:
+            parts.append(f"{len(errors)} failed")
+        self.status_var.set(", ".join(parts) if parts else "No changes made")
+
+        if errors:
+            msg = "\n".join(errors[:5])
+            if len(errors) > 5:
+                msg += f"\n... and {len(errors) - 5} more"
+            messagebox.showwarning(
+                "Conversion Errors",
+                f"Some files could not be converted:\n\n{msg}"
+            )
+        elif converted:
+            messagebox.showinfo(
+                "Conversion Complete",
+                f"Converted {converted} file(s) to {target_format.upper()}.\n"
+                f"Files are now ready to combine."
+            )
+
+    def _combine_convert_selected_to_csv(self):
+        """Convert Treeview-selected files to CSV."""
+        targets = self._combine_get_selected_file_infos()
+        if not targets:
+            messagebox.showwarning("No Selection",
+                                   "Select one or more files in the list first.")
+            return
+        self._combine_convert_files(targets, 'csv')
+
+    def _combine_convert_selected_to_xlsx(self):
+        """Convert Treeview-selected files to XLSX."""
+        targets = self._combine_get_selected_file_infos()
+        if not targets:
+            messagebox.showwarning("No Selection",
+                                   "Select one or more files in the list first.")
+            return
+        self._combine_convert_files(targets, 'xlsx')
+
+    def _combine_convert_all_to_csv(self):
+        """Convert all loaded files to CSV."""
+        targets = list(self.combine_mode_handler.loaded_files)
+        if not targets:
+            messagebox.showinfo("Nothing to Convert", "No files loaded.")
+            return
+        self._combine_convert_files(targets, 'csv')
+
+    def _combine_convert_all_to_xlsx(self):
+        """Convert all loaded files to XLSX."""
+        targets = list(self.combine_mode_handler.loaded_files)
+        if not targets:
+            messagebox.showinfo("Nothing to Convert", "No files loaded.")
+            return
+        self._combine_convert_files(targets, 'xlsx')
+
+    def _combine_retry_failed(self):
+        """Attempt to reload all files with load_status 'failed'."""
+        failed = [
+            f for f in self.combine_mode_handler.loaded_files
+            if f.get('load_status') == 'failed'
+        ]
+        if not failed:
+            messagebox.showinfo("No Failed Files",
+                                "There are no failed files to retry.")
+            return
+
+        retried = 0
+        still_failed = 0
+
+        for fi in failed:
+            try:
+                file_type = self.combine_mode_handler.detect_file_type(fi['original_path'])
+                delimiter = None
+                sheet_name = fi.get('sheet')
+
+                if file_type == 'excel' and sheet_name is None:
+                    sheets = self.combine_mode_handler.get_excel_sheets(fi['original_path'])
+                    if len(sheets) > 1:
+                        sheet_name = select_sheet_from_file(
+                            self.root, fi['original_path'], sheets
+                        )
+                        if sheet_name is None:
+                            fi['load_status'] = 'needs_sheet'
+                            fi['last_error'] = 'No sheet selected — double-click to select.'
+                            still_failed += 1
+                            continue
+                    elif len(sheets) == 1:
+                        sheet_name = sheets[0]
+
+                if file_type == 'text':
+                    delimiter = self.combine_mode_handler.detect_delimiter(fi['original_path'])
+
+                df = self.combine_mode_handler.load_file_to_dataframe(
+                    fi['original_path'], delimiter=delimiter, sheet_name=sheet_name
+                )
+
+                fi['df'] = df
+                fi['type'] = file_type
+                fi['delimiter'] = delimiter
+                fi['sheet'] = sheet_name
+                fi['rows'] = len(df)
+                fi['columns'] = len(df.columns)
+                fi['load_status'] = 'loaded'
+                fi['last_error'] = None
+                retried += 1
+
+            except Exception as e:
+                fi['load_status'] = 'failed'
+                fi['last_error'] = str(e)
+                still_failed += 1
+
+        self._refresh_combine_file_list()
+        self.update_combine_summary()
+        self._combine_update_btn_state()
+
+        msg_parts = []
+        if retried:
+            msg_parts.append(f"{retried} file(s) loaded successfully")
+        if still_failed:
+            msg_parts.append(f"{still_failed} still failed — try converting them instead")
+        self.status_var.set("; ".join(msg_parts) if msg_parts else "Retry complete")
+
+    def _combine_pre_combine_check(self) -> bool:
+        """
+        Check the combine set for mixed formats or failed files before combining.
+
+        Returns True if it is safe to proceed, False if the user chose to cancel.
+        Shows a dialog summarising the situation when issues are found.
+        """
+        all_files = self.combine_mode_handler.loaded_files
+        good_files = self.combine_mode_handler.get_combinable_files()
+        failed_files = [f for f in all_files if f.get('load_status') == 'failed']
+        needs_sheet = [f for f in all_files if f.get('load_status') == 'needs_sheet']
+
+        file_types = {f.get('type') for f in good_files if f.get('type')}
+        has_mixed_types = len(file_types) > 1
+
+        issues = []
+        if failed_files:
+            names = ', '.join(f['name'] for f in failed_files[:3])
+            extra = f" (+{len(failed_files)-3} more)" if len(failed_files) > 3 else ''
+            issues.append(f"• {len(failed_files)} failed file(s): {names}{extra}")
+        if needs_sheet:
+            names = ', '.join(f['name'] for f in needs_sheet[:3])
+            issues.append(f"• {len(needs_sheet)} file(s) need sheet selection: {names}")
+        if has_mixed_types:
+            type_names = ', '.join(sorted(file_types))
+            issues.append(f"• Mixed file types in combine set: {type_names}")
+
+        if not issues:
+            return True  # Nothing to warn about
+
+        summary_lines = [
+            f"Ready to combine: {len(good_files)} file(s)",
+            "",
+        ] + issues + [
+            "",
+            "Do you want to continue with the available loaded files,",
+            "or cancel to convert/fix the remaining files first?",
+        ]
+
+        result = messagebox.askyesno(
+            "Pre-Combine Check",
+            "\n".join(summary_lines),
+            icon='warning'
+        )
+        return result  # True = continue, False = cancel
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # End Combine Mode helpers
+    # ══════════════════════════════════════════════════════════════════════════
 
     def combine_files_execute(self):
         """
-        Execute file combination and export
+        Execute file combination and export.
 
-        COMBINE_CSV_FIX: Use CSV-aware methods for text files to preserve exact formatting
+        COMBINE_CSV_FIX: Use CSV-aware methods for text files to preserve exact formatting.
+        Only operates on files with load_status in ('loaded', 'converted').
         """
-        # Final validation
-        is_valid, error_msg = self.combine_mode_handler.validate_files(
-            self.combine_mode_handler.loaded_files
-        )
+        # Pre-combine check for mixed formats / failed files
+        if not self._combine_pre_combine_check():
+            return  # User chose to cancel and fix files first
 
+        # Work only with combinable files
+        good_files = self.combine_mode_handler.get_combinable_files()
+
+        # Final validation on the good-files subset
+        is_valid, error_msg = self.combine_mode_handler.validate_files(good_files)
         if not is_valid:
             messagebox.showerror("Validation Error", error_msg)
             return
 
         try:
-            file_type = self.combine_mode_handler.detected_file_type
+            # Determine type from good files (they should all be the same by now)
+            file_types = {f.get('type') for f in good_files if f.get('type')}
+            file_type = 'text' if 'text' in file_types else 'excel'
 
-            # RAW TEXT COMBINING: Use line-based processing for exact format preservation
             if file_type == 'text':
                 # Use raw text line-based combining
-                file_paths = [f['path'] for f in self.combine_mode_handler.loaded_files]
-                delimiter = self.combine_mode_handler.detected_delimiter
+                file_paths = [f['path'] for f in good_files]
+
+                # Determine delimiter from first text file
+                delimiter = None
+                for f in good_files:
+                    if f.get('type') == 'text' and f.get('delimiter'):
+                        delimiter = f['delimiter']
+                        break
+                if delimiter is None:
+                    delimiter = self.combine_mode_handler.detected_delimiter or ','
 
                 # Combine files using raw text processing
-                header_line, data_lines, files_processed = self.combine_mode_handler.combine_text_files_raw(
-                    file_paths, delimiter
+                header_line, data_lines, files_processed = (
+                    self.combine_mode_handler.combine_text_files_raw(file_paths, delimiter)
                 )
 
-                # Show success message
-                summary = self.combine_mode_handler.get_summary()
                 messagebox.showinfo(
                     "Files Combined",
-                    f"Successfully combined {summary['file_count']} files!\n\n"
+                    f"Successfully combined {len(good_files)} files!\n\n"
                     f"Total data rows: {len(data_lines):,}\n"
                     f"Repeated headers removed automatically.\n\n"
                     "Original formatting preserved exactly.\n"
-                    "Click OK to select export location."
+                    "Click OK to select the export location."
                 )
 
-                # Show export dialog with raw text data
-                self.combine_export_dialog_raw(header_line, data_lines, summary)
+                ext_summary = self.combine_mode_handler.get_summary_extended()
+                self.combine_export_dialog_raw(header_line, data_lines, ext_summary)
 
             else:
-                # Excel files - use pandas method
-                dataframes = [f['df'] for f in self.combine_mode_handler.loaded_files]
+                # Excel files – use pandas method
+                dataframes = [f['df'] for f in good_files]
                 combined_df = self.combine_mode_handler.combine_dataframes(dataframes)
 
-                # Show success message
-                summary = self.combine_mode_handler.get_summary()
                 messagebox.showinfo(
                     "Files Combined",
-                    f"Successfully combined {summary['file_count']} files!\n\n"
+                    f"Successfully combined {len(good_files)} files!\n\n"
                     f"Total rows: {len(combined_df):,}\n"
                     f"Total columns: {len(combined_df.columns)}\n\n"
-                    "Click OK to select export location."
+                    "Click OK to select the export location."
                 )
 
-                # Show export dialog with DataFrame
-                self.combine_export_dialog(combined_df, summary)
+                ext_summary = self.combine_mode_handler.get_summary_extended()
+                self.combine_export_dialog(combined_df, ext_summary)
 
         except Exception as e:
             logging.error(f"Combine execution error: {e}", exc_info=True)
@@ -1943,7 +2506,7 @@ class CleanSheetApp:
                 f"Location: {output_path}\n"
                 f"Data rows: {len(data_lines):,}\n\n"
                 f"Original formatting preserved exactly.\n"
-                f"Delimiter: {summary.get('delimiter', 'unknown')}"
+                f"Delimiter: {self.combine_mode_handler.detected_delimiter or 'auto-detected'}"
             )
 
             self.status_var.set(f"Exported combined file: {Path(output_path).name}")
