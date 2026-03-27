@@ -161,31 +161,106 @@ class CombineModeHandler:
 
     def validate_files(self, file_infos: List[Dict]) -> Tuple[bool, str]:
         """
-        Validate that all files can be combined
+        Validate that all files can be combined.
+
+        Only considers files with load_status in ('loaded', 'converted').
+        Failed files are reported but do not block validation unless no
+        valid files remain.
 
         Args:
-            file_infos: List of dicts with 'path', 'type', 'delimiter', 'sheet'
+            file_infos: List of file info dicts
 
         Returns:
             Tuple of (is_valid, error_message)
         """
-        if len(file_infos) < 2:
+        # Separate good files from failed ones
+        good_files = [
+            f for f in file_infos
+            if f.get('load_status') in ('loaded', 'converted')
+        ]
+        failed_files = [
+            f for f in file_infos
+            if f.get('load_status') == 'failed'
+        ]
+
+        if len(good_files) < 2:
+            if failed_files:
+                names = ', '.join(f['name'] for f in failed_files[:3])
+                extra = f" (+{len(failed_files)-3} more)" if len(failed_files) > 3 else ""
+                return False, (
+                    f"Not enough loaded files to combine.\n\n"
+                    f"Failed files: {names}{extra}\n\n"
+                    f"Please convert or retry the failed files, "
+                    f"or add more files."
+                )
             return False, "Please select at least 2 files to combine"
 
-        # Check file types are all the same
-        file_types = set(info['type'] for info in file_infos)
+        # Check file types are all the same among good files
+        file_types = set(f.get('type') for f in good_files if f.get('type'))
         if len(file_types) > 1:
-            return False, "All files must be the same type (all CSV/TXT or all Excel). Mixed file types cannot be combined."
+            return False, (
+                "Mixed file types detected among loaded files.\n\n"
+                "All files must be the same type (all CSV/TXT or all Excel).\n"
+                "Use 'Convert All to CSV' or 'Convert All to XLSX' to normalise them first."
+            )
 
         # For text files, check delimiters are the same
         if 'text' in file_types:
-            delimiters = set(info['delimiter'] for info in file_infos if info['delimiter'])
+            delimiters = set(
+                f['delimiter'] for f in good_files
+                if f.get('type') == 'text' and f.get('delimiter')
+            )
             if len(delimiters) > 1:
                 delim_names = {',': 'comma', '|': 'pipe', '\t': 'tab'}
                 delim_list = [delim_names.get(d, d) for d in delimiters]
-                return False, f"All files must use the same delimiter to combine. Found: {', '.join(delim_list)}"
+                return False, (
+                    f"All files must use the same delimiter to combine.\n"
+                    f"Found: {', '.join(delim_list)}\n\n"
+                    f"Convert files to a common format (e.g. all CSV) to resolve this."
+                )
 
         return True, ""
+
+    def get_combinable_files(self) -> List[Dict]:
+        """
+        Return only the files that are eligible to be combined
+        (status 'loaded' or 'converted' with a non-None DataFrame).
+        """
+        return [
+            f for f in self.loaded_files
+            if f.get('load_status') in ('loaded', 'converted')
+            and f.get('df') is not None
+        ]
+
+    def get_summary_extended(self) -> Dict:
+        """
+        Return a richer summary including per-status counts and format list.
+        """
+        total = len(self.loaded_files)
+        loaded = sum(1 for f in self.loaded_files if f.get('load_status') == 'loaded')
+        failed = sum(1 for f in self.loaded_files if f.get('load_status') == 'failed')
+        converted = sum(1 for f in self.loaded_files if f.get('load_status') == 'converted')
+        needs_sheet = sum(1 for f in self.loaded_files if f.get('load_status') == 'needs_sheet')
+
+        formats = sorted({
+            f.get('current_format', '') for f in self.loaded_files
+            if f.get('current_format')
+        })
+
+        total_rows = sum(
+            f.get('rows', 0) for f in self.loaded_files
+            if f.get('load_status') in ('loaded', 'converted')
+        )
+
+        return {
+            'total': total,
+            'loaded': loaded,
+            'failed': failed,
+            'converted': converted,
+            'needs_sheet': needs_sheet,
+            'formats': formats,
+            'total_rows': total_rows,
+        }
 
     def align_columns(self, dataframes: List[pd.DataFrame]) -> List[pd.DataFrame]:
         """
@@ -725,7 +800,14 @@ class CombineModeHandler:
     def add_file(self, file_path: str, delimiter: Optional[str] = None,
                  sheet_name: Optional[str] = None) -> Dict:
         """
-        Add a file to the combine queue
+        Add a file to the combine queue.
+
+        Extended schema includes status tracking fields:
+            original_path   – always the path that was originally browsed
+            original_format – format string derived from original extension
+            current_format  – format of the file currently represented by `path`
+            load_status     – 'loaded' | 'failed' | 'converted' | 'needs_sheet'
+            last_error      – error message string or None
 
         Args:
             file_path: Path to file
@@ -735,6 +817,8 @@ class CombineModeHandler:
         Returns:
             File info dictionary
         """
+        from utils.file_conversion import get_extension_format
+
         file_type = self.detect_file_type(file_path)
 
         if file_type == 'unknown':
@@ -747,6 +831,8 @@ class CombineModeHandler:
         # Load DataFrame
         df = self.load_file_to_dataframe(file_path, delimiter, sheet_name)
 
+        original_format = get_extension_format(file_path)
+
         # Create file info
         file_info = {
             'name': os.path.basename(file_path),
@@ -756,7 +842,13 @@ class CombineModeHandler:
             'delimiter': delimiter if file_type == 'text' else None,
             'sheet': sheet_name if file_type == 'excel' else None,
             'rows': len(df),
-            'columns': len(df.columns)
+            'columns': len(df.columns),
+            # Status tracking
+            'original_path': file_path,
+            'original_format': original_format,
+            'current_format': original_format,
+            'load_status': 'loaded',
+            'last_error': None,
         }
 
         self.loaded_files.append(file_info)
@@ -768,6 +860,54 @@ class CombineModeHandler:
             self.detected_delimiter = delimiter
 
         return file_info
+
+    def add_file_safe(self, file_path: str, delimiter: Optional[str] = None,
+                      sheet_name: Optional[str] = None) -> Dict:
+        """
+        Add a file to the combine queue, catching load errors gracefully.
+
+        If the file cannot be loaded the returned dict has load_status='failed'
+        and last_error set.  The file is still appended to loaded_files so it
+        remains visible in the UI and can be retried or converted.
+
+        Args:
+            file_path: Path to file
+            delimiter: Delimiter for text files
+            sheet_name: Sheet name for Excel files
+
+        Returns:
+            File info dictionary (load_status may be 'failed')
+        """
+        from utils.file_conversion import get_extension_format
+
+        original_format = get_extension_format(file_path)
+        file_type = self.detect_file_type(file_path)
+
+        try:
+            file_info = self.add_file(file_path, delimiter, sheet_name)
+            return file_info
+        except Exception as e:
+            logger.error(f"[CombineMode] Failed to load '{os.path.basename(file_path)}': {e}")
+            error_str = str(e)
+
+            file_info = {
+                'name': os.path.basename(file_path),
+                'path': file_path,
+                'df': None,
+                'type': file_type if file_type != 'unknown' else None,
+                'delimiter': None,
+                'sheet': sheet_name,
+                'rows': 0,
+                'columns': 0,
+                'original_path': file_path,
+                'original_format': original_format,
+                'current_format': original_format,
+                'load_status': 'failed',
+                'last_error': error_str,
+            }
+
+            self.loaded_files.append(file_info)
+            return file_info
 
     def remove_file(self, file_path: str):
         """Remove a file from the combine queue"""
@@ -800,13 +940,17 @@ class CombineModeHandler:
                 'delimiter': None
             }
 
-        # Count total rows
-        total_rows = sum(f['rows'] for f in self.loaded_files)
+        # Count total rows (only from successfully loaded files)
+        total_rows = sum(
+            f.get('rows', 0) for f in self.loaded_files
+            if f.get('load_status') in ('loaded', 'converted')
+        )
 
-        # Count unique columns
+        # Count unique columns (only from files with a valid DataFrame)
         all_columns = set()
         for f in self.loaded_files:
-            all_columns.update(f['df'].columns)
+            if f.get('df') is not None:
+                all_columns.update(f['df'].columns)
 
         # Get delimiter name
         delimiter_name = None
