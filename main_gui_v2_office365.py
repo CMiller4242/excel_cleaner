@@ -738,8 +738,23 @@ class CleanSheetApp:
             messagebox.showerror("Error", f"Operation {op_config['operation_id']} not found")
             return
 
-        # Get current columns from dataframe
-        columns = list(self.df.columns) if self.df is not None else []
+        # Build the effective column list at *this* position in the pipeline.
+        # Apply all operations that come before `index` so that columns created
+        # by earlier operations (e.g. 'Lead Score') are available in the dropdown.
+        if self.df is not None:
+            prior_ops = self.operation_queue[:index]
+            if prior_ops:
+                state_df = self.executor.preview_execute_queue(self.df, prior_ops)
+                columns = list(state_df.columns) if state_df is not None else list(self.df.columns)
+            else:
+                columns = list(self.df.columns)
+        else:
+            columns = []
+
+        logging.debug(
+            "[EDIT_OP] Editing op %d '%s' with effective columns=%s",
+            index, operation.metadata.name, columns
+        )
 
         # Check for special operations first
         if operation.metadata.id == 'add_column_smart':
