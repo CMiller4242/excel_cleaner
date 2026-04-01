@@ -21,6 +21,9 @@ from . import add_column_smart_ops
 # Import geographic filter operations (Lower 48, etc.)
 from . import filter_ops
 
+# Import Formstack-specific operations
+from . import formstack_ops
+
 # Import v2 advanced operations
 try:
     from .advanced import math_advanced
