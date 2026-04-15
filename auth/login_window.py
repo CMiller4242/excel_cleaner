@@ -34,7 +34,7 @@ class LoginWindow:
         # Create window
         self.root = tk.Tk()
         self.root.title(f"{__app_name__} - Login")
-        self.root.geometry("500x650")
+        self.root.geometry("500x750")
         self.root.resizable(False, False)
 
         # Center window on screen
@@ -149,6 +149,15 @@ class LoginWindow:
         )
         footer_label.pack(side=tk.BOTTOM, pady=(15, 0))
 
+    def _toggle_password(self, entry, btn):
+        """Toggle password field visibility between masked and plain text"""
+        if entry.cget('show') == '':
+            entry.config(show='●')
+            btn.config(text='Show')
+        else:
+            entry.config(show='')
+            btn.config(text='Hide')
+
     def create_login_tab(self, parent):
         """Create login form"""
 
@@ -170,8 +179,15 @@ class LoginWindow:
             font=("Segoe UI", 10, "bold")
         ).pack(anchor=tk.W, pady=(0, 5))
 
-        self.login_password = ttk.Entry(parent, width=45, show="●", font=("Segoe UI", 11))
-        self.login_password.pack(pady=(0, 15), ipady=3)
+        login_pw_frame = ttk.Frame(parent)
+        login_pw_frame.pack(fill=tk.X, pady=(0, 15))
+        self.login_password = ttk.Entry(login_pw_frame, show="●", font=("Segoe UI", 11))
+        self.login_password.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=3)
+        self._login_pw_toggle = ttk.Button(
+            login_pw_frame, text="Show", width=5,
+            command=lambda: self._toggle_password(self.login_password, self._login_pw_toggle)
+        )
+        self._login_pw_toggle.pack(side=tk.LEFT, padx=(5, 0))
 
         # Remember Me checkbox
         self.remember_var = tk.BooleanVar(value=True)
@@ -227,10 +243,10 @@ class LoginWindow:
             text="Create a new account. Password requirements:",
             font=("Segoe UI", 10, "bold")
         )
-        instructions.pack(pady=(10, 5), anchor=tk.W)
+        instructions.pack(pady=(5, 3), anchor=tk.W)
 
         requirements_frame = ttk.Frame(parent)
-        requirements_frame.pack(fill=tk.X, pady=(0, 15))
+        requirements_frame.pack(fill=tk.X, pady=(0, 10))
 
         requirements = [
             f"• At least {Config.MIN_PASSWORD_LENGTH} characters",
@@ -252,10 +268,10 @@ class LoginWindow:
             parent,
             text="Email Address:",
             font=("Segoe UI", 10, "bold")
-        ).pack(anchor=tk.W, pady=(10, 5))
+        ).pack(anchor=tk.W, pady=(5, 3))
 
         self.register_email = ttk.Entry(parent, width=45, font=("Segoe UI", 11))
-        self.register_email.pack(pady=(0, 15), ipady=3)
+        self.register_email.pack(pady=(0, 10), ipady=3)
 
         # Password
         ttk.Label(
@@ -264,8 +280,15 @@ class LoginWindow:
             font=("Segoe UI", 10, "bold")
         ).pack(anchor=tk.W, pady=(0, 5))
 
-        self.register_password = ttk.Entry(parent, width=45, show="●", font=("Segoe UI", 11))
-        self.register_password.pack(pady=(0, 15), ipady=3)
+        reg_pw_frame = ttk.Frame(parent)
+        reg_pw_frame.pack(fill=tk.X, pady=(0, 10))
+        self.register_password = ttk.Entry(reg_pw_frame, show="●", font=("Segoe UI", 11))
+        self.register_password.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=3)
+        self._reg_pw_toggle = ttk.Button(
+            reg_pw_frame, text="Show", width=5,
+            command=lambda: self._toggle_password(self.register_password, self._reg_pw_toggle)
+        )
+        self._reg_pw_toggle.pack(side=tk.LEFT, padx=(5, 0))
 
         # Confirm Password
         ttk.Label(
@@ -274,8 +297,15 @@ class LoginWindow:
             font=("Segoe UI", 10, "bold")
         ).pack(anchor=tk.W, pady=(0, 5))
 
-        self.register_confirm = ttk.Entry(parent, width=45, show="●", font=("Segoe UI", 11))
-        self.register_confirm.pack(pady=(0, 20), ipady=3)
+        reg_confirm_frame = ttk.Frame(parent)
+        reg_confirm_frame.pack(fill=tk.X, pady=(0, 15))
+        self.register_confirm = ttk.Entry(reg_confirm_frame, show="●", font=("Segoe UI", 11))
+        self.register_confirm.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=3)
+        self._reg_confirm_toggle = ttk.Button(
+            reg_confirm_frame, text="Show", width=5,
+            command=lambda: self._toggle_password(self.register_confirm, self._reg_confirm_toggle)
+        )
+        self._reg_confirm_toggle.pack(side=tk.LEFT, padx=(5, 0))
 
         # Register button
         register_btn = ttk.Button(
