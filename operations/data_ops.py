@@ -4,8 +4,6 @@ VLOOKUP, merge, join, sort, filter, deduplicate
 """
 import pandas as pd
 import numpy as np
-import tkinter as tk
-from tkinter import ttk, messagebox
 from typing import Dict
 from .base import BaseOperation, OperationMetadata, Parameter
 from .registry import registry
@@ -1199,6 +1197,8 @@ class FilterByValueOperation(BaseOperation):
 
     def show_dialog(self, parent=None, initial_params=None):
         """Show configuration dialog with custom UI"""
+        import tkinter as tk
+        from tkinter import ttk, messagebox
 
         # Get DataFrame
         if hasattr(parent, 'df'):
@@ -1538,6 +1538,8 @@ class KeepBestByValueOperation(BaseOperation):
 
     def show_dialog(self, parent=None, initial_params=None):
         """Show configuration dialog with custom UI"""
+        import tkinter as tk
+        from tkinter import ttk, messagebox
 
         # Get DataFrame
         if hasattr(parent, 'df'):
