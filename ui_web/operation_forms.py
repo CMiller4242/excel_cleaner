@@ -1,121 +1,100 @@
 """
 ui_web/operation_forms.py
 ==========================
-Generic parameter form renderer and effective-schema helper for the
-CleanSheet Streamlit web edition.
+Generic parameter-form renderer for the CleanSheet Streamlit web edition.
+Tkinter-free.  Reads BaseOperation metadata and renders Streamlit widgets.
 
-Everything here is Tkinter-free.  It reads operation metadata from the
-existing registry and renders the appropriate Streamlit widget for each
-parameter type.
+Public API
+----------
+param_widget_key(uid, param_name)       → stable, unique widget key
+render_param_form(op, cols, params, uid)→ renders all widgets; returns raw dict
+normalize_params(op, raw_params)        → convert raw widget values → executor format
 
-Supported parameter types (from operations/base.py + actual usage scan):
-  column            → st.selectbox (effective columns)
-  column_list       → st.multiselect (effective columns)
-  text              → st.text_input
-  number            → st.number_input (int or float depending on default)
-  boolean           → st.checkbox
-  choice            → st.selectbox (param.choices)
-  list              → st.text_input (comma-separated, operations accept str)
-  file              → st.file_uploader + temp-file write
-  column_rename_list → st.text_area ("OldName=NewName" per line)
-  add_columns_list  → st.text_area ("ColName" or "ColName=Default" per line)
-  <unknown>         → st.text_input fallback
+Supported parameter types
+--------------------------
+column            → st.selectbox  (from available_columns)
+column_list       → st.multiselect (from available_columns)
+text              → st.text_input
+number            → st.number_input (int step=1 when default is int, else float)
+boolean           → st.checkbox
+choice            → st.selectbox  (from param.choices)
+list              → st.text_input  (comma-separated; operations accept str OR list)
+file              → st.file_uploader + session-state byte cache
+column_rename_list→ st.text_area  (OldName=NewName per line)
+add_columns_list  → st.text_area  (ColName or ColName=DefaultValue per line)
+<unknown>         → st.text_input  (fallback)
 """
 
 import logging
 import tempfile
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Effective schema
-# ---------------------------------------------------------------------------
+# ── key helper ────────────────────────────────────────────────────────────────
 
-def get_effective_columns(df: pd.DataFrame, queue: list, up_to_index: int) -> list:
+def param_widget_key(uid: str, param_name: str) -> str:
     """
-    Return the list of column names that would exist in the DataFrame
-    after running the first `up_to_index` operations in `queue`.
+    Build a unique, stable Streamlit widget key for one parameter on one
+    queue item.
 
-    Uses preview_execute_queue on a 5-row sample so it is fast and
-    silently skips any operation with invalid / incomplete parameters.
+    uid        — the queue item's immutable _uid string
+    param_name — operation parameter name (e.g. 'columns', 'fill_value')
 
-    Falls back to the original DataFrame columns on any error.
+    The key format is:  qparam_<uid>__<safe_param_name>
+    Both `render_param_form` and the sync loop in streamlit_app.py must use
+    this function so the keys always match.
     """
-    if df is None or df.empty:
-        return []
-    if up_to_index <= 0 or not queue:
-        return list(df.columns)
-
-    # Import here to avoid circular paths at module load time
-    from engine.executor import OperationExecutor
-
-    sample = df.head(5).copy()
-    ops_to_run = queue[:up_to_index]
-    try:
-        executor = OperationExecutor()
-        result = executor.preview_execute_queue(sample, ops_to_run)
-        if result is not None and not result.empty:
-            return list(result.columns)
-        if result is not None:
-            return list(result.columns)  # may have 0 rows but still columns
-    except Exception as exc:
-        logger.debug("Effective schema compute failed at index %d: %s", up_to_index, exc)
-
-    return list(df.columns)
+    safe_uid   = uid.replace(" ", "_").replace("/", "_")
+    safe_param = param_name.replace(" ", "_").replace("/", "_")
+    return f"qparam_{safe_uid}__{safe_param}"
 
 
-# ---------------------------------------------------------------------------
-# Form renderer
-# ---------------------------------------------------------------------------
+# ── form renderer ─────────────────────────────────────────────────────────────
 
 def render_param_form(
     operation,
     available_columns: list,
     existing_params: dict = None,
-    key_prefix: str = "",
+    uid: str = "",
 ) -> dict:
     """
-    Render Streamlit widgets for every parameter of `operation`.
+    Render Streamlit widgets for every parameter of *operation*.
 
     Args:
-        operation:         A BaseOperation instance from the registry.
-        available_columns: Column names visible at this point in the queue.
-        existing_params:   Current saved parameter values (for editing).
-        key_prefix:        Unique string prepended to every widget key.
+        operation:         BaseOperation instance from the registry.
+        available_columns: Column names currently visible in the DataFrame.
+        existing_params:   Saved parameter values to pre-fill the form with.
+        uid:               The queue item's stable _uid (used for widget keys).
 
     Returns:
-        dict mapping param_name → raw widget value.
-        Call normalize_params() before passing to executor.
+        dict {param_name: raw_widget_value}.
+        Pass through normalize_params() before handing to the executor.
+
+    Widget keys are built with param_widget_key(uid, param_name) so they
+    match the sync loop in streamlit_app.py exactly.
     """
-    saved = existing_params.copy() if existing_params else {}
+    saved  = existing_params.copy() if existing_params else {}
     result = {}
 
     if not operation.metadata.parameters:
-        st.caption("_This operation has no configurable parameters._")
+        st.caption("_No configurable parameters — this operation runs as-is._")
         return result
 
     for param in operation.metadata.parameters:
         current_val = saved.get(param.name, param.default)
-        # Build a unique, stable key for this widget
-        safe_prefix = key_prefix.replace(" ", "_").replace("/", "_")
-        safe_param = param.name.replace(" ", "_")
-        key = f"{safe_prefix}__{safe_param}"
-
-        label = param.description
-        if param.required:
-            label = f"**{label}** _(required)_"
-        else:
-            label = f"{label} _(optional)_"
+        key         = param_widget_key(uid, param.name)
+        label       = param.description
+        req_marker  = " \\*" if param.required else ""
 
         try:
-            val = _render_single_param(param, current_val, available_columns, key, label)
+            val = _render_single(param, current_val, available_columns, key,
+                                 label + req_marker)
         except Exception as exc:
-            st.warning(f"Could not render '{param.name}': {exc}")
+            st.warning(f"Cannot render '{param.name}': {exc}")
             val = current_val
 
         result[param.name] = val
@@ -123,73 +102,80 @@ def render_param_form(
     return result
 
 
-def _render_single_param(param, current_val, available_columns, key, label):
-    """Dispatch to the right widget for a single parameter."""
+def _render_single(param, current_val, available_columns, key, label):
+    """Dispatch a single parameter to the right widget type."""
     ptype = param.type
 
-    # ---- column ----
+    # ── column ──────────────────────────────────────────────────────────────
     if ptype == "column":
-        opts = available_columns if available_columns else ["(no columns available)"]
-        idx = 0
-        if current_val and current_val in opts:
-            idx = opts.index(current_val)
+        opts = list(available_columns) if available_columns else []
+        if not opts:
+            return st.text_input(label + " (no columns — upload a file first)",
+                                 value=str(current_val or ""), key=key)
+        idx = opts.index(current_val) if (current_val and current_val in opts) else 0
         return st.selectbox(label, options=opts, index=idx, key=key)
 
-    # ---- column_list ----
+    # ── column_list ──────────────────────────────────────────────────────────
     if ptype == "column_list":
-        opts = available_columns if available_columns else []
+        opts = list(available_columns) if available_columns else []
         if isinstance(current_val, list):
             default = [c for c in current_val if c in opts]
         else:
             default = []
         return st.multiselect(label, options=opts, default=default, key=key)
 
-    # ---- boolean ----
+    # ── boolean ──────────────────────────────────────────────────────────────
     if ptype == "boolean":
-        default_bool = bool(current_val) if current_val is not None else False
-        return st.checkbox(label, value=default_bool, key=key)
+        val_bool = bool(current_val) if current_val is not None else False
+        return st.checkbox(label, value=val_bool, key=key)
 
-    # ---- choice ----
+    # ── choice ───────────────────────────────────────────────────────────────
     if ptype == "choice":
         choices = param.choices or []
         if not choices:
-            return st.text_input(label + " (no choices defined)", value=str(current_val or ""), key=key)
-        idx = 0
-        if current_val and current_val in choices:
-            idx = choices.index(current_val)
+            return st.text_input(label + " (no choices defined)",
+                                 value=str(current_val or ""), key=key)
+        idx = choices.index(current_val) if (current_val and current_val in choices) else 0
         return st.selectbox(label, options=choices, index=idx, key=key)
 
-    # ---- number ----
+    # ── number ───────────────────────────────────────────────────────────────
     if ptype == "number":
-        # Infer int vs float from default; fall back to float
-        if isinstance(param.default, int) or (
-            isinstance(param.default, float) and param.default == int(param.default)
-        ):
-            raw = int(current_val) if current_val is not None else int(param.default or 0)
+        # Use integer step when the metadata default is an int (or whole float)
+        use_int = isinstance(param.default, int) or (
+            isinstance(param.default, float) and param.default == int(param.default or 0)
+        )
+        if use_int:
+            try:
+                raw = int(float(current_val)) if current_val is not None else int(param.default or 0)
+            except (TypeError, ValueError):
+                raw = int(param.default or 0)
             return st.number_input(label, value=raw, step=1, key=key)
         else:
-            raw = float(current_val) if current_val is not None else float(param.default or 0.0)
+            try:
+                raw = float(current_val) if current_val is not None else float(param.default or 0.0)
+            except (TypeError, ValueError):
+                raw = float(param.default or 0.0)
             return st.number_input(label, value=raw, step=0.1, key=key)
 
-    # ---- file ----
+    # ── file ─────────────────────────────────────────────────────────────────
     if ptype == "file":
-        st.caption(label)
+        st.caption(f"**{label}**")
         uploaded = st.file_uploader(
-            "Upload lookup file (CSV / XLSX / XLS)",
+            "Upload lookup file",
             type=["csv", "xlsx", "xls"],
             key=key,
         )
         if uploaded is not None:
             st.session_state[f"_fbytes_{key}"] = uploaded.getvalue()
-            st.session_state[f"_fname_{key}"] = uploaded.name
-            st.success(f"Ready: {uploaded.name}")
+            st.session_state[f"_fname_{key}"]  = uploaded.name
+            st.success(f"File ready: {uploaded.name}")
             return f"__FUPLOAD__{key}"
-        existing = current_val or ""
-        if existing and not str(existing).startswith("__FUPLOAD__"):
-            st.caption(f"Current file: {existing}")
+        existing = str(current_val or "")
+        if existing and not existing.startswith("__FUPLOAD__"):
+            st.caption(f"Current: {existing}")
         return existing
 
-    # ---- list (comma-separated; operations accept str or list) ----
+    # ── list (comma-separated; operations accept str OR list) ────────────────
     if ptype == "list":
         if isinstance(current_val, list):
             default_str = ",".join(str(v) for v in current_val)
@@ -199,138 +185,86 @@ def _render_single_param(param, current_val, available_columns, key, label):
             default_str = str(param.default or "")
         return st.text_input(label + " (comma-separated)", value=default_str, key=key)
 
-    # ---- column_rename_list (text_rename_batch) ----
+    # ── column_rename_list — "OldName=NewName" per line ──────────────────────
     if ptype == "column_rename_list":
-        if isinstance(current_val, list):
-            lines = []
-            for m in current_val:
-                if isinstance(m, dict):
-                    lines.append(f"{m.get('old', '')}={m.get('new', '')}")
-                else:
-                    lines.append(str(m))
-            default_str = "\n".join(lines)
-        elif current_val is not None:
-            default_str = str(current_val)
-        else:
-            default_str = ""
+        default_str = _column_rename_list_to_str(current_val)
         return st.text_area(
-            label + " — one mapping per line: OldName=NewName",
+            label + "  (OldName=NewName, one mapping per line)",
             value=default_str,
             height=120,
             key=key,
             help="Example:\nFirst Name=FirstName\nLast Name=LastName",
         )
 
-    # ---- add_columns_list (data_add_multiple_columns) ----
+    # ── add_columns_list — "ColName" or "ColName=Default" per line ───────────
     if ptype == "add_columns_list":
-        if isinstance(current_val, list):
-            lines = []
-            for c in current_val:
-                if isinstance(c, dict):
-                    name = c.get("name", "")
-                    dv = c.get("default_value", "")
-                    lines.append(f"{name}={dv}" if dv else name)
-                else:
-                    lines.append(str(c))
-            default_str = "\n".join(lines)
-        elif current_val is not None:
-            default_str = str(current_val)
-        else:
-            default_str = ""
+        default_str = _add_columns_list_to_str(current_val)
         return st.text_area(
-            label + " — one column per line: ColumnName or ColumnName=DefaultValue",
+            label + "  (ColumnName or ColumnName=DefaultValue, one per line)",
             value=default_str,
             height=120,
             key=key,
             help="Example:\nStatus\nCountry=USA\nNotes",
         )
 
-    # ---- text (and unknown types) ----
+    # ── text / fallback ──────────────────────────────────────────────────────
     default_str = str(current_val) if current_val is not None else str(param.default or "")
     return st.text_input(label, value=default_str, key=key)
 
 
-# ---------------------------------------------------------------------------
-# Param normalizer
-# ---------------------------------------------------------------------------
+# ── display-form converters ───────────────────────────────────────────────────
+
+def _column_rename_list_to_str(val) -> str:
+    """Convert stored column_rename_list value → text-area string."""
+    if isinstance(val, list):
+        lines = []
+        for m in val:
+            if isinstance(m, dict):
+                lines.append(f"{m.get('old', '')}={m.get('new', '')}")
+            else:
+                lines.append(str(m))
+        return "\n".join(lines)
+    return str(val) if val is not None else ""
+
+
+def _add_columns_list_to_str(val) -> str:
+    """Convert stored add_columns_list value → text-area string."""
+    if isinstance(val, list):
+        lines = []
+        for c in val:
+            if isinstance(c, dict):
+                name = c.get("name", "")
+                dv   = c.get("default_value", "")
+                lines.append(f"{name}={dv}" if dv else name)
+            else:
+                lines.append(str(c))
+        return "\n".join(lines)
+    return str(val) if val is not None else ""
+
+
+# ── normalizer (raw widget values → executor-ready params) ───────────────────
 
 def normalize_params(operation, raw_params: dict) -> dict:
     """
-    Convert raw Streamlit widget values to the types that operation.execute()
-    expects.  Handles:
-      - column_rename_list: text-area string  →  list[{"old":…,"new":…}]
-      - add_columns_list:   text-area string  →  list[{"name":…, …}]
-      - file:               sentinel string   →  temp file path
-      - number:             float from widget →  int when appropriate
-    All other types are passed through unchanged.
+    Convert raw Streamlit widget values to the types operation.execute() expects.
+
+    Most types pass through unchanged.  Special conversions:
+      column_rename_list  text-area string  →  list[{"old":…, "new":…}]
+      add_columns_list    text-area string  →  list[{"name":…, …}]
+      file                sentinel string   →  temp file path on disk
     """
     out = {}
     for param in operation.metadata.parameters:
         val = raw_params.get(param.name)
-
         try:
             if param.type == "column_rename_list":
-                if isinstance(val, str):
-                    mappings = []
-                    for line in val.strip().splitlines():
-                        line = line.strip()
-                        if "=" in line:
-                            old, new = line.split("=", 1)
-                            if old.strip():
-                                mappings.append({"old": old.strip(), "new": new.strip()})
-                    out[param.name] = mappings
-                else:
-                    out[param.name] = val or []
+                out[param.name] = _parse_column_rename_list(val)
 
             elif param.type == "add_columns_list":
-                if isinstance(val, str):
-                    specs = []
-                    for line in val.strip().splitlines():
-                        line = line.strip()
-                        if not line:
-                            continue
-                        if "=" in line:
-                            name, dv = line.split("=", 1)
-                            specs.append({
-                                "name": name.strip(),
-                                "default_type": "value",
-                                "default_value": dv.strip(),
-                                "on_exists": "skip",
-                            })
-                        else:
-                            specs.append({
-                                "name": line,
-                                "default_type": "blank",
-                                "default_value": "",
-                                "on_exists": "skip",
-                            })
-                    out[param.name] = specs
-                else:
-                    out[param.name] = val or []
+                out[param.name] = _parse_add_columns_list(val)
 
             elif param.type == "file":
-                sentinel = str(val or "")
-                if sentinel.startswith("__FUPLOAD__"):
-                    fkey = sentinel[len("__FUPLOAD__"):]
-                    b_key = f"_fbytes_{fkey}"
-                    n_key = f"_fname_{fkey}"
-                    if b_key in st.session_state:
-                        file_bytes = st.session_state[b_key]
-                        file_name = st.session_state.get(n_key, "lookup.xlsx")
-                        suffix = Path(file_name).suffix or ".xlsx"
-                        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-                        tmp.write(file_bytes)
-                        tmp.flush()
-                        out[param.name] = tmp.name
-                    else:
-                        out[param.name] = ""
-                else:
-                    out[param.name] = sentinel
-
-            elif param.type == "number":
-                # st.number_input returns int when step=1, float otherwise
-                # Operations using row-index math need int; pass through as-is
-                out[param.name] = val
+                out[param.name] = _resolve_file_param(val)
 
             else:
                 out[param.name] = val
@@ -340,3 +274,64 @@ def normalize_params(operation, raw_params: dict) -> dict:
             out[param.name] = val
 
     return out
+
+
+def _parse_column_rename_list(val) -> list:
+    if isinstance(val, list):
+        return val   # already normalized (e.g. loaded from preset JSON)
+    if not isinstance(val, str) or not val.strip():
+        return []
+    mappings = []
+    for line in val.strip().splitlines():
+        line = line.strip()
+        if "=" in line:
+            old, new = line.split("=", 1)
+            if old.strip():
+                mappings.append({"old": old.strip(), "new": new.strip()})
+    return mappings
+
+
+def _parse_add_columns_list(val) -> list:
+    if isinstance(val, list):
+        return val   # already normalized
+    if not isinstance(val, str) or not val.strip():
+        return []
+    specs = []
+    for line in val.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "=" in line:
+            name, dv = line.split("=", 1)
+            specs.append({
+                "name": name.strip(),
+                "default_type": "value",
+                "default_value": dv.strip(),
+                "on_exists": "skip",
+            })
+        else:
+            specs.append({
+                "name": line,
+                "default_type": "blank",
+                "default_value": "",
+                "on_exists": "skip",
+            })
+    return specs
+
+
+def _resolve_file_param(val) -> str:
+    sentinel = str(val or "")
+    if not sentinel.startswith("__FUPLOAD__"):
+        return sentinel
+    fkey  = sentinel[len("__FUPLOAD__"):]
+    b_key = f"_fbytes_{fkey}"
+    n_key = f"_fname_{fkey}"
+    if b_key not in st.session_state:
+        return ""
+    file_bytes = st.session_state[b_key]
+    file_name  = st.session_state.get(n_key, "lookup.xlsx")
+    suffix     = Path(file_name).suffix or ".xlsx"
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    tmp.write(file_bytes)
+    tmp.flush()
+    return tmp.name

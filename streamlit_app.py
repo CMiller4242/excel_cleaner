@@ -14,6 +14,7 @@ Run web:     streamlit run streamlit_app.py
 """
 
 import sys
+import uuid
 import logging
 from io import BytesIO
 from pathlib import Path
@@ -30,6 +31,7 @@ if str(_ROOT) not in sys.path:
 from operations import registry          # triggers all operation registrations
 from engine.executor import OperationExecutor
 from presets.preset_manager import PresetManager
+from ui_web.operation_forms import render_param_form, normalize_params, param_widget_key
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -130,6 +132,7 @@ def _preset_to_queue(preset) -> list:
             "enabled":      enabled,
             "_label":       label,
             "_category":    cat,
+            "_uid":         str(uuid.uuid4()),
         })
     return items
 
@@ -160,14 +163,38 @@ def _queue_item_from_registry(op_id: str) -> dict:
     op = registry.get_by_id(op_id)
     if op is None:
         return {"operation_id": op_id, "parameters": {}, "enabled": True,
-                "_label": op_id, "_category": ""}
+                "_label": op_id, "_category": "", "_uid": str(uuid.uuid4())}
     return {
         "operation_id": op_id,
         "parameters":   _op_default_params(op),
         "enabled":      True,
         "_label":       op.metadata.name,
         "_category":    op.metadata.category,
+        "_uid":         str(uuid.uuid4()),
     }
+
+
+def _ensure_uids(queue: list) -> None:
+    """Back-fill _uid on any queue items missing one (e.g. loaded from older sessions)."""
+    for item in queue:
+        if "_uid" not in item:
+            item["_uid"] = str(uuid.uuid4())
+
+
+def _normalize_queue_for_execution(queue: list) -> list:
+    """Build an executor-ready copy of the queue with normalized parameters."""
+    result = []
+    for item in queue:
+        op_id      = item.get("operation_id", "")
+        op         = registry.get_by_id(op_id)
+        raw_params = item.get("parameters", {})
+        norm_params = normalize_params(op, raw_params) if op is not None else raw_params
+        result.append({
+            "operation_id": op_id,
+            "parameters":   norm_params,
+            "enabled":      item.get("enabled", True),
+        })
+    return result
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -342,7 +369,7 @@ def _section_data_info(df: pd.DataFrame) -> None:
 
 
 def _section_queue() -> None:
-    """Show the current workflow queue with remove / enable controls."""
+    """Show the current workflow queue with parameter forms and reorder controls."""
     queue = st.session_state.queue
     st.subheader(f"Workflow Queue  ({len(queue)} step{'s' if len(queue) != 1 else ''})")
 
@@ -354,6 +381,32 @@ def _section_queue() -> None:
         )
         return
 
+    # Ensure every item has a stable _uid (needed for widget-key stability)
+    _ensure_uids(queue)
+
+    # Available columns for column/column_list widgets
+    df_cols = (
+        list(st.session_state.df_original.columns)
+        if st.session_state.df_original is not None
+        else []
+    )
+
+    # ── Pre-render sync ───────────────────────────────────────────────────────
+    # Streamlit auto-stores widget values in session_state by key.
+    # Mirror those back into queue[i]["parameters"] BEFORE rendering so that:
+    #   • the param-summary reflects current user edits
+    #   • the executor sees current values even before an explicit Save
+    for item in queue:
+        uid   = item["_uid"]
+        op_id = item.get("operation_id", "")
+        op    = registry.get_by_id(op_id)
+        if op is None or not op.metadata.parameters:
+            continue
+        for param in op.metadata.parameters:
+            key = param_widget_key(uid, param.name)
+            if key in st.session_state:
+                item["parameters"][param.name] = st.session_state[key]
+
     # Controls: clear all
     if st.button("🗑 Clear Queue", help="Remove all operations from the queue"):
         st.session_state.queue = []
@@ -362,16 +415,20 @@ def _section_queue() -> None:
 
     st.divider()
 
-    to_remove = None   # index to remove (deferred to avoid mutation mid-loop)
+    to_remove    = None   # deferred mutations — avoids modifying list mid-loop
+    to_move_up   = None
+    to_move_down = None
 
     for i, item in enumerate(queue):
+        uid      = item["_uid"]
         op_id    = item.get("operation_id", "?")
         label    = item.get("_label", op_id)
         category = item.get("_category", "")
         enabled  = item.get("enabled", True)
         params   = item.get("parameters", {})
+        op       = registry.get_by_id(op_id)
 
-        # Build a one-line parameter summary for quick inspection
+        # Build a one-line parameter summary for the expander header
         param_parts = []
         for k, v in params.items():
             if v is None or v == "" or v == [] or v == {}:
@@ -383,40 +440,69 @@ def _section_queue() -> None:
             else:
                 disp = str(v)[:40]
             param_parts.append(f"{k}: {disp}")
-        param_summary = " | ".join(param_parts) if param_parts else "_defaults_"
+        param_summary = " | ".join(param_parts) if param_parts else "defaults"
 
-        # Row layout: number · name · enable · remove
-        c_num, c_body, c_toggle, c_del = st.columns([0.5, 6, 1.2, 1])
+        # ── Row: step# · name+category · enable · ▲ · ▼ · ✕ ─────────────────
+        c_num, c_body, c_toggle, c_up, c_dn, c_del = st.columns([0.5, 5, 1, 0.7, 0.7, 0.7])
         with c_num:
             st.markdown(f"**{i+1}**")
         with c_body:
-            status = "" if enabled else "~~"
-            end    = "" if enabled else "~~"
+            strike = "~~" if not enabled else ""
             st.markdown(
-                f"{status}**{label}**{end}  "
-                f"<span style='color:#888;font-size:0.82em'>{category}</span>  \n"
-                f"<span style='color:#555;font-size:0.78em'>{param_summary}</span>",
+                f"{strike}**{label}**{strike}  "
+                f"<span style='color:#888;font-size:0.82em'>{category}</span>",
                 unsafe_allow_html=True,
             )
         with c_toggle:
             new_enabled = st.checkbox(
                 "On",
                 value=enabled,
-                key=f"q_enabled_{i}",
+                key=f"q_enabled_{uid}",
                 label_visibility="collapsed",
                 help="Enable / disable this step",
             )
             if new_enabled != enabled:
                 st.session_state.queue[i]["enabled"] = new_enabled
                 _reset_results()
+        with c_up:
+            if st.button("▲", key=f"q_up_{uid}", disabled=(i == 0),
+                         help="Move up"):
+                to_move_up = i
+        with c_dn:
+            if st.button("▼", key=f"q_dn_{uid}", disabled=(i == len(queue) - 1),
+                         help="Move down"):
+                to_move_down = i
         with c_del:
-            if st.button("✕", key=f"q_del_{i}", help="Remove this step"):
+            if st.button("✕", key=f"q_del_{uid}", help="Remove this step"):
                 to_remove = i
+
+        # ── Parameter form (collapsible expander) ─────────────────────────────
+        if op is not None and op.metadata.parameters:
+            with st.expander(f"Parameters  ·  {param_summary}", expanded=False):
+                render_param_form(
+                    operation=op,
+                    available_columns=df_cols,
+                    existing_params=params,
+                    uid=uid,
+                )
+        else:
+            st.caption(f"_No parameters · {param_summary}_")
 
         st.divider()
 
+    # ── Deferred mutations (only one can fire per rerun) ─────────────────────
     if to_remove is not None:
         st.session_state.queue.pop(to_remove)
+        _reset_results()
+        st.rerun()
+    elif to_move_up is not None:
+        q = st.session_state.queue
+        q[to_move_up - 1], q[to_move_up] = q[to_move_up], q[to_move_up - 1]
+        _reset_results()
+        st.rerun()
+    elif to_move_down is not None:
+        q = st.session_state.queue
+        q[to_move_down], q[to_move_down + 1] = q[to_move_down + 1], q[to_move_down]
         _reset_results()
         st.rerun()
 
@@ -431,12 +517,13 @@ def _section_run() -> None:
         return
 
     if st.button("▶  Run Workflow", type="primary"):
-        df_in    = st.session_state.df_original.copy()
-        executor = OperationExecutor()
+        df_in      = st.session_state.df_original.copy()
+        executor   = OperationExecutor()
+        norm_queue = _normalize_queue_for_execution(st.session_state.queue)
         with st.spinner(f"Running {len(queue)} operation(s)…"):
             try:
                 result_df, removed_df = executor.execute_queue_with_tracking(
-                    df_in, st.session_state.queue   # passes all items; executor skips disabled
+                    df_in, norm_queue
                 )
                 st.session_state.df_result    = result_df
                 st.session_state.df_removed   = removed_df
