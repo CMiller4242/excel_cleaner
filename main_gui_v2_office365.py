@@ -440,6 +440,29 @@ class CleanSheetApp:
                   style='RibbonButton.TButton',
                   width=16).pack(side='left', padx=2)
 
+        # History controls — disabled until a file is loaded / undo is available
+        ttk.Frame(queue_actions, width=8).pack(side='left')  # visual spacer
+        self.undo_btn = ttk.Button(queue_actions, text="↩ Undo",
+                                   command=self.perform_undo,
+                                   style='RibbonButton.TButton',
+                                   width=8, state='disabled')
+        self.undo_btn.pack(side='left', padx=2)
+        self.redo_btn = ttk.Button(queue_actions, text="↪ Redo",
+                                   command=self.perform_redo,
+                                   style='RibbonButton.TButton',
+                                   width=8, state='disabled')
+        self.redo_btn.pack(side='left', padx=2)
+        self.reset_btn = ttk.Button(queue_actions, text="⟲ Reset",
+                                    command=self.perform_reset,
+                                    style='RibbonButton.TButton',
+                                    width=8, state='disabled')
+        self.reset_btn.pack(side='left', padx=2)
+
+        # Keyboard shortcuts for undo/redo
+        self.root.bind('<Control-z>', lambda e: self.perform_undo())
+        self.root.bind('<Control-y>', lambda e: self.perform_redo())
+        self.root.bind('<Control-Z>', lambda e: self.perform_redo())
+
         # Smart Format recommendations panel (hidden until Smart Format is applied)
         self.smart_format_panel = tk.Frame(queue_frame, bg='#FFF4CE', relief='flat')
         self._build_smart_format_panel()
@@ -673,7 +696,10 @@ class CleanSheetApp:
         check_var = tk.BooleanVar(value=enabled)
 
         def toggle_enabled():
+            self._push_undo_snapshot()
             self.operation_queue[index]['enabled'] = check_var.get()
+            self._save_current_workflow()
+            self._update_history_buttons()
 
         cb = ttk.Checkbutton(check_frame, variable=check_var, command=toggle_enabled, style='TCheckbutton')
         cb.pack(side='left')
@@ -779,20 +805,24 @@ class CleanSheetApp:
 
     def remove_operation_by_index(self, index):
         """Remove operation at specific index"""
+        self._push_undo_snapshot()
         del self.operation_queue[index]
         self.refresh_queue_display()
         # Save workflow changes to active sheet
         self._save_current_workflow()
+        self._update_history_buttons()
 
     def move_operation(self, index, direction):
         """Move operation up (-1) or down (+1)"""
         new_index = index + direction
         if 0 <= new_index < len(self.operation_queue):
+            self._push_undo_snapshot()
             self.operation_queue[index], self.operation_queue[new_index] = \
                 self.operation_queue[new_index], self.operation_queue[index]
             self.refresh_queue_display()
             # Save workflow changes to active sheet
             self._save_current_workflow()
+            self._update_history_buttons()
 
     # ==================== EXISTING METHODS FROM ORIGINAL FILE ====================
     # NOTE: All other methods from the original main_gui_v2.py should be copied here
@@ -3764,6 +3794,7 @@ class CleanSheetApp:
                         return
 
             # All validation passed - add to queue
+            self._push_undo_snapshot()
             if edit_mode:
                 # Update existing operation in queue
                 self.operation_queue[edit_index] = {
@@ -3786,6 +3817,7 @@ class CleanSheetApp:
             self.refresh_queue_display()
             # Save workflow changes to active sheet
             self._save_current_workflow()
+            self._update_history_buttons()
             dialog.destroy()
 
         # Buttons (fixed at bottom)
@@ -3916,6 +3948,7 @@ class CleanSheetApp:
                                 value = 0
                         params[param.name] = value
 
+            self._push_undo_snapshot()
             if edit_mode:
                 # Update existing operation in queue
                 self.operation_queue[edit_index] = {
@@ -3938,6 +3971,7 @@ class CleanSheetApp:
             self.refresh_queue_display()
             # Save workflow changes to active sheet
             self._save_current_workflow()
+            self._update_history_buttons()
             dialog.destroy()
 
         # Fixed button frame at the bottom (NOT in scrollable area)
@@ -4068,6 +4102,7 @@ class CleanSheetApp:
                                 value = 0
                         params[param.name] = value
 
+            self._push_undo_snapshot()
             if edit_mode:
                 # Update existing operation in queue
                 self.operation_queue[edit_index] = {
@@ -4090,6 +4125,7 @@ class CleanSheetApp:
             self.refresh_queue_display()
             # Save workflow changes to active sheet
             self._save_current_workflow()
+            self._update_history_buttons()
             dialog.destroy()
 
         # Buttons (fixed at bottom, not in scrollable area)
@@ -4272,6 +4308,7 @@ class CleanSheetApp:
                                 value = 0
                         params[param.name] = value
 
+            self._push_undo_snapshot()
             if edit_mode:
                 # Update existing operation in queue
                 self.operation_queue[edit_index] = {
@@ -4294,6 +4331,7 @@ class CleanSheetApp:
             self.refresh_queue_display()
             # Save workflow changes to active sheet
             self._save_current_workflow()
+            self._update_history_buttons()
             dialog.destroy()
 
         # Fixed button frame at the bottom (NOT in scrollable area)
@@ -4443,6 +4481,7 @@ class CleanSheetApp:
                 'include_dc': include_dc_var.get(),
             }
 
+            self._push_undo_snapshot()
             if edit_mode:
                 self.operation_queue[edit_index] = {
                     'operation_id': operation.metadata.id,
@@ -4462,6 +4501,7 @@ class CleanSheetApp:
 
             self.refresh_queue_display()
             self._save_current_workflow()
+            self._update_history_buttons()
             dialog.destroy()
 
         btn_frame = ttk.Frame(dialog)
@@ -4715,11 +4755,90 @@ class CleanSheetApp:
     def clear_queue(self):
         """Clear all operations"""
         if messagebox.askyesno("Confirm", "Clear all operations from queue?"):
+            self._push_undo_snapshot()
             self.operation_queue = []
             self.refresh_queue_display()
 
             # Save cleared queue to active sheet
             self._save_current_workflow()
+            self._update_history_buttons()
+
+    # ==================== UNDO / REDO / RESET ====================
+
+    def _push_undo_snapshot(self):
+        """Snapshot the current queue state onto the active sheet's undo stack before a mutation."""
+        if not self.workbook_session:
+            return
+        active = self.workbook_session.get_active_sheet()
+        if active:
+            # Sync GUI queue → sheet state so the snapshot is accurate
+            active.operations = copy.deepcopy(self.operation_queue)
+            active.push_undo()
+
+    def _update_history_buttons(self):
+        """Enable or disable the Undo/Redo/Reset toolbar buttons to reflect current state."""
+        if not hasattr(self, 'undo_btn') or self.undo_btn is None:
+            return
+        has_undo = False
+        has_redo = False
+        if self.workbook_session:
+            active = self.workbook_session.get_active_sheet()
+            if active:
+                has_undo = bool(active.undo_stack)
+                has_redo = bool(active.redo_stack)
+        self.undo_btn.config(state='normal' if has_undo else 'disabled')
+        self.redo_btn.config(state='normal' if has_redo else 'disabled')
+        self.reset_btn.config(state='normal' if self.df is not None else 'disabled')
+
+    def perform_undo(self):
+        """Undo the last workflow change on the active sheet."""
+        if not self.workbook_session:
+            return
+        active = self.workbook_session.get_active_sheet()
+        if not active or not active.undo_stack:
+            return
+        if active.undo():
+            self.operation_queue = copy.deepcopy(active.operations)
+            self.refresh_queue_display()
+            self._save_current_workflow()
+            self.update_preview_state()
+            self._update_history_buttons()
+
+    def perform_redo(self):
+        """Redo the last undone workflow change on the active sheet."""
+        if not self.workbook_session:
+            return
+        active = self.workbook_session.get_active_sheet()
+        if not active or not active.redo_stack:
+            return
+        if active.redo():
+            self.operation_queue = copy.deepcopy(active.operations)
+            self.refresh_queue_display()
+            self._save_current_workflow()
+            self.update_preview_state()
+            self._update_history_buttons()
+
+    def perform_reset(self):
+        """Clear all workflow operations and restore the original loaded data state."""
+        if self.df is None:
+            return
+        if not messagebox.askyesno(
+            "Reset Workflow",
+            "Remove all operations and return to the original loaded data?\n\n"
+            "This will also clear the undo history for the current sheet."
+        ):
+            return
+        if self.workbook_session:
+            active = self.workbook_session.get_active_sheet()
+            if active:
+                active.undo_stack.clear()
+                active.redo_stack.clear()
+        self.operation_queue = []
+        self.refresh_queue_display()
+        self._save_current_workflow()
+        self.update_preview_state()
+        self._update_history_buttons()
+        self.status_var.set("Reset: workflow cleared — showing original loaded data.")
 
     def on_tab_click(self, sheet_name: str):
         """
@@ -4810,6 +4929,7 @@ class CleanSheetApp:
                 self.excel_status_bar.update_row_count(len(self.df))
 
             # Note: Sheet tab bar already updated via its own internal logic in set_active_sheet()
+            self._update_history_buttons()
 
         except Exception as e:
             logging.error(f"[SHEET TAB ERROR] Failed to switch sheet: {str(e)}")
@@ -5065,6 +5185,7 @@ class CleanSheetApp:
             # Save session after successful file load
             self.logger.info("Saving session after file load")
             self.save_session_debounced()
+            self._update_history_buttons()
 
         except Exception as e:
             logging.error(f"[FILE LOAD ERROR] {str(e)}")
