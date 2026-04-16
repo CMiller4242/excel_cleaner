@@ -1733,11 +1733,12 @@ class CleanSheetApp:
             format_var = tk.StringVar(value="xlsx")
             dialog = tk.Toplevel(self.root)
             dialog.title("Export Format")
-            dialog.geometry("300x150")
+            dialog.geometry("300x175")
 
             ttk.Label(dialog, text="Export Format:").pack(pady=10)
             ttk.Radiobutton(dialog, text="Excel (.xlsx)", variable=format_var, value="xlsx").pack()
             ttk.Radiobutton(dialog, text="CSV (.csv)", variable=format_var, value="csv").pack()
+            ttk.Radiobutton(dialog, text="Text (.txt)", variable=format_var, value="txt").pack()
 
             def do_export():
                 count = ExportHelper.export_grouped_files(groups, output_dir, format_var.get())
@@ -2428,7 +2429,7 @@ class CleanSheetApp:
         # Set default extension and filetypes
         if file_type == 'excel':
             default_ext = '.xlsx'
-            filetypes = [("Excel files", "*.xlsx")]
+            filetypes = [("Excel files", "*.xlsx"), ("CSV files", "*.csv"), ("Text files", "*.txt")]
         else:
             # Text file - preserve delimiter
             if delimiter == '\t':
@@ -2455,8 +2456,11 @@ class CleanSheetApp:
             # Export based on file type
             if output_path.endswith('.xlsx'):
                 combined_df.to_excel(output_path, index=False)
+            elif output_path.endswith('.txt') and file_type == 'excel':
+                # Excel-sourced TXT: quoted comma format (QUOTE_ALL)
+                ExportHelper.export_to_txt(combined_df, output_path)
             else:
-                # Text file - use detected delimiter or comma
+                # CSV/TSV or text-sourced .txt: preserve detected delimiter
                 sep = delimiter if delimiter else ','
                 combined_df.to_csv(output_path, index=False, sep=sep)
 
