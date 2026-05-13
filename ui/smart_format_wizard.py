@@ -20,13 +20,15 @@ from tkinter import ttk, messagebox, simpledialog
 from typing import Callable, Dict, List, Optional
 
 from utils.smart_mapping import (
-    REQUIRED_SCHEMA,
-    TYPICALLY_BLANK,
+    REQUIRED_SCHEMA, BCC_REQUIRED_SCHEMA,
+    TYPICALLY_BLANK, BCC_TYPICALLY_BLANK,
     MappingResult,
-    infer_mapping,
+    infer_mapping, infer_mapping_bcc,
 )
 from ui.widgets.autocomplete_combobox import AutocompleteCombobox
-from utils.smart_preset_manager import SmartPresetManager
+from utils.smart_preset_manager import (
+    SmartPresetManager, TEMPLATE_ID_MAIL_STANDARD, TEMPLATE_ID_BCC_MAIL,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +48,9 @@ _CONF_LABEL = {
 
 _DEFAULT_DEDUPE_PRIORITY = [
     "Email Address", "Company", "Address1", "Zip", "Contact",
+]
+_BCC_DEFAULT_DEDUPE_PRIORITY = [
+    "FULLNAME", "COMPANY", "DELADDR", "ZIP+4",
 ]
 
 
@@ -122,7 +127,6 @@ class SmartFormatWizard:
         "4. Operations",
         "5. Apply",
     ]
-    TEMPLATE_ID = "MAIL_STANDARD_V1"
 
     # ------------------------------------------------------------------
     # Construction
@@ -133,6 +137,8 @@ class SmartFormatWizard:
         parent: tk.Widget,
         raw_columns: List[str],
         existing_config: Optional[Dict] = None,
+        schema: Optional[List[str]] = None,
+        template_id: Optional[str] = None,
     ):
         self.parent = parent
 
@@ -155,8 +161,19 @@ class SmartFormatWizard:
         self._result: Optional[Dict] = None
         self.current_step = 0
 
-        # Inference (always re-run – fast)
-        self.mapping_result: MappingResult = infer_mapping(self.raw_columns)
+        # Schema configuration
+        if template_id == TEMPLATE_ID_BCC_MAIL or schema is BCC_REQUIRED_SCHEMA:
+            self._template_id = TEMPLATE_ID_BCC_MAIL
+            self._schema = BCC_REQUIRED_SCHEMA if schema is None else schema
+            self._typically_blank = BCC_TYPICALLY_BLANK
+            self._dedupe_priority = _BCC_DEFAULT_DEDUPE_PRIORITY
+            self.mapping_result: MappingResult = infer_mapping_bcc(self.raw_columns)
+        else:
+            self._template_id = template_id or TEMPLATE_ID_MAIL_STANDARD
+            self._schema = schema if schema is not None else REQUIRED_SCHEMA
+            self._typically_blank = TYPICALLY_BLANK
+            self._dedupe_priority = _DEFAULT_DEDUPE_PRIORITY
+            self.mapping_result: MappingResult = infer_mapping(self.raw_columns)
 
         # Source options for dropdowns (use the normalised list)
         self._source_options = list(self.raw_columns)   # "(blank)" added by AutocompleteCombobox
@@ -197,8 +214,14 @@ class SmartFormatWizard:
     # ------------------------------------------------------------------
 
     def _build_dialog(self):
+        _schema_label = (
+            "BCC Mail File Config"
+            if self._template_id == TEMPLATE_ID_BCC_MAIL
+            else "Mail File Standard"
+        )
+
         self.dialog = tk.Toplevel(self.parent)
-        self.dialog.title("✨ Smart Format — Mail File Standard")
+        self.dialog.title(f"✨ Smart Format — {_schema_label}")
         self.dialog.geometry("860x680")
         self.dialog.minsize(720, 540)
         self.dialog.transient(self.parent)
@@ -212,7 +235,7 @@ class SmartFormatWizard:
 
         tk.Label(
             header,
-            text="✨  Smart Format — Mail File Standard",
+            text=f"✨  Smart Format — {_schema_label}",
             font=("Segoe UI", 14, "bold"),
             bg="#0078D4", fg="white",
         ).pack(side=tk.LEFT, padx=16, pady=12)
@@ -297,21 +320,26 @@ class SmartFormatWizard:
         """Schema overview: target schema list + raw column summary."""
         frame = tk.Frame(self._content, bg="white")
 
+        _step1_title = (
+            f"BCC Mail File Config — {len(self._schema)}-Column Schema"
+            if self._template_id == TEMPLATE_ID_BCC_MAIL
+            else f"Target Schema: {len(self._schema)}-Column Mail File Standard"
+        )
         tk.Label(
             frame,
-            text="Target Schema: 24-Column Mail File Standard",
+            text=_step1_title,
             font=("Segoe UI", 12, "bold"),
             bg="white", fg="#323130",
         ).pack(anchor=tk.W, padx=20, pady=(20, 4))
 
         n_raw   = len(self.raw_columns)
         n_found = sum(1 for v in self.mapping_result.suggested_map.values() if v)
-        n_blank = len(REQUIRED_SCHEMA) - n_found
+        n_blank = len(self._schema) - n_found
 
         tk.Label(
             frame,
             text=(f"Raw file: {n_raw} columns detected  •  "
-                  f"{n_found}/{len(REQUIRED_SCHEMA)} target columns auto-matched  •  "
+                  f"{n_found}/{len(self._schema)} target columns auto-matched  •  "
                   f"{n_blank} will be created blank"),
             font=("Segoe UI", 10),
             bg="white", fg="#605E5C",
@@ -340,7 +368,7 @@ class SmartFormatWizard:
             tk.Label(hdr, text=txt, width=w, bg="#F3F2F1",
                      font=("Segoe UI", 9, "bold"), anchor=tk.W).pack(side=tk.LEFT, padx=4)
 
-        for idx, target in enumerate(REQUIRED_SCHEMA):
+        for idx, target in enumerate(self._schema):
             source = self.mapping_result.suggested_map.get(target)
             conf   = self.mapping_result.confidences.get(target, "low")
             row_bg = "white" if idx % 2 == 0 else "#FAFAFA"
@@ -423,7 +451,7 @@ class SmartFormatWizard:
 
         mr = self.mapping_result
 
-        for idx, target in enumerate(REQUIRED_SCHEMA):
+        for idx, target in enumerate(self._schema):
             source = mr.suggested_map.get(target)
             conf   = mr.confidences.get(target, "low")
             row_bg = "white" if idx % 2 == 0 else "#FAFAFA"
@@ -434,7 +462,7 @@ class SmartFormatWizard:
             tk.Label(row, text=target, width=20, bg=row_bg,
                      font=("Segoe UI", 9), anchor=tk.W).pack(side=tk.LEFT, padx=6)
 
-            if target == "Contact":
+            if target == "Contact" and "Contact" in self._schema:
                 self._build_contact_row(row, row_bg)
                 continue
 
@@ -459,7 +487,7 @@ class SmartFormatWizard:
             if conflict_for:
                 other = [x for x in conflict_for[0]["candidates"] if x != source]
                 note_txt = f"⚠ conflict with: {', '.join(other[:2])}"
-            elif target in TYPICALLY_BLANK and not source:
+            elif target in self._typically_blank and not source:
                 note_txt = "Optional – will be blank"
 
             if note_txt:
@@ -663,12 +691,12 @@ class SmartFormatWizard:
         lb.pack(side=tk.LEFT)
 
         # Populate with target schema columns
-        for col in REQUIRED_SCHEMA:
+        for col in self._schema:
             lb.insert(tk.END, col)
 
         # Default selection: priority columns if they're in schema
-        for i, col in enumerate(REQUIRED_SCHEMA):
-            if col in _DEFAULT_DEDUPE_PRIORITY:
+        for i, col in enumerate(self._schema):
+            if col in self._dedupe_priority:
                 lb.selection_set(i)
 
         # Start disabled
@@ -715,7 +743,7 @@ class SmartFormatWizard:
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         lb.pack(side=tk.LEFT)
 
-        for col in REQUIRED_SCHEMA:
+        for col in self._schema:
             lb.insert(tk.END, col)
 
         # Text entry
@@ -786,7 +814,7 @@ class SmartFormatWizard:
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         lb.pack(side=tk.LEFT)
 
-        for col in REQUIRED_SCHEMA:
+        for col in self._schema:
             lb.insert(tk.END, col)
 
         self._toggle_section(body, self._remove_blank_enabled)
@@ -946,9 +974,9 @@ class SmartFormatWizard:
         """Read Step 2 widgets; return (col_map, derivation_plan, first_col, last_col)."""
         col_map: Dict[str, Optional[str]] = {}
 
-        for target in REQUIRED_SCHEMA:
-            if target == "Contact":
-                continue
+        for target in self._schema:
+            if target == "Contact" and "Contact" in self._schema:
+                continue  # handled separately below
             cb = self._target_vars.get(target)
             if cb is None:
                 col_map[target] = None
@@ -956,30 +984,36 @@ class SmartFormatWizard:
             val = cb.get()
             col_map[target] = None if val in ("(blank)", "") else val
 
-        # Contact
-        mode = self._contact_mode_var.get()
-        mr = self.mapping_result
-        if mode == "Use existing Contact column":
-            derivation_plan = "use_contact"
-            contact_src = mr.suggested_map.get("Contact")
-            if contact_src == "__derived__" or not contact_src:
-                contact_src = None
-                for rc in self.raw_columns:
-                    from utils.smart_mapping import normalize_header
-                    if normalize_header(rc) in {"contact", "contact name", "full name"}:
-                        contact_src = rc
-                        break
-            col_map["Contact"] = contact_src
-            first_col = mr.first_col
-            last_col  = mr.last_col
-        elif mode == "Build from First + Last Name":
-            derivation_plan = "build_first_last"
-            col_map["Contact"] = "__derived__"
-            first_col = mr.first_col
-            last_col  = mr.last_col
+        # Contact derivation — Mail Standard only
+        if "Contact" in self._schema:
+            mode = self._contact_mode_var.get()
+            mr = self.mapping_result
+            if mode == "Use existing Contact column":
+                derivation_plan = "use_contact"
+                contact_src = mr.suggested_map.get("Contact")
+                if contact_src == "__derived__" or not contact_src:
+                    contact_src = None
+                    for rc in self.raw_columns:
+                        from utils.smart_mapping import normalize_header
+                        if normalize_header(rc) in {"contact", "contact name", "full name"}:
+                            contact_src = rc
+                            break
+                col_map["Contact"] = contact_src
+                first_col = mr.first_col
+                last_col  = mr.last_col
+            elif mode == "Build from First + Last Name":
+                derivation_plan = "build_first_last"
+                col_map["Contact"] = "__derived__"
+                first_col = mr.first_col
+                last_col  = mr.last_col
+            else:
+                derivation_plan = "blank"
+                col_map["Contact"] = None
+                first_col = None
+                last_col  = None
         else:
+            # BCC and other schemas without Contact derivation
             derivation_plan = "blank"
-            col_map["Contact"] = None
             first_col = None
             last_col  = None
 
@@ -1037,7 +1071,7 @@ class SmartFormatWizard:
         ops_plan = self._collect_ops_plan()
 
         self._result = {
-            "template_id":     self.TEMPLATE_ID,
+            "template_id":     self._template_id,
             "column_map":      col_map,
             "derivation_plan": derivation_plan,
             "first_col":       first_col,
@@ -1085,7 +1119,7 @@ class SmartFormatWizard:
         ops_plan = self._collect_ops_plan()
 
         config_to_save = {
-            "template_id": self.TEMPLATE_ID,
+            "template_id": self._template_id,
             "mapping_config": {
                 "column_map": col_map,
                 "derivation_plan": derivation_plan,
@@ -1123,7 +1157,7 @@ class SmartFormatWizard:
 
         # ---- Populate step 2 dropdowns ----
         for target, source in col_map.items():
-            if target == "Contact":
+            if target == "Contact" and "Contact" in self._schema:
                 continue
             cb = self._target_vars.get(target)
             if cb is None:
@@ -1133,13 +1167,14 @@ class SmartFormatWizard:
             else:
                 cb.set("(blank)")
 
-        # Contact mode
-        if derivation_plan == "use_contact":
-            self._contact_mode_var.set("Use existing Contact column")
-        elif derivation_plan == "build_first_last":
-            self._contact_mode_var.set("Build from First + Last Name")
-        else:
-            self._contact_mode_var.set("(blank)")
+        # Contact mode (Mail Standard only)
+        if "Contact" in self._schema:
+            if derivation_plan == "use_contact":
+                self._contact_mode_var.set("Use existing Contact column")
+            elif derivation_plan == "build_first_last":
+                self._contact_mode_var.set("Build from First + Last Name")
+            else:
+                self._contact_mode_var.set("(blank)")
 
         # ---- Populate step 4 operations ----
         self._apply_ops_plan_to_widgets(ops_plan)
@@ -1159,7 +1194,7 @@ class SmartFormatWizard:
         self._dedupe_enabled.set(dedupe.get("enabled", False))
         if self._dedupe_keys_lb and dedupe.get("enabled"):
             keys = set(dedupe.get("keys", []))
-            for i, col in enumerate(REQUIRED_SCHEMA):
+            for i, col in enumerate(self._schema):
                 if col in keys:
                     self._dedupe_keys_lb.selection_set(i)
                 else:
@@ -1170,7 +1205,7 @@ class SmartFormatWizard:
         self._remove_rows_enabled.set(rrc.get("enabled", False))
         if self._remove_rows_cols_lb:
             cols = set(rrc.get("columns", []))
-            for i, col in enumerate(REQUIRED_SCHEMA):
+            for i, col in enumerate(self._schema):
                 if col in cols:
                     self._remove_rows_cols_lb.selection_set(i)
                 else:
@@ -1183,7 +1218,7 @@ class SmartFormatWizard:
         self._remove_blank_enabled.set(rbr.get("enabled", False))
         if self._remove_blank_cols_lb:
             cols = set(rbr.get("columns", []))
-            for i, col in enumerate(REQUIRED_SCHEMA):
+            for i, col in enumerate(self._schema):
                 if col in cols:
                     self._remove_blank_cols_lb.selection_set(i)
                 else:
@@ -1204,7 +1239,7 @@ class SmartFormatWizard:
 
         # Step 2 dropdowns
         for target, source in col_map.items():
-            if target == "Contact":
+            if target == "Contact" and "Contact" in self._schema:
                 continue
             cb = self._target_vars.get(target)
             if cb is None:
@@ -1214,13 +1249,14 @@ class SmartFormatWizard:
             else:
                 cb.set("(blank)")
 
-        # Contact mode
-        if derivation_plan == "use_contact":
-            self._contact_mode_var.set("Use existing Contact column")
-        elif derivation_plan == "build_first_last":
-            self._contact_mode_var.set("Build from First + Last Name")
-        else:
-            self._contact_mode_var.set("(blank)")
+        # Contact mode (Mail Standard only)
+        if "Contact" in self._schema:
+            if derivation_plan == "use_contact":
+                self._contact_mode_var.set("Use existing Contact column")
+            elif derivation_plan == "build_first_last":
+                self._contact_mode_var.set("Build from First + Last Name")
+            else:
+                self._contact_mode_var.set("(blank)")
 
         # Step 4 ops
         self._apply_ops_plan_to_widgets(ops_plan)

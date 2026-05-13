@@ -1,0 +1,45 @@
+{
+  "name": "BCC Mail File Config",
+  "template_id": "BCC_MAIL_V1",
+  "schema_version": "1",
+  "mapping_config": {
+    "column_map": {
+      "KC": null,
+      "Cust No": null,
+      "SegNo": null,
+      "SLS ID": null,
+      "REP NAME": null,
+      "COMPANY": null,
+      "DELADDR": null,
+      "ALTADDR": null,
+      "CITY": null,
+      "STATE": null,
+      "ZIP+4": null,
+      "FULLNAME": null,
+      "Title": null,
+      "Phone": null,
+      "SEG_NO": null,
+      "SSQ_NO": null,
+      "SERVICE": null,
+      "WT": null,
+      "TYPE": null,
+      "BILL TO": null,
+      "USPS_CONF": null
+    },
+    "derivation_plan": "blank",
+    "first_col": null,
+    "last_col": null
+  },
+  "operations_plan": {
+    "dedupe": {"enabled": false, "keys": []},
+    "remove_rows_containing": {
+      "enabled": false,
+      "columns": [],
+      "patterns": "",
+      "match_type": "contains"
+    },
+    "remove_blank_rows": {"enabled": false, "columns": []}
+  },
+  "created_at": "2026-01-01T00:00:00",
+  "notes": "BCC Mail File Config — 21-column standard for BCC mailing files."
+}
