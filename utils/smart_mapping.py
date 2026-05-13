@@ -53,6 +53,37 @@ TYPICALLY_BLANK: frozenset = frozenset({
 })
 
 # ---------------------------------------------------------------------------
+# BCC Mail File output schema – exact order must be preserved
+# ---------------------------------------------------------------------------
+BCC_REQUIRED_SCHEMA: List[str] = [
+    "KC",
+    "Cust No",
+    "SegNo",
+    "SLS ID",
+    "REP NAME",
+    "COMPANY",
+    "DELADDR",
+    "ALTADDR",
+    "CITY",
+    "STATE",
+    "ZIP+4",
+    "FULLNAME",
+    "Title",
+    "Phone",
+    "SEG_NO",
+    "SSQ_NO",
+    "SERVICE",
+    "WT",
+    "TYPE",
+    "BILL TO",
+    "USPS_CONF",
+]
+
+BCC_TYPICALLY_BLANK: frozenset = frozenset({
+    "KC", "SEG_NO", "SSQ_NO", "SERVICE", "WT", "TYPE", "BILL TO", "USPS_CONF",
+})
+
+# ---------------------------------------------------------------------------
 # Synonym dictionary (target col → list of normalised synonyms)
 # ---------------------------------------------------------------------------
 
@@ -104,6 +135,49 @@ def build_synonyms() -> Dict[str, List[str]]:
                               "sql flag"],
         "Sugar Lead Source": ["sugar lead source", "lead source", "source",
                               "crm lead source", "lead_source"],
+    }
+
+
+def build_bcc_synonyms() -> Dict[str, List[str]]:
+    """Return the canonical synonym map for each BCC target column."""
+    return {
+        "KC":        ["kc", "key code", "keycode", "key", "key_code"],
+        "Cust No":   ["cust no", "customer number", "cust number", "custno",
+                      "customer #", "cust #", "customer no", "customer id", "custid"],
+        "SegNo":     ["segno", "seg no", "segment number", "segment no",
+                      "customer segment", "seg", "cust segment", "customerseg"],
+        "SLS ID":    ["sls id", "sls#", "sls #", "sales #", "sales id",
+                      "sales rep #", "salesperson id", "salesrep", "slsid",
+                      "sales number", "slsno"],
+        "REP NAME":  ["rep name", "sales rep", "sales rep name", "rep",
+                      "salesperson", "sales person"],
+        "COMPANY":   ["company", "company name", "organization", "org",
+                      "account name", "business name", "firm"],
+        "DELADDR":   ["deladdr", "del addr", "delivery address", "address1",
+                      "address 1", "street", "street address", "address line 1",
+                      "addr1", "address line1", "mailing address", "address"],
+        "ALTADDR":   ["altaddr", "alt addr", "address2", "address 2",
+                      "address line 2", "addr2", "suite", "unit", "apt",
+                      "alt address", "address line2"],
+        "CITY":      ["city", "town", "municipality"],
+        "STATE":     ["state", "st", "province", "state code"],
+        "ZIP+4":     ["zip+4", "zip4", "zip", "zip code", "postal", "postal code",
+                      "zipcode", "postcode"],
+        "FULLNAME":  ["fullname", "full name", "contact", "contact name",
+                      "name", "attn", "attention"],
+        "Title":     ["title", "job title", "position", "role",
+                      "job role", "designation"],
+        "Phone":     ["phone", "telephone", "phone number", "tel",
+                      "mobile", "cell", "direct", "phone #"],
+        "SEG_NO":    ["seg_no", "seqno", "seq no", "sequence",
+                      "seq number", "sequence number"],
+        "SSQ_NO":    ["ssq_no", "ssqno", "ssq no", "subsequence", "ssq number"],
+        "SERVICE":   ["service", "svc", "service type"],
+        "WT":        ["wt", "weight", "mail weight"],
+        "TYPE":      ["type", "record type", "rec type"],
+        "BILL TO":   ["bill to", "billto", "billing", "bill-to", "billing account"],
+        "USPS_CONF": ["usps_conf", "uspsconf", "usps conf", "usps confirmation",
+                      "usps", "postal confirmation"],
     }
 
 
@@ -505,3 +579,84 @@ def _build_contact(
         },
     })
     return pd.Series([""] * len(df), index=idx)
+
+
+# ---------------------------------------------------------------------------
+# BCC Mail File inference
+# ---------------------------------------------------------------------------
+
+def infer_mapping_bcc(raw_columns: List[str]) -> MappingResult:
+    """
+    Infer the best mapping from raw_columns → BCC_REQUIRED_SCHEMA.
+
+    Returns a MappingResult with suggested_map, confidences, conflicts,
+    and dropped_columns.  No Contact derivation logic (FULLNAME is a plain
+    mapped field in the BCC schema).
+    """
+    synonyms_map = build_bcc_synonyms()
+    result = MappingResult()
+
+    raw_norm_map: Dict[str, str] = {col: normalize_header(col) for col in raw_columns}
+
+    # Score each target column against every raw column
+    target_scores: Dict[str, Dict[str, float]] = {}
+
+    for target in BCC_REQUIRED_SCHEMA:
+        if target not in synonyms_map:
+            continue
+        syns = [normalize_header(s) for s in synonyms_map[target]]
+        target_norm = normalize_header(target)
+        all_syns = syns + [target_norm]
+
+        col_scores: Dict[str, float] = {}
+        for raw_col, raw_norm in raw_norm_map.items():
+            score = _score_candidate(raw_norm, all_syns)
+            if score >= _CANDIDATE_FLOOR:
+                col_scores[raw_col] = score
+
+        target_scores[target] = col_scores
+
+    # Greedy assignment: highest score wins; flag close conflicts
+    result.suggested_map = {}
+    result.confidences = {}
+    result.conflicts = []
+
+    def _best_score(target: str) -> float:
+        scores = target_scores.get(target, {})
+        return max(scores.values()) if scores else 0.0
+
+    sorted_targets = sorted(BCC_REQUIRED_SCHEMA, key=_best_score, reverse=True)
+
+    for target in sorted_targets:
+        scores = target_scores.get(target, {})
+        best_in_scores = max(scores.values()) if scores else 0.0
+        if not scores or best_in_scores < _ASSIGNMENT_MIN:
+            result.suggested_map[target] = None
+            result.confidences[target] = "low"
+            continue
+
+        candidates_sorted = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        best_raw, best_score = candidates_sorted[0]
+
+        close_candidates = [c for c, s in candidates_sorted
+                            if s >= best_score - 0.10 and c != best_raw]
+        if close_candidates and best_score >= 0.72:
+            result.conflicts.append({
+                "target_col": target,
+                "candidates": [best_raw] + close_candidates,
+                "chosen": best_raw,
+                "chosen_score": best_score,
+            })
+
+        result.suggested_map[target] = best_raw
+        result.confidences[target] = _confidence_label(best_score)
+
+    # BCC has no Contact derivation
+    result.derivation_plan = "blank"
+    result.first_col = None
+    result.last_col = None
+
+    all_mapped_sources = {v for v in result.suggested_map.values() if v}
+    result.dropped_columns = [c for c in raw_columns if c not in all_mapped_sources]
+
+    return result

@@ -5578,13 +5578,34 @@ class CleanSheetApp:
             return
 
         from ui.smart_format_wizard import SmartFormatWizard
-        from utils.smart_mapping import apply_mail_standard, REQUIRED_SCHEMA
+        from utils.smart_mapping import apply_mail_standard, REQUIRED_SCHEMA, BCC_REQUIRED_SCHEMA
+        from utils.smart_preset_manager import TEMPLATE_ID_MAIL_STANDARD, TEMPLATE_ID_BCC_MAIL
         from workbook_session import Issue
 
         raw_cols = self.df.columns.tolist()
 
+        # Determine schema type: reuse existing config in edit mode, else ask user
+        if existing_config:
+            _template_id = existing_config.get("template_id", TEMPLATE_ID_MAIL_STANDARD)
+        else:
+            _template_id = self._ask_smart_format_schema()
+            if _template_id is None:
+                return  # user cancelled selector
+
+        if _template_id == TEMPLATE_ID_BCC_MAIL:
+            _schema = BCC_REQUIRED_SCHEMA
+            _schema_label = "BCC Mail File Config"
+        else:
+            _schema = REQUIRED_SCHEMA
+            _schema_label = "Mail File Standard"
+
         # Show wizard (blocks until closed)
-        wizard = SmartFormatWizard(self.root, raw_cols, existing_config=existing_config)
+        wizard = SmartFormatWizard(
+            self.root, raw_cols,
+            existing_config=existing_config,
+            schema=_schema,
+            template_id=_template_id,
+        )
         mapping_config = wizard.show()
 
         if mapping_config is None:
@@ -5593,7 +5614,7 @@ class CleanSheetApp:
         # ---- Apply the mail standard ----
         try:
             df_out, raw_issues, apply_meta = apply_mail_standard(
-                self.df, mapping_config, REQUIRED_SCHEMA
+                self.df, mapping_config, _schema
             )
         except Exception as exc:
             messagebox.showerror("Smart Format Error",
@@ -5601,13 +5622,14 @@ class CleanSheetApp:
             return
 
         # ---- Convert raw issues to Issue objects ----
+        _op_label = f"Smart Format ({_schema_label})"
         sheet_name = self.current_sheet_name or "Sheet"
         issue_objects = []
         for raw in raw_issues:
             issue_objects.append(Issue(
                 sheet_name=sheet_name,
                 op_index=-1,
-                op_label="Smart Format (Mail Standard)",
+                op_label=_op_label,
                 code=raw["code"],
                 message=raw["message"],
                 details=raw.get("details", {}),
@@ -5620,7 +5642,11 @@ class CleanSheetApp:
         )
 
         # ---- Compute recommended dedupe keys from output columns ----
-        _DEDUPE_PRIORITY = ["Email Address", "Company", "Address1", "Zip", "Contact"]
+        _DEDUPE_PRIORITY = (
+            ["FULLNAME", "COMPANY", "DELADDR", "ZIP+4"]
+            if _template_id == TEMPLATE_ID_BCC_MAIL
+            else ["Email Address", "Company", "Address1", "Zip", "Contact"]
+        )
         rec_keys = [k for k in _DEDUPE_PRIORITY if k in df_final.columns]
 
         # ---- Build persistent smart_format config for SheetState ----
@@ -5666,7 +5692,7 @@ class CleanSheetApp:
                 # Append smart-format issues (preserve previous issues)
                 existing_sf_issues = [
                     i for i in getattr(active_sheet, "issues", [])
-                    if getattr(i, "op_label", "") != "Smart Format (Mail Standard)"
+                    if getattr(i, "op_label", "") != _op_label
                 ]
                 active_sheet.issues = existing_sf_issues + issue_objects
 
@@ -5737,12 +5763,62 @@ class CleanSheetApp:
         if n_issues:
             detail_lines.append(f"• {n_issues} issue(s) recorded (see sheet ⚠ indicator)")
 
-        msg = "Mail file standard applied successfully.\n\n" + "\n".join(detail_lines)
+        msg = f"{_schema_label} applied successfully.\n\n" + "\n".join(detail_lines)
 
         # Show status panel
         self.refresh_smart_format_panel()
 
         messagebox.showinfo("Smart Format Complete", msg)
+
+    def _ask_smart_format_schema(self):
+        """
+        Show a small dialog for the user to choose a Smart Format schema.
+
+        Returns the selected template_id string, or None if cancelled.
+        """
+        result = [None]
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Smart Format — Choose Configuration")
+        dlg.geometry("400x190")
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        tk.Label(
+            dlg,
+            text="Select a Smart Format configuration:",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(padx=20, pady=(20, 10), anchor=tk.W)
+
+        choice = tk.StringVar(value="MAIL_STANDARD_V1")
+        ttk.Radiobutton(
+            dlg,
+            text="Mail File Standard  (24 columns)",
+            variable=choice, value="MAIL_STANDARD_V1",
+        ).pack(anchor=tk.W, padx=36, pady=2)
+        ttk.Radiobutton(
+            dlg,
+            text="BCC Mail File Config  (21 columns)",
+            variable=choice, value="BCC_MAIL_V1",
+        ).pack(anchor=tk.W, padx=36, pady=2)
+
+        def _confirm():
+            result[0] = choice.get()
+            dlg.destroy()
+
+        def _cancel():
+            dlg.destroy()
+
+        btn_bar = tk.Frame(dlg)
+        btn_bar.pack(pady=(14, 0), fill=tk.X, padx=20)
+        ttk.Button(btn_bar, text="Cancel", command=_cancel).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(btn_bar, text="Continue  ▶", command=_confirm).pack(side=tk.RIGHT, padx=4)
+
+        dlg.bind("<Return>", lambda e: _confirm())
+        dlg.bind("<Escape>", lambda e: _cancel())
+        self.root.wait_window(dlg)
+        return result[0]
 
     def _apply_smart_format_ops_plan(self, df_out, ops_plan):
         """
