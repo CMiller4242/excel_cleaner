@@ -6045,6 +6045,104 @@ class CleanSheetApp:
                 msg += f"\n… and {len(error_lines) - 5} more"
         messagebox.showinfo("Smart Format Applied", msg)
 
+    def change_header_for_selected_batch_files(self):
+        """Add Set Header Row operation to all checked batch files."""
+        if not hasattr(self, 'file_list_panel') or not self.file_list_panel:
+            return
+
+        selected_files = self.file_list_panel.get_selected_files()
+        if not selected_files:
+            messagebox.showwarning("No Files Selected", "Please check at least one file.")
+            return
+
+        # Show a single parameter dialog for all selected files
+        result = [None]
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Change Header — Selected Files")
+        dlg.geometry("400x220")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        frame = tk.Frame(dlg, bg="white", padx=20, pady=15)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(
+            frame,
+            text=f"Set Header Row for {len(selected_files)} file(s)",
+            font=('Segoe UI', 12, 'bold'),
+            bg="white"
+        ).pack(anchor=tk.W, pady=(0, 12))
+
+        row_frame = tk.Frame(frame, bg="white")
+        row_frame.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(row_frame, text="Header row number:", font=('Segoe UI', 10), bg="white").pack(side=tk.LEFT)
+        row_var = tk.StringVar(value="2")
+        row_entry = tk.Entry(row_frame, textvariable=row_var, width=6, font=('Segoe UI', 10))
+        row_entry.pack(side=tk.LEFT, padx=(8, 0))
+
+        remove_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            frame,
+            text="Remove rows above header",
+            variable=remove_var,
+            bg="white",
+            font=('Segoe UI', 10)
+        ).pack(anchor=tk.W, pady=(0, 12))
+
+        def on_apply():
+            try:
+                row_num = int(row_var.get())
+                if row_num < 1:
+                    raise ValueError
+            except ValueError:
+                messagebox.showwarning("Invalid Input", "Header row number must be a positive integer.", parent=dlg)
+                return
+            result[0] = {'header_row_number': row_num, 'remove_above': remove_var.get()}
+            dlg.destroy()
+
+        btn_frame = tk.Frame(frame, bg="white")
+        btn_frame.pack(fill=tk.X)
+        tk.Button(
+            btn_frame, text="Cancel", command=dlg.destroy,
+            font=('Segoe UI', 10), bg="#E1E1E1", relief=tk.FLAT, cursor="hand2", padx=16, pady=6
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            btn_frame, text="✓ Apply to Selected", command=on_apply,
+            font=('Segoe UI', 10, 'bold'), bg="#5C4033", fg="white",
+            relief=tk.FLAT, cursor="hand2", padx=16, pady=6,
+            activebackground="#4A2E25", activeforeground="white"
+        ).pack(side=tk.RIGHT)
+
+        self.root.wait_window(dlg)
+
+        if result[0] is None:
+            return
+
+        params = result[0]
+        op_config = {
+            'name': 'Set Header Row',
+            'type': 'Transform',
+            'operation_id': 'data_set_header_row',
+            'parameters': params,
+            'enabled': True,
+        }
+
+        for file_obj in selected_files:
+            if 'operations' not in file_obj:
+                file_obj['operations'] = []
+            file_obj['operations'].append(op_config.copy())
+
+        # Refresh detail panel if it's showing one of the affected files
+        if hasattr(self, 'file_detail_panel') and self.file_detail_panel:
+            current = self.file_detail_panel.current_file
+            if current and current in selected_files:
+                self.file_detail_panel._update_workflow(current)
+
+        n = len(selected_files)
+        self.status_var.set(f"📋 Set Header Row added to {n} file(s)")
+
     def _apply_smart_format_ops_plan(self, df_out, ops_plan):
         """
         Apply Operations Builder ops to the smart-format output df.

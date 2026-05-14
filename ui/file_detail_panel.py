@@ -182,6 +182,21 @@ class FileDetailPanel(tk.Frame):
             pady=8,
             activebackground="#5A1F9A",
             activeforeground="white"
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        tk.Button(
+            btn_frame,
+            text="📋 Change Header",
+            command=self._on_change_header,
+            font=('Segoe UI', 10, 'bold'),
+            bg="#5C4033",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=20,
+            pady=8,
+            activebackground="#4A2E25",
+            activeforeground="white"
         ).pack(side=tk.LEFT)
 
         # Quick actions
@@ -197,6 +212,7 @@ class FileDetailPanel(tk.Frame):
             ("• Copy Workflow to Selected Files", self._on_copy_to_selected, "#0078D4"),
             ("• Apply Preset to Selected Files", self._on_apply_preset, "#0078D4"),
             ("• Smart Format Selected Files", self._on_smart_format_selected, "#6B2FAE"),
+            ("• Change Header for Selected Files", self._on_change_header_selected, "#5C4033"),
             ("• Clear Workflow", self._on_clear_workflow, "#D83B01"),
         ]
 
@@ -560,6 +576,28 @@ class FileDetailPanel(tk.Frame):
         """Launch Smart Format for all checked files in the file list."""
         if self.app and hasattr(self.app, 'launch_smart_format_for_selected_batch_files'):
             self.app.launch_smart_format_for_selected_batch_files()
+
+    def _on_change_header(self):
+        """Add Set Header Row operation to the currently displayed file's workflow."""
+        from tkinter import messagebox
+        if not self.current_file:
+            messagebox.showwarning("No File", "Please select a file first.")
+            return
+        from operations.registry import get_registry
+        registry = get_registry()
+        operation = next(
+            (op for op in registry.list_all() if op.metadata.id == 'data_set_header_row'),
+            None
+        )
+        if not operation:
+            messagebox.showwarning("Not Available", "Set Header Row operation not found.")
+            return
+        self._configure_operation(self.current_file, operation)
+
+    def _on_change_header_selected(self):
+        """Add Set Header Row operation to all checked files."""
+        if self.app and hasattr(self.app, 'change_header_for_selected_batch_files'):
+            self.app.change_header_for_selected_batch_files()
 
     def _edit_operation(self, file_obj, op_index):
         """Edit an operation's parameters"""
