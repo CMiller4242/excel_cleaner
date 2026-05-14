@@ -167,6 +167,21 @@ class FileDetailPanel(tk.Frame):
             pady=8,
             activebackground="#0B5A0C",
             activeforeground="white"
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        tk.Button(
+            btn_frame,
+            text="✨ Smart Format",
+            command=self._on_smart_format,
+            font=('Segoe UI', 10, 'bold'),
+            bg="#6B2FAE",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=20,
+            pady=8,
+            activebackground="#5A1F9A",
+            activeforeground="white"
         ).pack(side=tk.LEFT)
 
         # Quick actions
@@ -181,7 +196,8 @@ class FileDetailPanel(tk.Frame):
         quick_actions = [
             ("• Copy Workflow to Selected Files", self._on_copy_to_selected, "#0078D4"),
             ("• Apply Preset to Selected Files", self._on_apply_preset, "#0078D4"),
-            ("• Clear Workflow", self._on_clear_workflow, "#D83B01")
+            ("• Smart Format Selected Files", self._on_smart_format_selected, "#6B2FAE"),
+            ("• Clear Workflow", self._on_clear_workflow, "#D83B01"),
         ]
 
         for text, command, color in quick_actions:
@@ -244,6 +260,46 @@ class FileDetailPanel(tk.Frame):
 
         # Update count
         self.operations_count_label.config(text=f"({len(operations)} operations)")
+
+        # Show Smart Format badge if applied (above operations list)
+        sf_config = file_obj.get('smart_format')
+        if sf_config:
+            sf_badge = tk.Frame(
+                self.operations_frame,
+                bg="#EDE7F6",
+                relief=tk.RAISED,
+                borderwidth=1
+            )
+            sf_badge.pack(fill=tk.X, pady=(0, 8))
+
+            _sf_label = sf_config.get('schema_label', sf_config.get('template_id', 'Smart Format'))
+            _cols_out = len(sf_config.get('created_blank', [])) + len(
+                sf_config.get('mapping_config', {}).get('column_map', {})
+            )
+            tk.Label(
+                sf_badge,
+                text=f"✨ Smart Format: {_sf_label}",
+                font=('Segoe UI', 10, 'bold'),
+                bg="#EDE7F6",
+                fg="#4A1A7E",
+                anchor=tk.W,
+                padx=10,
+                pady=6,
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            tk.Button(
+                sf_badge,
+                text="Re-edit",
+                command=self._on_smart_format,
+                font=('Segoe UI', 8),
+                bg="#D1C4E9",
+                fg="#4A1A7E",
+                relief=tk.FLAT,
+                cursor="hand2",
+                padx=8,
+                pady=4,
+                activebackground="#B39DDB",
+            ).pack(side=tk.RIGHT, padx=6, pady=4)
 
         if not operations:
             tk.Label(
@@ -490,6 +546,20 @@ class FileDetailPanel(tk.Frame):
                 self.current_file['operations'] = []
                 self.current_file.pop('preset_name', None)  # Remove preset name if any
                 self._update_workflow(self.current_file)
+
+    def _on_smart_format(self):
+        """Launch Smart Format wizard for the currently displayed file."""
+        from tkinter import messagebox
+        if not self.current_file:
+            messagebox.showwarning("No File", "Please select a file first.")
+            return
+        if self.app and hasattr(self.app, 'launch_smart_format_for_batch_file'):
+            self.app.launch_smart_format_for_batch_file(self.current_file)
+
+    def _on_smart_format_selected(self):
+        """Launch Smart Format for all checked files in the file list."""
+        if self.app and hasattr(self.app, 'launch_smart_format_for_selected_batch_files'):
+            self.app.launch_smart_format_for_selected_batch_files()
 
     def _edit_operation(self, file_obj, op_index):
         """Edit an operation's parameters"""

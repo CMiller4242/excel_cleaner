@@ -181,6 +181,21 @@ class FileListPanel(tk.Frame):
             activeforeground="white"
         ).pack(fill=tk.X)
 
+        # Smart Format Selected button
+        tk.Button(
+            self,
+            text="✨ Smart Format Selected",
+            command=self._on_smart_format_selected,
+            font=('Segoe UI', 10, 'bold'),
+            bg="#6B2FAE",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            height=2,
+            activebackground="#5A1F9A",
+            activeforeground="white"
+        ).pack(fill=tk.X, padx=10, pady=(5, 5))
+
         # Rename Files button
         tk.Button(
             self,
@@ -586,6 +601,11 @@ class FileListPanel(tk.Frame):
     def _on_process_all(self):
         if self.app and hasattr(self.app, 'process_batch_files'):
             self.app.process_batch_files()
+
+    def _on_smart_format_selected(self):
+        """Launch Smart Format for all checked files."""
+        if self.app and hasattr(self.app, 'launch_smart_format_for_selected_batch_files'):
+            self.app.launch_smart_format_for_selected_batch_files()
 
     def _on_export(self, export_type=None):
         """Show export dialog and export processed files"""
