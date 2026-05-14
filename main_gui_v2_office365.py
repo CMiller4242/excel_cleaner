@@ -5820,6 +5820,231 @@ class CleanSheetApp:
         self.root.wait_window(dlg)
         return result[0]
 
+    def launch_smart_format_for_batch_file(self, file_obj):
+        """
+        Launch Smart Format wizard for a single batch-mode file object.
+
+        Applies the chosen mapping directly to file_obj['df'] so the batch
+        executor starts from the transformed schema.  The original DataFrame
+        is preserved in file_obj['df_original_pre_sf'] for re-edit flows.
+        """
+        if file_obj is None:
+            messagebox.showwarning("No File", "Please select a file first.")
+            return
+
+        from ui.smart_format_wizard import SmartFormatWizard
+        from utils.smart_mapping import apply_mail_standard, REQUIRED_SCHEMA, BCC_REQUIRED_SCHEMA
+        from utils.smart_preset_manager import TEMPLATE_ID_MAIL_STANDARD, TEMPLATE_ID_BCC_MAIL
+        from datetime import datetime as _dt
+
+        existing_config = file_obj.get('smart_format')
+
+        if existing_config:
+            _template_id = existing_config.get('template_id', TEMPLATE_ID_MAIL_STANDARD)
+        else:
+            _template_id = self._ask_smart_format_schema()
+            if _template_id is None:
+                return
+
+        _schema = BCC_REQUIRED_SCHEMA if _template_id == TEMPLATE_ID_BCC_MAIL else REQUIRED_SCHEMA
+        _schema_label = "BCC Mail File Config" if _template_id == TEMPLATE_ID_BCC_MAIL else "Mail File Standard"
+
+        # Use the pre-SmartFormat df for the wizard so re-edit always starts
+        # from the original columns, not the already-transformed ones.
+        source_df = file_obj.get('df_original_pre_sf', file_obj['df'])
+        raw_cols = source_df.columns.tolist()
+
+        wizard = SmartFormatWizard(
+            self.root, raw_cols,
+            existing_config=existing_config,
+            schema=_schema,
+            template_id=_template_id,
+        )
+        mapping_config = wizard.show()
+        if mapping_config is None:
+            return
+
+        try:
+            df_out, raw_issues, apply_meta = apply_mail_standard(
+                source_df, mapping_config, _schema
+            )
+        except Exception as exc:
+            messagebox.showerror("Smart Format Error",
+                                 f"Failed to apply Smart Format:\n{exc}")
+            return
+
+        ops_plan = mapping_config.get('operations_plan', {})
+        df_final, ops_added, _ = self._apply_smart_format_ops_plan(df_out, ops_plan)
+
+        # Preserve original df before first Smart Format application
+        if 'df_original_pre_sf' not in file_obj:
+            file_obj['df_original_pre_sf'] = file_obj['df'].copy()
+
+        # Overwrite the file's working df with the transformed result
+        file_obj['df'] = df_final
+        file_obj['result_df'] = df_final
+
+        _DEDUPE_PRIORITY = (
+            ["FULLNAME", "COMPANY", "DELADDR", "ZIP+4"]
+            if _template_id == TEMPLATE_ID_BCC_MAIL
+            else ["Email Address", "Company", "Address1", "Zip", "Contact"]
+        )
+        rec_keys = [k for k in _DEDUPE_PRIORITY if k in df_final.columns]
+
+        file_obj['smart_format'] = {
+            "template_id": mapping_config.get("template_id", TEMPLATE_ID_MAIL_STANDARD),
+            "schema_label": _schema_label,
+            "mapping_config": {
+                "column_map":      mapping_config.get("column_map", {}),
+                "derivation_plan": mapping_config.get("derivation_plan", "blank"),
+                "first_col":       mapping_config.get("first_col"),
+                "last_col":        mapping_config.get("last_col"),
+            },
+            "operations_plan":         ops_plan,
+            "created_blank":           apply_meta.get("created_blank", []),
+            "dropped_columns":         apply_meta.get("dropped_columns", []),
+            "recommended_dedupe_keys": rec_keys,
+            "last_applied_timestamp":  _dt.now().isoformat(),
+            "preset_name":             mapping_config.get("preset_name"),
+            "version":                 "1",
+        }
+
+        # Refresh the detail panel if this file is currently displayed
+        if hasattr(self, 'file_detail_panel') and self.file_detail_panel:
+            if self.file_detail_panel.current_file is file_obj:
+                self.file_detail_panel.show_file(file_obj)
+
+        n_blank   = len(apply_meta.get("created_blank", []))
+        n_dropped = len(apply_meta.get("dropped_columns", []))
+        detail_lines = [
+            f"• {len(df_final.columns)} output columns, {len(df_final):,} rows",
+        ]
+        if n_blank:
+            detail_lines.append(f"• {n_blank} blank column(s) created")
+        if n_dropped:
+            detail_lines.append(f"• {n_dropped} source column(s) dropped")
+        if ops_added:
+            detail_lines.append(f"• {len(ops_added)} post-mapping operation(s) applied")
+
+        messagebox.showinfo(
+            "Smart Format Applied",
+            f"{_schema_label} applied to '{file_obj['name']}'.\n\n"
+            + "\n".join(detail_lines),
+        )
+
+    def launch_smart_format_for_selected_batch_files(self):
+        """
+        Apply Smart Format to all checked files in the batch file list.
+
+        Opens the schema selector once, then the mapping wizard using the
+        first selected file's columns.  The resulting mapping is applied to
+        every selected file; missing source columns are silently mapped blank.
+        """
+        if not hasattr(self, 'file_list_panel') or not self.file_list_panel:
+            return
+
+        selected_files = self.file_list_panel.get_selected_files()
+        if not selected_files:
+            messagebox.showwarning(
+                "No Files Selected",
+                "Please check at least one file in the list to apply Smart Format.",
+            )
+            return
+
+        # Delegate to single-file handler when only one file is checked
+        if len(selected_files) == 1:
+            self.launch_smart_format_for_batch_file(selected_files[0])
+            return
+
+        from ui.smart_format_wizard import SmartFormatWizard
+        from utils.smart_mapping import apply_mail_standard, REQUIRED_SCHEMA, BCC_REQUIRED_SCHEMA
+        from utils.smart_preset_manager import TEMPLATE_ID_MAIL_STANDARD, TEMPLATE_ID_BCC_MAIL
+        from datetime import datetime as _dt
+
+        _template_id = self._ask_smart_format_schema()
+        if _template_id is None:
+            return
+
+        _schema = BCC_REQUIRED_SCHEMA if _template_id == TEMPLATE_ID_BCC_MAIL else REQUIRED_SCHEMA
+        _schema_label = "BCC Mail File Config" if _template_id == TEMPLATE_ID_BCC_MAIL else "Mail File Standard"
+
+        # Run the mapping wizard on the first selected file's columns.
+        # Any source column that doesn't exist in subsequent files will be
+        # treated as blank by apply_mail_standard automatically.
+        first_file = selected_files[0]
+        source_df_first = first_file.get('df_original_pre_sf', first_file['df'])
+
+        wizard = SmartFormatWizard(
+            self.root, source_df_first.columns.tolist(),
+            schema=_schema,
+            template_id=_template_id,
+        )
+        mapping_config = wizard.show()
+        if mapping_config is None:
+            return
+
+        ops_plan = mapping_config.get('operations_plan', {})
+        _DEDUPE_PRIORITY = (
+            ["FULLNAME", "COMPANY", "DELADDR", "ZIP+4"]
+            if _template_id == TEMPLATE_ID_BCC_MAIL
+            else ["Email Address", "Company", "Address1", "Zip", "Contact"]
+        )
+
+        success_count = 0
+        error_lines = []
+
+        for file_obj in selected_files:
+            try:
+                source_df = file_obj.get('df_original_pre_sf', file_obj['df'])
+
+                df_out, raw_issues, apply_meta = apply_mail_standard(
+                    source_df, mapping_config, _schema
+                )
+                df_final, ops_added, _ = self._apply_smart_format_ops_plan(df_out, ops_plan)
+
+                if 'df_original_pre_sf' not in file_obj:
+                    file_obj['df_original_pre_sf'] = file_obj['df'].copy()
+
+                file_obj['df'] = df_final
+                file_obj['result_df'] = df_final
+
+                rec_keys = [k for k in _DEDUPE_PRIORITY if k in df_final.columns]
+                file_obj['smart_format'] = {
+                    "template_id":             mapping_config.get("template_id", TEMPLATE_ID_MAIL_STANDARD),
+                    "schema_label":            _schema_label,
+                    "mapping_config": {
+                        "column_map":      mapping_config.get("column_map", {}),
+                        "derivation_plan": mapping_config.get("derivation_plan", "blank"),
+                        "first_col":       mapping_config.get("first_col"),
+                        "last_col":        mapping_config.get("last_col"),
+                    },
+                    "operations_plan":         ops_plan,
+                    "created_blank":           apply_meta.get("created_blank", []),
+                    "dropped_columns":         apply_meta.get("dropped_columns", []),
+                    "recommended_dedupe_keys": rec_keys,
+                    "last_applied_timestamp":  _dt.now().isoformat(),
+                    "preset_name":             mapping_config.get("preset_name"),
+                    "version":                 "1",
+                }
+                success_count += 1
+
+            except Exception as exc:
+                error_lines.append(f"• {file_obj['name']}: {exc}")
+                logging.error("[SmartFormat Batch] Failed on %s: %s", file_obj['name'], exc)
+
+        # Refresh detail panel for the currently displayed file
+        if hasattr(self, 'file_detail_panel') and self.file_detail_panel:
+            current = self.file_detail_panel.current_file
+            if current and current in selected_files:
+                self.file_detail_panel.show_file(current)
+
+        msg = f"{_schema_label} applied to {success_count}/{len(selected_files)} file(s)."
+        if error_lines:
+            msg += "\n\nErrors:\n" + "\n".join(error_lines[:5])
+            if len(error_lines) > 5:
+                msg += f"\n… and {len(error_lines) - 5} more"
+        messagebox.showinfo("Smart Format Applied", msg)
+
     def _apply_smart_format_ops_plan(self, df_out, ops_plan):
         """
         Apply Operations Builder ops to the smart-format output df.
