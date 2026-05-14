@@ -181,6 +181,21 @@ class FileListPanel(tk.Frame):
             activeforeground="white"
         ).pack(fill=tk.X)
 
+        # Change Header Selected button
+        tk.Button(
+            self,
+            text="📋 Change Header Selected",
+            command=self._on_change_header_selected,
+            font=('Segoe UI', 10, 'bold'),
+            bg="#5C4033",
+            fg="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            height=2,
+            activebackground="#4A2E25",
+            activeforeground="white"
+        ).pack(fill=tk.X, padx=10, pady=(5, 5))
+
         # Smart Format Selected button
         tk.Button(
             self,
@@ -606,6 +621,11 @@ class FileListPanel(tk.Frame):
         """Launch Smart Format for all checked files."""
         if self.app and hasattr(self.app, 'launch_smart_format_for_selected_batch_files'):
             self.app.launch_smart_format_for_selected_batch_files()
+
+    def _on_change_header_selected(self):
+        """Add Set Header Row operation to all checked files."""
+        if self.app and hasattr(self.app, 'change_header_for_selected_batch_files'):
+            self.app.change_header_for_selected_batch_files()
 
     def _on_export(self, export_type=None):
         """Show export dialog and export processed files"""
