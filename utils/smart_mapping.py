@@ -84,6 +84,32 @@ BCC_TYPICALLY_BLANK: frozenset = frozenset({
 })
 
 # ---------------------------------------------------------------------------
+# Post Office Mailings output schema – exact order must be preserved
+# ---------------------------------------------------------------------------
+PO_REQUIRED_SCHEMA: List[str] = [
+    "KeyCode",
+    "Contact",
+    "Title",
+    "Company",
+    "Address 2",
+    "Address 1",
+    "City, State, Zip",
+]
+
+PO_TYPICALLY_BLANK: frozenset = frozenset({"KeyCode"})
+
+# Defines computed/concatenated output columns for PO schema.
+# The "city_state_zip" type is handled specially in apply_mail_standard().
+PO_CONCAT_RULES: Dict[str, Dict] = {
+    "City, State, Zip": {
+        "type":      "city_state_zip",
+        "city_key":  "csz_city",
+        "state_key": "csz_state",
+        "zip_key":   "csz_zip",
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Synonym dictionary (target col → list of normalised synonyms)
 # ---------------------------------------------------------------------------
 
@@ -179,6 +205,33 @@ def build_bcc_synonyms() -> Dict[str, List[str]]:
         "USPS_CONF": ["usps_conf", "uspsconf", "usps conf", "usps confirmation",
                       "usps", "postal confirmation"],
     }
+
+
+def build_po_synonyms() -> Dict[str, List[str]]:
+    """Return the synonym map for Post Office Mailings regular (non-computed) columns."""
+    return {
+        "KeyCode":   ["key code", "keycode", "key_code", "key"],
+        "Contact":   ["contact", "contact name", "full name", "name",
+                      "attn", "attention"],
+        "Title":     ["title", "job title", "position", "role",
+                      "job role", "designation"],
+        "Company":   ["company", "company name", "organization", "org",
+                      "account name", "business name", "firm"],
+        "Address 2": ["address2", "address 2", "address line 2",
+                      "addr2", "suite", "unit", "apt", "address line2"],
+        "Address 1": ["address1", "address 1", "street",
+                      "street address", "address line 1", "addr1",
+                      "address line1", "mailing address", "address"],
+    }
+
+
+# Sub-component synonym keys used internally by infer_mapping_po()
+_PO_CSZ_SYNONYMS: Dict[str, List[str]] = {
+    "__csz_city__":  ["city", "town", "municipality", "city name"],
+    "__csz_state__": ["state", "st", "province", "state code"],
+    "__csz_zip__":   ["zip", "zip code", "postal", "postal code",
+                      "zipcode", "postcode", "zip+4"],
+}
 
 
 # First-name / last-name detection synonyms
@@ -401,6 +454,8 @@ def apply_mail_standard(
     df: pd.DataFrame,
     mapping_config: Dict,
     required_schema: Optional[List[str]] = None,
+    concat_rules: Optional[Dict] = None,
+    typically_blank: Optional[frozenset] = None,
 ) -> Tuple[pd.DataFrame, List[Dict], Dict]:
     """
     Apply the mail-file standard to df using mapping_config.
@@ -415,8 +470,29 @@ def apply_mail_standard(
           "derivation_plan": "use_contact" | "build_first_last" | "blank"
           "first_col":       raw column name for first name (or None)
           "last_col":        raw column name for last name (or None)
+          Optional CSZ sub-sources (used when concat_rules contains a
+          "city_state_zip" rule):
+          "csz_city":  raw column name for city  (or None)
+          "csz_state": raw column name for state (or None)
+          "csz_zip":   raw column name for zip   (or None)
     required_schema : list[str] or None
         Ordered list of target columns. Defaults to REQUIRED_SCHEMA.
+    concat_rules : dict or None
+        Defines computed output columns.  Keys are target column names;
+        values are rule dicts with at least a "type" key.  Currently
+        supported type: "city_state_zip" (builds "City, State Zip" format).
+        Example::
+            {
+                "City, State, Zip": {
+                    "type":      "city_state_zip",
+                    "city_key":  "csz_city",
+                    "state_key": "csz_state",
+                    "zip_key":   "csz_zip",
+                }
+            }
+    typically_blank : frozenset or None
+        Target columns that are expected to be blank in most raw files and
+        should not produce a warning issue.  Defaults to TYPICALLY_BLANK.
 
     Returns
     -------
@@ -431,6 +507,10 @@ def apply_mail_standard(
     """
     if required_schema is None:
         required_schema = REQUIRED_SCHEMA
+    if typically_blank is None:
+        typically_blank = TYPICALLY_BLANK
+    if concat_rules is None:
+        concat_rules = {}
 
     col_map: Dict[str, Optional[str]] = mapping_config.get("column_map", {})
     derivation_plan: str = mapping_config.get("derivation_plan", "blank")
@@ -454,13 +534,31 @@ def apply_mail_standard(
     for target in required_schema:
         source = col_map.get(target)
 
-        # --- Contact special handling ---
-        if target == "Contact":
+        # --- Contact special handling (derivation only; skip when plain blank) ---
+        if target == "Contact" and derivation_plan != "blank":
             series = _build_contact(
                 working, derivation_plan, first_col, last_col,
                 source, issues
             )
             out_data[target] = series
+            continue
+
+        # --- Computed/concat field handling (e.g. "City, State, Zip") ---
+        if target in concat_rules:
+            rule = concat_rules[target]
+            if rule.get("type") == "city_state_zip":
+                city_src  = mapping_config.get(rule["city_key"])
+                state_src = mapping_config.get(rule["state_key"])
+                zip_src   = mapping_config.get(rule["zip_key"])
+                out_data[target] = _build_city_state_zip(
+                    working, city_src, state_src, zip_src
+                )
+                # Track used source columns for dropped_columns calculation
+                for _src in (city_src, state_src, zip_src):
+                    if _src and _src in working.columns:
+                        used_sources.setdefault(_src, target)
+            else:
+                out_data[target] = pd.Series([""] * len(working), index=working.index)
             continue
 
         # --- Normal mapping ---
@@ -490,7 +588,7 @@ def apply_mail_standard(
             created_blank.append(target)
 
             # Flag – but only warn for non-trivially-blank columns
-            if target not in TYPICALLY_BLANK:
+            if target not in typically_blank:
                 issues.append({
                     "code": "MISSING_REQUIRED_FIELD",
                     "message": (f"Required column '{target}' could not be mapped "
@@ -579,6 +677,156 @@ def _build_contact(
         },
     })
     return pd.Series([""] * len(df), index=idx)
+
+
+# ---------------------------------------------------------------------------
+# City/State/Zip concatenation helper
+# ---------------------------------------------------------------------------
+
+def _build_city_state_zip(
+    df: pd.DataFrame,
+    city_col: Optional[str],
+    state_col: Optional[str],
+    zip_col: Optional[str],
+) -> pd.Series:
+    """
+    Build a combined 'City, State Zip' column row-by-row.
+
+    Format rules (no doubled punctuation or leading/trailing spaces):
+      city + state + zip  → "Chicago, IL 60601"
+      city + state only   → "Chicago, IL"
+      city only           → "Chicago"
+      state + zip only    → "IL 60601"
+      zip only            → "60601"
+      all blank           → ""
+    """
+    city_vals = (
+        [str(v).strip() for v in df[city_col]]
+        if city_col and city_col in df.columns
+        else [""] * len(df)
+    )
+    state_vals = (
+        [str(v).strip() for v in df[state_col]]
+        if state_col and state_col in df.columns
+        else [""] * len(df)
+    )
+    zip_vals = (
+        [str(v).strip() for v in df[zip_col]]
+        if zip_col and zip_col in df.columns
+        else [""] * len(df)
+    )
+
+    combined: List[str] = []
+    for city, state, zipcode in zip(city_vals, state_vals, zip_vals):
+        if city and state:
+            base = f"{city}, {state}"
+        elif city:
+            base = city
+        elif state:
+            base = state
+        else:
+            base = ""
+
+        if zipcode:
+            result_val = f"{base} {zipcode}".strip() if base else zipcode
+        else:
+            result_val = base
+
+        combined.append(result_val)
+
+    return pd.Series(combined, index=df.index)
+
+
+# ---------------------------------------------------------------------------
+# Post Office Mailings inference
+# ---------------------------------------------------------------------------
+
+def infer_mapping_po(raw_columns: List[str]) -> "MappingResult":
+    """
+    Infer the best mapping from raw_columns → PO_REQUIRED_SCHEMA.
+
+    The 6 regular fields use standard synonym matching.
+    City, State, and Zip are inferred as sub-components and stored under the
+    special keys "__csz_city__", "__csz_state__", "__csz_zip__" in
+    suggested_map.  The "City, State, Zip" target itself is set to
+    "__computed__" to signal it is a derived/concat column (not directly mapped).
+    """
+    synonyms_map = build_po_synonyms()
+    result = MappingResult()
+
+    raw_norm_map: Dict[str, str] = {col: normalize_header(col) for col in raw_columns}
+
+    # Build normalised synonym lists for regular fields + CSZ sub-components
+    all_targets: Dict[str, List[str]] = {}
+    for tgt, syns in synonyms_map.items():
+        all_targets[tgt] = [normalize_header(s) for s in syns] + [normalize_header(tgt)]
+    for tgt, syns in _PO_CSZ_SYNONYMS.items():
+        all_targets[tgt] = [normalize_header(s) for s in syns]
+
+    # Score every raw column against every target
+    target_scores: Dict[str, Dict[str, float]] = {}
+    for tgt, syns in all_targets.items():
+        col_scores: Dict[str, float] = {}
+        for raw_col, raw_norm in raw_norm_map.items():
+            score = _score_candidate(raw_norm, syns)
+            if score >= _CANDIDATE_FLOOR:
+                col_scores[raw_col] = score
+        target_scores[tgt] = col_scores
+
+    def _best(t: str) -> float:
+        sc = target_scores.get(t, {})
+        return max(sc.values()) if sc else 0.0
+
+    sorted_targets = sorted(all_targets.keys(), key=_best, reverse=True)
+
+    assigned: Dict[str, str] = {}  # raw_col → target
+    result.suggested_map = {}
+    result.confidences = {}
+    result.conflicts = []
+
+    for tgt in sorted_targets:
+        scores = target_scores.get(tgt, {})
+        best_score = max(scores.values()) if scores else 0.0
+        if not scores or best_score < _ASSIGNMENT_MIN:
+            result.suggested_map[tgt] = None
+            result.confidences[tgt] = "low"
+            continue
+
+        candidates_sorted = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        best_raw, best_sc = candidates_sorted[0]
+
+        if best_raw in assigned:
+            result.suggested_map[tgt] = None
+            result.confidences[tgt] = "low"
+            continue
+
+        close_candidates = [c for c, s in candidates_sorted
+                            if s >= best_sc - 0.10 and c != best_raw]
+        if close_candidates and best_sc >= 0.72:
+            result.conflicts.append({
+                "target_col": tgt,
+                "candidates": [best_raw] + close_candidates,
+                "chosen": best_raw,
+                "chosen_score": best_sc,
+            })
+
+        result.suggested_map[tgt] = best_raw
+        result.confidences[tgt] = _confidence_label(best_sc)
+        assigned[best_raw] = tgt
+
+    # The "City, State, Zip" output column is always computed, never directly mapped
+    result.suggested_map["City, State, Zip"] = "__computed__"
+    result.confidences["City, State, Zip"] = "high"
+
+    result.derivation_plan = "blank"
+    result.first_col = None
+    result.last_col = None
+
+    all_mapped_sources = {v for v in result.suggested_map.values()
+                          if v and not v.startswith("__")}
+    result.dropped_columns = [c for c in raw_columns if c not in all_mapped_sources]
+
+    return result
 
 
 # ---------------------------------------------------------------------------

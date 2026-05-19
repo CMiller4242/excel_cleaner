@@ -20,14 +20,16 @@ from tkinter import ttk, messagebox, simpledialog
 from typing import Callable, Dict, List, Optional
 
 from utils.smart_mapping import (
-    REQUIRED_SCHEMA, BCC_REQUIRED_SCHEMA,
-    TYPICALLY_BLANK, BCC_TYPICALLY_BLANK,
+    REQUIRED_SCHEMA, BCC_REQUIRED_SCHEMA, PO_REQUIRED_SCHEMA,
+    TYPICALLY_BLANK, BCC_TYPICALLY_BLANK, PO_TYPICALLY_BLANK,
+    PO_CONCAT_RULES,
     MappingResult,
-    infer_mapping, infer_mapping_bcc,
+    infer_mapping, infer_mapping_bcc, infer_mapping_po,
 )
 from ui.widgets.autocomplete_combobox import AutocompleteCombobox
 from utils.smart_preset_manager import (
     SmartPresetManager, TEMPLATE_ID_MAIL_STANDARD, TEMPLATE_ID_BCC_MAIL,
+    TEMPLATE_ID_POST_OFFICE,
 )
 
 
@@ -51,6 +53,9 @@ _DEFAULT_DEDUPE_PRIORITY = [
 ]
 _BCC_DEFAULT_DEDUPE_PRIORITY = [
     "FULLNAME", "COMPANY", "DELADDR", "ZIP+4",
+]
+_PO_DEFAULT_DEDUPE_PRIORITY = [
+    "Contact", "Company", "Address 1", "City, State, Zip",
 ]
 
 
@@ -168,6 +173,12 @@ class SmartFormatWizard:
             self._typically_blank = BCC_TYPICALLY_BLANK
             self._dedupe_priority = _BCC_DEFAULT_DEDUPE_PRIORITY
             self.mapping_result: MappingResult = infer_mapping_bcc(self.raw_columns)
+        elif template_id == TEMPLATE_ID_POST_OFFICE:
+            self._template_id = TEMPLATE_ID_POST_OFFICE
+            self._schema = PO_REQUIRED_SCHEMA if schema is None else schema
+            self._typically_blank = PO_TYPICALLY_BLANK
+            self._dedupe_priority = _PO_DEFAULT_DEDUPE_PRIORITY
+            self.mapping_result: MappingResult = infer_mapping_po(self.raw_columns)
         else:
             self._template_id = template_id or TEMPLATE_ID_MAIL_STANDARD
             self._schema = schema if schema is not None else REQUIRED_SCHEMA
@@ -183,6 +194,11 @@ class SmartFormatWizard:
         self._contact_mode_var = tk.StringVar()
         self._first_var = tk.StringVar()
         self._last_var  = tk.StringVar()
+
+        # City/State/Zip sub-component comboboxes (Post Office Mailings schema)
+        self._csz_city_cb:  Optional[AutocompleteCombobox] = None
+        self._csz_state_cb: Optional[AutocompleteCombobox] = None
+        self._csz_zip_cb:   Optional[AutocompleteCombobox] = None
 
         # Operations builder vars (step 4)
         self._dedupe_enabled      = tk.BooleanVar(value=False)
@@ -214,11 +230,12 @@ class SmartFormatWizard:
     # ------------------------------------------------------------------
 
     def _build_dialog(self):
-        _schema_label = (
-            "BCC Mail File Config"
-            if self._template_id == TEMPLATE_ID_BCC_MAIL
-            else "Mail File Standard"
-        )
+        if self._template_id == TEMPLATE_ID_BCC_MAIL:
+            _schema_label = "BCC Mail File Config"
+        elif self._template_id == TEMPLATE_ID_POST_OFFICE:
+            _schema_label = "Post Office Mailings"
+        else:
+            _schema_label = "Mail File Standard"
 
         self.dialog = tk.Toplevel(self.parent)
         self.dialog.title(f"✨ Smart Format — {_schema_label}")
@@ -466,6 +483,10 @@ class SmartFormatWizard:
                 self._build_contact_row(row, row_bg)
                 continue
 
+            if target == "City, State, Zip" and "City, State, Zip" in self._schema:
+                self._build_csz_row(row, row_bg)
+                continue
+
             # Searchable combobox
             cb = AutocompleteCombobox(row, options=self._source_options, width=32)
 
@@ -531,6 +552,38 @@ class SmartFormatWizard:
             row,
             text=f"First='{first_txt}'  Last='{last_txt}'",
             font=("Segoe UI", 8), bg=row_bg, fg="#605E5C",
+        ).pack(side=tk.LEFT, padx=6)
+
+    def _build_csz_row(self, row: tk.Frame, row_bg: str):
+        """City, State, Zip row with three sub-source comboboxes."""
+        mr = self.mapping_result
+
+        sub_frame = tk.Frame(row, bg=row_bg)
+        sub_frame.pack(side=tk.LEFT, padx=6)
+
+        for label_txt, key, attr in [
+            ("City:",  "__csz_city__",  "_csz_city_cb"),
+            ("State:", "__csz_state__", "_csz_state_cb"),
+            ("Zip:",   "__csz_zip__",   "_csz_zip_cb"),
+        ]:
+            src = mr.suggested_map.get(key)
+            tk.Label(
+                sub_frame, text=label_txt,
+                font=("Segoe UI", 8, "bold"), bg=row_bg,
+            ).pack(side=tk.LEFT, padx=(4, 2))
+            cb = AutocompleteCombobox(sub_frame, options=self._source_options, width=14)
+            if src and src in self.raw_columns:
+                cb.set(src)
+            else:
+                cb.set("(blank)")
+            cb.pack(side=tk.LEFT, padx=(0, 4))
+            setattr(self, attr, cb)
+
+        tk.Label(
+            row,
+            text="→ built as 'City, State Zip'",
+            font=("Segoe UI", 8, "italic"),
+            bg=row_bg, fg="#605E5C",
         ).pack(side=tk.LEFT, padx=6)
 
     def _build_step3(self) -> tk.Frame:
@@ -977,6 +1030,8 @@ class SmartFormatWizard:
         for target in self._schema:
             if target == "Contact" and "Contact" in self._schema:
                 continue  # handled separately below
+            if target == "City, State, Zip" and "City, State, Zip" in self._schema:
+                continue  # computed field — handled separately below
             cb = self._target_vars.get(target)
             if cb is None:
                 col_map[target] = None
@@ -1016,6 +1071,10 @@ class SmartFormatWizard:
             derivation_plan = "blank"
             first_col = None
             last_col  = None
+
+        # City, State, Zip composite field (Post Office schema)
+        if "City, State, Zip" in self._schema:
+            col_map["City, State, Zip"] = None  # always built via concat_rules, not direct map
 
         return col_map, derivation_plan, first_col, last_col
 
@@ -1079,6 +1138,18 @@ class SmartFormatWizard:
             "operations_plan": ops_plan,
             "preset_name":     self._loaded_preset_name,
         }
+
+        # City/State/Zip sub-sources (Post Office schema)
+        if "City, State, Zip" in self._schema:
+            def _cb_val(cb: Optional[AutocompleteCombobox]) -> Optional[str]:
+                if cb is None:
+                    return None
+                v = cb.get()
+                return None if v in ("(blank)", "") else v
+            self._result["csz_city"]  = _cb_val(self._csz_city_cb)
+            self._result["csz_state"] = _cb_val(self._csz_state_cb)
+            self._result["csz_zip"]   = _cb_val(self._csz_zip_cb)
+
         self.dialog.destroy()
 
     # ------------------------------------------------------------------
@@ -1118,14 +1189,26 @@ class SmartFormatWizard:
         col_map, derivation_plan, first_col, last_col = self._collect_mapping()
         ops_plan = self._collect_ops_plan()
 
+        mc = {
+            "column_map":     col_map,
+            "derivation_plan": derivation_plan,
+            "first_col":      first_col,
+            "last_col":       last_col,
+        }
+        # Persist CSZ sub-sources for Post Office schema
+        if "City, State, Zip" in self._schema:
+            def _cb_val(cb: Optional[AutocompleteCombobox]) -> Optional[str]:
+                if cb is None:
+                    return None
+                v = cb.get()
+                return None if v in ("(blank)", "") else v
+            mc["csz_city"]  = _cb_val(self._csz_city_cb)
+            mc["csz_state"] = _cb_val(self._csz_state_cb)
+            mc["csz_zip"]   = _cb_val(self._csz_zip_cb)
+
         config_to_save = {
-            "template_id": self._template_id,
-            "mapping_config": {
-                "column_map": col_map,
-                "derivation_plan": derivation_plan,
-                "first_col": first_col,
-                "last_col": last_col,
-            },
+            "template_id":    self._template_id,
+            "mapping_config": mc,
             "operations_plan": ops_plan,
         }
 
@@ -1175,6 +1258,17 @@ class SmartFormatWizard:
                 self._contact_mode_var.set("Build from First + Last Name")
             else:
                 self._contact_mode_var.set("(blank)")
+
+        # CSZ sub-sources (Post Office schema)
+        if "City, State, Zip" in self._schema:
+            def _set_csz(cb: Optional[AutocompleteCombobox], key: str):
+                if cb is None:
+                    return
+                v = mapping_config.get(key)
+                cb.set(v if v and v in self.raw_columns else "(blank)")
+            _set_csz(self._csz_city_cb,  "csz_city")
+            _set_csz(self._csz_state_cb, "csz_state")
+            _set_csz(self._csz_zip_cb,   "csz_zip")
 
         # ---- Populate step 4 operations ----
         self._apply_ops_plan_to_widgets(ops_plan)
@@ -1257,6 +1351,17 @@ class SmartFormatWizard:
                 self._contact_mode_var.set("Build from First + Last Name")
             else:
                 self._contact_mode_var.set("(blank)")
+
+        # CSZ sub-sources (Post Office schema)
+        if "City, State, Zip" in self._schema:
+            def _set_csz(cb: Optional[AutocompleteCombobox], key: str):
+                if cb is None:
+                    return
+                v = mapping_config.get(key)
+                cb.set(v if v and v in self.raw_columns else "(blank)")
+            _set_csz(self._csz_city_cb,  "csz_city")
+            _set_csz(self._csz_state_cb, "csz_state")
+            _set_csz(self._csz_zip_cb,   "csz_zip")
 
         # Step 4 ops
         self._apply_ops_plan_to_widgets(ops_plan)
