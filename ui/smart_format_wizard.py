@@ -195,6 +195,9 @@ class SmartFormatWizard:
         self._first_var = tk.StringVar()
         self._last_var  = tk.StringVar()
 
+        # Contact combobox (replaces the old readonly mode selector)
+        self._contact_cb: Optional[AutocompleteCombobox] = None
+
         # City/State/Zip sub-component comboboxes (Post Office Mailings schema)
         self._csz_city_cb:  Optional[AutocompleteCombobox] = None
         self._csz_state_cb: Optional[AutocompleteCombobox] = None
@@ -519,40 +522,77 @@ class SmartFormatWizard:
 
         return frame
 
+    # Sentinel strings for the two Contact special modes.
+    # Using module-level constants avoids scattering magic strings.
+    _CONTACT_USE_EXISTING = "Use existing Contact column"
+    _CONTACT_BUILD_FL     = "Build from First + Last Name"
+
     def _build_contact_row(self, row: tk.Frame, row_bg: str):
-        """Contact row with mode selector (special case)."""
+        """Contact row: searchable combobox with special modes + raw source columns.
+
+        Option list (always in this order):
+          (blank)                        ← added automatically by AutocompleteCombobox
+          Use existing Contact column    ← special: use raw column literally named 'Contact'
+          Build from First + Last Name   ← special: concatenate detected first/last cols
+          <raw column 1>                 ← direct mapping to any source column
+          <raw column 2>
+          …
+        """
+        from utils.smart_mapping import normalize_header
         mr = self.mapping_result
 
+        # Options list passed to widget (widget prepends "(blank)" automatically)
+        contact_options = (
+            [self._CONTACT_USE_EXISTING, self._CONTACT_BUILD_FL]
+            + self._source_options
+        )
+
+        # Choose initial selection from inferred mapping result
         if mr.derivation_plan == "use_contact":
-            initial_mode = "Use existing Contact column"
+            initial = self._CONTACT_USE_EXISTING
         elif mr.derivation_plan == "build_first_last":
-            initial_mode = "Build from First + Last Name"
+            initial = self._CONTACT_BUILD_FL
+        elif (mr.suggested_map.get("Contact")
+              and mr.suggested_map["Contact"] not in ("__derived__", "__computed__")
+              and mr.suggested_map["Contact"] in self.raw_columns):
+            initial = mr.suggested_map["Contact"]
         else:
-            initial_mode = "(blank)"
+            initial = "(blank)"
 
-        self._contact_mode_var.set(initial_mode)
+        self._contact_cb = AutocompleteCombobox(row, options=contact_options, width=32)
+        self._contact_cb.set(initial)
+        self._contact_cb.pack(side=tk.LEFT, padx=6)
 
-        modes = [
-            "Use existing Contact column",
-            "Build from First + Last Name",
-            "(blank)",
-        ]
-
-        cb = ttk.Combobox(row, textvariable=self._contact_mode_var,
-                          values=modes, width=30, state="readonly",
-                          font=("Segoe UI", 9))
-        cb.pack(side=tk.LEFT, padx=6)
-
-        first_txt = mr.first_col or "(not found)"
-        last_txt  = mr.last_col  or "(not found)"
-        self._first_var.set(first_txt)
-        self._last_var.set(last_txt)
-
+        # Dynamic note label — updates whenever the user changes the selection
+        note_var = tk.StringVar()
         tk.Label(
             row,
-            text=f"First='{first_txt}'  Last='{last_txt}'",
-            font=("Segoe UI", 8), bg=row_bg, fg="#605E5C",
+            textvariable=note_var,
+            font=("Segoe UI", 8), bg=row_bg, fg="#605E5C", anchor=tk.W,
         ).pack(side=tk.LEFT, padx=6)
+
+        def _refresh_note(*_):
+            val = self._contact_cb.get()
+            if val == self._CONTACT_USE_EXISTING:
+                found = any(
+                    normalize_header(rc) in {"contact", "contact name"}
+                    for rc in self.raw_columns
+                )
+                note_var.set(
+                    "← raw 'Contact' found"
+                    if found else "⚠ raw 'Contact' not in file"
+                )
+            elif val == self._CONTACT_BUILD_FL:
+                first_txt = mr.first_col or "(not found)"
+                last_txt  = mr.last_col  or "(not found)"
+                note_var.set(f"First='{first_txt}'  Last='{last_txt}'")
+            elif val and val not in ("(blank)", ""):
+                note_var.set("← direct mapping")
+            else:
+                note_var.set("")
+
+        self._contact_cb.bind("<<ComboboxSelected>>", _refresh_note)
+        _refresh_note()   # populate initial note
 
     def _build_csz_row(self, row: tk.Frame, row_bg: str):
         """City, State, Zip row with three sub-source comboboxes."""
@@ -1039,11 +1079,16 @@ class SmartFormatWizard:
             val = cb.get()
             col_map[target] = None if val in ("(blank)", "") else val
 
-        # Contact derivation — Mail Standard only
+        # Contact — supports three paths: special modes and direct raw-column mapping
         if "Contact" in self._schema:
-            mode = self._contact_mode_var.get()
+            contact_val = (
+                self._contact_cb.get()
+                if self._contact_cb is not None
+                else "(blank)"
+            )
             mr = self.mapping_result
-            if mode == "Use existing Contact column":
+
+            if contact_val == self._CONTACT_USE_EXISTING:
                 derivation_plan = "use_contact"
                 contact_src = mr.suggested_map.get("Contact")
                 if contact_src == "__derived__" or not contact_src:
@@ -1056,18 +1101,24 @@ class SmartFormatWizard:
                 col_map["Contact"] = contact_src
                 first_col = mr.first_col
                 last_col  = mr.last_col
-            elif mode == "Build from First + Last Name":
+            elif contact_val == self._CONTACT_BUILD_FL:
                 derivation_plan = "build_first_last"
                 col_map["Contact"] = "__derived__"
                 first_col = mr.first_col
                 last_col  = mr.last_col
+            elif contact_val and contact_val not in ("(blank)", ""):
+                # Direct raw-column mapping chosen by the user
+                derivation_plan = "blank"
+                col_map["Contact"] = contact_val
+                first_col = None
+                last_col  = None
             else:
                 derivation_plan = "blank"
                 col_map["Contact"] = None
                 first_col = None
                 last_col  = None
         else:
-            # BCC and other schemas without Contact derivation
+            # Schemas without Contact (BCC, etc.)
             derivation_plan = "blank"
             first_col = None
             last_col  = None
@@ -1250,14 +1301,21 @@ class SmartFormatWizard:
             else:
                 cb.set("(blank)")
 
-        # Contact mode (Mail Standard only)
-        if "Contact" in self._schema:
+        # Contact (all schemas that include it)
+        if "Contact" in self._schema and self._contact_cb is not None:
             if derivation_plan == "use_contact":
-                self._contact_mode_var.set("Use existing Contact column")
+                self._contact_cb.set(self._CONTACT_USE_EXISTING)
             elif derivation_plan == "build_first_last":
-                self._contact_mode_var.set("Build from First + Last Name")
+                self._contact_cb.set(self._CONTACT_BUILD_FL)
             else:
-                self._contact_mode_var.set("(blank)")
+                # May be a direct raw-column mapping
+                contact_src = col_map.get("Contact")
+                if (contact_src
+                        and contact_src not in ("__derived__", None)
+                        and contact_src in self.raw_columns):
+                    self._contact_cb.set(contact_src)
+                else:
+                    self._contact_cb.set("(blank)")
 
         # CSZ sub-sources (Post Office schema)
         if "City, State, Zip" in self._schema:
@@ -1343,14 +1401,20 @@ class SmartFormatWizard:
             else:
                 cb.set("(blank)")
 
-        # Contact mode (Mail Standard only)
-        if "Contact" in self._schema:
+        # Contact (all schemas that include it)
+        if "Contact" in self._schema and self._contact_cb is not None:
             if derivation_plan == "use_contact":
-                self._contact_mode_var.set("Use existing Contact column")
+                self._contact_cb.set(self._CONTACT_USE_EXISTING)
             elif derivation_plan == "build_first_last":
-                self._contact_mode_var.set("Build from First + Last Name")
+                self._contact_cb.set(self._CONTACT_BUILD_FL)
             else:
-                self._contact_mode_var.set("(blank)")
+                contact_src = col_map.get("Contact")
+                if (contact_src
+                        and contact_src not in ("__derived__", None)
+                        and contact_src in self.raw_columns):
+                    self._contact_cb.set(contact_src)
+                else:
+                    self._contact_cb.set("(blank)")
 
         # CSZ sub-sources (Post Office schema)
         if "City, State, Zip" in self._schema:
