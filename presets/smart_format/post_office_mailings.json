@@ -1,0 +1,30 @@
+{
+  "name": "Post Office Mailings",
+  "template_id": "POST_OFFICE_V1",
+  "schema_version": "1",
+  "mapping_config": {
+    "column_map": {
+      "KeyCode": null,
+      "Contact": null,
+      "Title": null,
+      "Company": null,
+      "Address 2": null,
+      "Address 1": null,
+      "City, State, Zip": null
+    },
+    "derivation_plan": "blank",
+    "first_col": null,
+    "last_col": null,
+    "csz_city": null,
+    "csz_state": null,
+    "csz_zip": null
+  },
+  "operations_plan": {
+    "dedupe": {"enabled": false, "keys": []},
+    "remove_rows_containing": {
+      "enabled": false, "columns": [], "patterns": "", "match_type": "contains"
+    },
+    "remove_blank_rows": {"enabled": false, "columns": []}
+  },
+  "notes": "Post Office Mailings — 7-column output with City, State Zip concatenated field."
+}

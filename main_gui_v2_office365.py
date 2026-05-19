@@ -5578,8 +5578,13 @@ class CleanSheetApp:
             return
 
         from ui.smart_format_wizard import SmartFormatWizard
-        from utils.smart_mapping import apply_mail_standard, REQUIRED_SCHEMA, BCC_REQUIRED_SCHEMA
-        from utils.smart_preset_manager import TEMPLATE_ID_MAIL_STANDARD, TEMPLATE_ID_BCC_MAIL
+        from utils.smart_mapping import (
+            apply_mail_standard, REQUIRED_SCHEMA, BCC_REQUIRED_SCHEMA,
+            PO_REQUIRED_SCHEMA, PO_CONCAT_RULES,
+        )
+        from utils.smart_preset_manager import (
+            TEMPLATE_ID_MAIL_STANDARD, TEMPLATE_ID_BCC_MAIL, TEMPLATE_ID_POST_OFFICE,
+        )
         from workbook_session import Issue
 
         raw_cols = self.df.columns.tolist()
@@ -5595,9 +5600,15 @@ class CleanSheetApp:
         if _template_id == TEMPLATE_ID_BCC_MAIL:
             _schema = BCC_REQUIRED_SCHEMA
             _schema_label = "BCC Mail File Config"
+            _concat_rules = None
+        elif _template_id == TEMPLATE_ID_POST_OFFICE:
+            _schema = PO_REQUIRED_SCHEMA
+            _schema_label = "Post Office Mailings"
+            _concat_rules = PO_CONCAT_RULES
         else:
             _schema = REQUIRED_SCHEMA
             _schema_label = "Mail File Standard"
+            _concat_rules = None
 
         # Show wizard (blocks until closed)
         wizard = SmartFormatWizard(
@@ -5614,7 +5625,7 @@ class CleanSheetApp:
         # ---- Apply the mail standard ----
         try:
             df_out, raw_issues, apply_meta = apply_mail_standard(
-                self.df, mapping_config, _schema
+                self.df, mapping_config, _schema, concat_rules=_concat_rules
             )
         except Exception as exc:
             messagebox.showerror("Smart Format Error",
@@ -5642,11 +5653,12 @@ class CleanSheetApp:
         )
 
         # ---- Compute recommended dedupe keys from output columns ----
-        _DEDUPE_PRIORITY = (
-            ["FULLNAME", "COMPANY", "DELADDR", "ZIP+4"]
-            if _template_id == TEMPLATE_ID_BCC_MAIL
-            else ["Email Address", "Company", "Address1", "Zip", "Contact"]
-        )
+        if _template_id == TEMPLATE_ID_BCC_MAIL:
+            _DEDUPE_PRIORITY = ["FULLNAME", "COMPANY", "DELADDR", "ZIP+4"]
+        elif _template_id == TEMPLATE_ID_POST_OFFICE:
+            _DEDUPE_PRIORITY = ["Contact", "Company", "Address 1", "City, State, Zip"]
+        else:
+            _DEDUPE_PRIORITY = ["Email Address", "Company", "Address1", "Zip", "Contact"]
         rec_keys = [k for k in _DEDUPE_PRIORITY if k in df_final.columns]
 
         # ---- Build persistent smart_format config for SheetState ----
@@ -5658,6 +5670,9 @@ class CleanSheetApp:
                 "derivation_plan":  mapping_config.get("derivation_plan", "blank"),
                 "first_col":        mapping_config.get("first_col"),
                 "last_col":         mapping_config.get("last_col"),
+                "csz_city":         mapping_config.get("csz_city"),
+                "csz_state":        mapping_config.get("csz_state"),
+                "csz_zip":          mapping_config.get("csz_zip"),
             },
             "operations_plan":         ops_plan,
             "created_blank":           apply_meta.get("created_blank", []),
@@ -5780,7 +5795,7 @@ class CleanSheetApp:
 
         dlg = tk.Toplevel(self.root)
         dlg.title("Smart Format — Choose Configuration")
-        dlg.geometry("400x190")
+        dlg.geometry("400x220")
         dlg.resizable(False, False)
         dlg.transient(self.root)
         dlg.grab_set()
@@ -5801,6 +5816,11 @@ class CleanSheetApp:
             dlg,
             text="BCC Mail File Config  (21 columns)",
             variable=choice, value="BCC_MAIL_V1",
+        ).pack(anchor=tk.W, padx=36, pady=2)
+        ttk.Radiobutton(
+            dlg,
+            text="Post Office Mailings  (7 columns)",
+            variable=choice, value="POST_OFFICE_V1",
         ).pack(anchor=tk.W, padx=36, pady=2)
 
         def _confirm():
@@ -5833,8 +5853,13 @@ class CleanSheetApp:
             return
 
         from ui.smart_format_wizard import SmartFormatWizard
-        from utils.smart_mapping import apply_mail_standard, REQUIRED_SCHEMA, BCC_REQUIRED_SCHEMA
-        from utils.smart_preset_manager import TEMPLATE_ID_MAIL_STANDARD, TEMPLATE_ID_BCC_MAIL
+        from utils.smart_mapping import (
+            apply_mail_standard, REQUIRED_SCHEMA, BCC_REQUIRED_SCHEMA,
+            PO_REQUIRED_SCHEMA, PO_CONCAT_RULES,
+        )
+        from utils.smart_preset_manager import (
+            TEMPLATE_ID_MAIL_STANDARD, TEMPLATE_ID_BCC_MAIL, TEMPLATE_ID_POST_OFFICE,
+        )
         from datetime import datetime as _dt
 
         existing_config = file_obj.get('smart_format')
@@ -5846,8 +5871,18 @@ class CleanSheetApp:
             if _template_id is None:
                 return
 
-        _schema = BCC_REQUIRED_SCHEMA if _template_id == TEMPLATE_ID_BCC_MAIL else REQUIRED_SCHEMA
-        _schema_label = "BCC Mail File Config" if _template_id == TEMPLATE_ID_BCC_MAIL else "Mail File Standard"
+        if _template_id == TEMPLATE_ID_BCC_MAIL:
+            _schema = BCC_REQUIRED_SCHEMA
+            _schema_label = "BCC Mail File Config"
+            _concat_rules = None
+        elif _template_id == TEMPLATE_ID_POST_OFFICE:
+            _schema = PO_REQUIRED_SCHEMA
+            _schema_label = "Post Office Mailings"
+            _concat_rules = PO_CONCAT_RULES
+        else:
+            _schema = REQUIRED_SCHEMA
+            _schema_label = "Mail File Standard"
+            _concat_rules = None
 
         # Use the pre-SmartFormat df for the wizard so re-edit always starts
         # from the original columns, not the already-transformed ones.
@@ -5866,7 +5901,7 @@ class CleanSheetApp:
 
         try:
             df_out, raw_issues, apply_meta = apply_mail_standard(
-                source_df, mapping_config, _schema
+                source_df, mapping_config, _schema, concat_rules=_concat_rules
             )
         except Exception as exc:
             messagebox.showerror("Smart Format Error",
@@ -5884,11 +5919,12 @@ class CleanSheetApp:
         file_obj['df'] = df_final
         file_obj['result_df'] = df_final
 
-        _DEDUPE_PRIORITY = (
-            ["FULLNAME", "COMPANY", "DELADDR", "ZIP+4"]
-            if _template_id == TEMPLATE_ID_BCC_MAIL
-            else ["Email Address", "Company", "Address1", "Zip", "Contact"]
-        )
+        if _template_id == TEMPLATE_ID_BCC_MAIL:
+            _DEDUPE_PRIORITY = ["FULLNAME", "COMPANY", "DELADDR", "ZIP+4"]
+        elif _template_id == TEMPLATE_ID_POST_OFFICE:
+            _DEDUPE_PRIORITY = ["Contact", "Company", "Address 1", "City, State, Zip"]
+        else:
+            _DEDUPE_PRIORITY = ["Email Address", "Company", "Address1", "Zip", "Contact"]
         rec_keys = [k for k in _DEDUPE_PRIORITY if k in df_final.columns]
 
         file_obj['smart_format'] = {
@@ -5899,6 +5935,9 @@ class CleanSheetApp:
                 "derivation_plan": mapping_config.get("derivation_plan", "blank"),
                 "first_col":       mapping_config.get("first_col"),
                 "last_col":        mapping_config.get("last_col"),
+                "csz_city":        mapping_config.get("csz_city"),
+                "csz_state":       mapping_config.get("csz_state"),
+                "csz_zip":         mapping_config.get("csz_zip"),
             },
             "operations_plan":         ops_plan,
             "created_blank":           apply_meta.get("created_blank", []),
@@ -5957,16 +5996,31 @@ class CleanSheetApp:
             return
 
         from ui.smart_format_wizard import SmartFormatWizard
-        from utils.smart_mapping import apply_mail_standard, REQUIRED_SCHEMA, BCC_REQUIRED_SCHEMA
-        from utils.smart_preset_manager import TEMPLATE_ID_MAIL_STANDARD, TEMPLATE_ID_BCC_MAIL
+        from utils.smart_mapping import (
+            apply_mail_standard, REQUIRED_SCHEMA, BCC_REQUIRED_SCHEMA,
+            PO_REQUIRED_SCHEMA, PO_CONCAT_RULES,
+        )
+        from utils.smart_preset_manager import (
+            TEMPLATE_ID_MAIL_STANDARD, TEMPLATE_ID_BCC_MAIL, TEMPLATE_ID_POST_OFFICE,
+        )
         from datetime import datetime as _dt
 
         _template_id = self._ask_smart_format_schema()
         if _template_id is None:
             return
 
-        _schema = BCC_REQUIRED_SCHEMA if _template_id == TEMPLATE_ID_BCC_MAIL else REQUIRED_SCHEMA
-        _schema_label = "BCC Mail File Config" if _template_id == TEMPLATE_ID_BCC_MAIL else "Mail File Standard"
+        if _template_id == TEMPLATE_ID_BCC_MAIL:
+            _schema = BCC_REQUIRED_SCHEMA
+            _schema_label = "BCC Mail File Config"
+            _concat_rules = None
+        elif _template_id == TEMPLATE_ID_POST_OFFICE:
+            _schema = PO_REQUIRED_SCHEMA
+            _schema_label = "Post Office Mailings"
+            _concat_rules = PO_CONCAT_RULES
+        else:
+            _schema = REQUIRED_SCHEMA
+            _schema_label = "Mail File Standard"
+            _concat_rules = None
 
         # Run the mapping wizard on the first selected file's columns.
         # Any source column that doesn't exist in subsequent files will be
@@ -5984,11 +6038,12 @@ class CleanSheetApp:
             return
 
         ops_plan = mapping_config.get('operations_plan', {})
-        _DEDUPE_PRIORITY = (
-            ["FULLNAME", "COMPANY", "DELADDR", "ZIP+4"]
-            if _template_id == TEMPLATE_ID_BCC_MAIL
-            else ["Email Address", "Company", "Address1", "Zip", "Contact"]
-        )
+        if _template_id == TEMPLATE_ID_BCC_MAIL:
+            _DEDUPE_PRIORITY = ["FULLNAME", "COMPANY", "DELADDR", "ZIP+4"]
+        elif _template_id == TEMPLATE_ID_POST_OFFICE:
+            _DEDUPE_PRIORITY = ["Contact", "Company", "Address 1", "City, State, Zip"]
+        else:
+            _DEDUPE_PRIORITY = ["Email Address", "Company", "Address1", "Zip", "Contact"]
 
         success_count = 0
         error_lines = []
@@ -5998,7 +6053,7 @@ class CleanSheetApp:
                 source_df = file_obj.get('df_original_pre_sf', file_obj['df'])
 
                 df_out, raw_issues, apply_meta = apply_mail_standard(
-                    source_df, mapping_config, _schema
+                    source_df, mapping_config, _schema, concat_rules=_concat_rules
                 )
                 df_final, ops_added, _ = self._apply_smart_format_ops_plan(df_out, ops_plan)
 
@@ -6017,6 +6072,9 @@ class CleanSheetApp:
                         "derivation_plan": mapping_config.get("derivation_plan", "blank"),
                         "first_col":       mapping_config.get("first_col"),
                         "last_col":        mapping_config.get("last_col"),
+                        "csz_city":        mapping_config.get("csz_city"),
+                        "csz_state":       mapping_config.get("csz_state"),
+                        "csz_zip":         mapping_config.get("csz_zip"),
                     },
                     "operations_plan":         ops_plan,
                     "created_blank":           apply_meta.get("created_blank", []),

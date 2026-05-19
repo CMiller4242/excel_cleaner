@@ -34,6 +34,7 @@ _USER_DIR = Path.home() / ".config" / "CleanSheet" / "smart_presets"
 SCHEMA_VERSION = "1"
 TEMPLATE_ID_MAIL_STANDARD = "MAIL_STANDARD_V1"
 TEMPLATE_ID_BCC_MAIL = "BCC_MAIL_V1"
+TEMPLATE_ID_POST_OFFICE = "POST_OFFICE_V1"
 
 
 # ---------------------------------------------------------------------------
